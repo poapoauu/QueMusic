@@ -52,6 +52,8 @@ if(BUILD_TESTING)
     enable_testing()
     find_package(Qt6 REQUIRED COMPONENTS Test)
 
+    add_subdirectory(plugins/test-source)
+
     qt_add_executable(quemusic_source_types_test
         tests/tst_SourceTypes.cpp
     )
@@ -79,13 +81,6 @@ if(BUILD_TESTING)
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/${directory}"
         )
     endfunction()
-
-    add_source_plugin_fixture(quemusic_valid_source_fixture valid)
-    target_compile_definitions(quemusic_valid_source_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.valid"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Fixture Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-    )
 
     add_source_plugin_fixture(quemusic_duplicate_source_fixture_one duplicate)
     target_compile_definitions(quemusic_duplicate_source_fixture_one PRIVATE
@@ -148,13 +143,14 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_source_manager_test PRIVATE cxx_std_17)
     target_compile_definitions(quemusic_source_manager_test PRIVATE
         QUEMUSIC_TEST_PLUGIN_ROOT="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins"
+        QUEMUSIC_TEST_SOURCE_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins/source"
     )
     target_link_libraries(quemusic_source_manager_test PRIVATE
         quemusic_source_manager
         Qt6::Test
     )
     add_dependencies(quemusic_source_manager_test
-        quemusic_valid_source_fixture
+        quemusic_test_source
         quemusic_duplicate_source_fixture_one
         quemusic_duplicate_source_fixture_two
         quemusic_invalid_valid_fixture
