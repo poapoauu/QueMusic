@@ -13,4 +13,5 @@ target_link_libraries(quemusic_test_source PRIVATE
 )
 set_target_properties(quemusic_test_source PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/source"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/source"
 )
