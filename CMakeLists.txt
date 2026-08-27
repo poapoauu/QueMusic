@@ -48,6 +48,30 @@ target_include_directories(quemusic_source_manager PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+add_library(quemusic_playback_sdk STATIC
+    sdk/playback/IPlaybackEngine.h
+    sdk/playback/IPlaybackPlugin.h
+    sdk/playback/PlaybackTypes.h
+)
+target_compile_features(quemusic_playback_sdk PUBLIC cxx_std_17)
+target_link_libraries(quemusic_playback_sdk PUBLIC
+    quemusic_source_sdk
+    Qt6::Core
+)
+target_include_directories(quemusic_playback_sdk PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/playback
+)
+
+add_library(quemusic_playback_manager STATIC
+    core/playback/PlaybackEngineManager.cpp
+    core/playback/PlaybackEngineManager.h
+)
+target_compile_features(quemusic_playback_manager PUBLIC cxx_std_17)
+target_link_libraries(quemusic_playback_manager PUBLIC quemusic_playback_sdk)
+target_include_directories(quemusic_playback_manager PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/playback
+)
+
 if(BUILD_TESTING)
     enable_testing()
     find_package(Qt6 REQUIRED COMPONENTS Test)
@@ -72,6 +96,15 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_plugin_contract_test COMMAND quemusic_source_plugin_contract_test)
+
+    qt_add_executable(quemusic_playback_plugin_contract_test
+        tests/tst_PlaybackPluginContract.cpp
+    )
+    target_link_libraries(quemusic_playback_plugin_contract_test PRIVATE
+        quemusic_playback_manager
+        Qt6::Test
+    )
+    add_test(NAME quemusic_playback_plugin_contract_test COMMAND quemusic_playback_plugin_contract_test)
 
     function(add_source_plugin_fixture target directory)
         add_library(${target} MODULE tests/fixtures/FakeSourcePlugin.cpp)
