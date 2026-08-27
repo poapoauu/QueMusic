@@ -10,6 +10,9 @@ class IPlaybackPlugin {
 public:
     virtual ~IPlaybackPlugin() = default;
 
+    // Plugins registered with PlaybackEngineManager must also inherit QObject.
+    // The manager observes that QObject lifetime and removes the registration
+    // when its owner destroys the plugin.
     virtual QString engineId() const = 0;
     virtual QString engineName() const = 0;
     virtual IPlaybackEngine *createEngine(QObject *parent) = 0;

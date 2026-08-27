@@ -21,11 +21,21 @@ public:
     StreamDescriptor openedSource;
 };
 
-class FakePlaybackPlugin final : public IPlaybackPlugin {
+class FakePlaybackPlugin final : public QObject, public IPlaybackPlugin {
+    Q_OBJECT
+    Q_INTERFACES(IPlaybackPlugin)
+
 public:
     QString engineId() const override { return QStringLiteral("fake-playback"); }
     QString engineName() const override { return QStringLiteral("Fake Playback"); }
     IPlaybackEngine *createEngine(QObject *parent) override { return new FakePlaybackEngine(parent); }
+};
+
+class NonQObjectPlaybackPlugin final : public IPlaybackPlugin {
+public:
+    QString engineId() const override { return QStringLiteral("non-qobject-playback"); }
+    QString engineName() const override { return QStringLiteral("Non QObject Playback"); }
+    IPlaybackEngine *createEngine(QObject *) override { return nullptr; }
 };
 
 class PlaybackPluginContractTest : public QObject {
@@ -34,6 +44,8 @@ class PlaybackPluginContractTest : public QObject {
 private slots:
     void registersPlaybackPlugin();
     void rejectsDuplicatePlaybackEngineId();
+    void rejectsNonQObjectPlaybackPlugin();
+    void removesDestroyedPlaybackPluginRegistration();
     void forwardsStreamDescriptorWithoutSourceDependency();
 };
 
@@ -57,6 +69,31 @@ void PlaybackPluginContractTest::rejectsDuplicatePlaybackEngineId()
     QVERIFY(manager.registerPlugin(&firstPlugin));
     QVERIFY(!manager.registerPlugin(&duplicatePlugin));
     QCOMPARE(manager.engineIds(), QStringList({QStringLiteral("fake-playback")}));
+}
+
+void PlaybackPluginContractTest::rejectsNonQObjectPlaybackPlugin()
+{
+    PlaybackEngineManager manager;
+    NonQObjectPlaybackPlugin plugin;
+
+    QVERIFY(!manager.registerPlugin(&plugin));
+    QCOMPARE(manager.engineIds(), QStringList());
+}
+
+void PlaybackPluginContractTest::removesDestroyedPlaybackPluginRegistration()
+{
+    PlaybackEngineManager manager;
+    auto *plugin = new FakePlaybackPlugin;
+
+    QVERIFY(manager.registerPlugin(plugin));
+    delete plugin;
+
+    QCOMPARE(manager.engineIds(), QStringList());
+    QVERIFY(!manager.useEngine(QStringLiteral("fake-playback")));
+
+    FakePlaybackPlugin replacement;
+    QVERIFY(manager.registerPlugin(&replacement));
+    QVERIFY(manager.useEngine(replacement.engineId()));
 }
 
 void PlaybackPluginContractTest::forwardsStreamDescriptorWithoutSourceDependency()
