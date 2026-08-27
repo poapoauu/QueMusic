@@ -23,6 +23,9 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network Multimedia Concu
 add_subdirectory(meshgradient)
 
 add_library(quemusic_source_sdk STATIC
+    sdk/source/IMusicSourcePlugin.h
+    sdk/source/IMusicSourceSession.h
+    sdk/source/SourcePluginContext.h
     sdk/source/SourceTypes.cpp
     sdk/source/SourceTypes.h
 )
@@ -44,6 +47,16 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_types_test COMMAND quemusic_source_types_test)
+
+    qt_add_executable(quemusic_source_plugin_contract_test
+        tests/tst_SourcePluginContract.cpp
+    )
+    target_link_libraries(quemusic_source_plugin_contract_test PRIVATE
+        quemusic_source_sdk
+        Qt6::Network
+        Qt6::Test
+    )
+    add_test(NAME quemusic_source_plugin_contract_test COMMAND quemusic_source_plugin_contract_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}
