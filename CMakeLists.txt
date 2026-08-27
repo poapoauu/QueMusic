@@ -35,6 +35,19 @@ target_include_directories(quemusic_source_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
 )
 
+add_library(quemusic_source_manager STATIC
+    core/source/SourceManager.cpp
+    core/source/SourceManager.h
+)
+target_compile_features(quemusic_source_manager PUBLIC cxx_std_17)
+target_link_libraries(quemusic_source_manager PUBLIC
+    quemusic_source_sdk
+    Qt6::Network
+)
+target_include_directories(quemusic_source_manager PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/source
+)
+
 if(BUILD_TESTING)
     enable_testing()
     find_package(Qt6 REQUIRED COMPONENTS Test)
@@ -57,6 +70,101 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_plugin_contract_test COMMAND quemusic_source_plugin_contract_test)
+
+    function(add_source_plugin_fixture target directory)
+        add_library(${target} MODULE tests/fixtures/FakeSourcePlugin.cpp)
+        target_compile_features(${target} PRIVATE cxx_std_17)
+        target_link_libraries(${target} PRIVATE quemusic_source_sdk)
+        set_target_properties(${target} PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/${directory}"
+        )
+    endfunction()
+
+    add_source_plugin_fixture(quemusic_valid_source_fixture valid)
+    target_compile_definitions(quemusic_valid_source_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.valid"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Fixture Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+    )
+
+    add_source_plugin_fixture(quemusic_duplicate_source_fixture_one duplicate)
+    target_compile_definitions(quemusic_duplicate_source_fixture_one PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.duplicate"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Duplicate Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+    )
+
+    add_source_plugin_fixture(quemusic_duplicate_source_fixture_two duplicate)
+    target_compile_definitions(quemusic_duplicate_source_fixture_two PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.duplicate"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Duplicate Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+    )
+
+    add_source_plugin_fixture(quemusic_invalid_valid_fixture invalid)
+    target_compile_definitions(quemusic_invalid_valid_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.valid"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Fixture Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+    )
+
+    add_source_plugin_fixture(quemusic_empty_id_source_fixture invalid)
+    target_compile_definitions(quemusic_empty_id_source_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID=""
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Empty ID Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+    )
+
+    add_source_plugin_fixture(quemusic_empty_sdk_source_fixture invalid)
+    target_compile_definitions(quemusic_empty_sdk_source_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.empty-sdk"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Empty SDK Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION=""
+    )
+
+    add_source_plugin_fixture(quemusic_missing_name_source_fixture invalid)
+    target_compile_definitions(quemusic_missing_name_source_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.missing-name"
+        QUEMUSIC_FIXTURE_SOURCE_NAME=""
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+    )
+
+    add_source_plugin_fixture(quemusic_initialization_failure_fixture invalid)
+    target_compile_definitions(quemusic_initialization_failure_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.initialize-failure"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Initialization Failure Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+        QUEMUSIC_FIXTURE_INITIALIZE_FAILS
+    )
+
+    add_source_plugin_fixture(quemusic_not_source_fixture invalid)
+    target_compile_definitions(quemusic_not_source_fixture PRIVATE
+        QUEMUSIC_FIXTURE_NOT_SOURCE
+    )
+
+    qt_add_executable(quemusic_source_manager_test
+        tests/tst_SourceManager.cpp
+    )
+    target_compile_features(quemusic_source_manager_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_source_manager_test PRIVATE
+        QUEMUSIC_TEST_PLUGIN_ROOT="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins"
+    )
+    target_link_libraries(quemusic_source_manager_test PRIVATE
+        quemusic_source_manager
+        Qt6::Test
+    )
+    add_dependencies(quemusic_source_manager_test
+        quemusic_valid_source_fixture
+        quemusic_duplicate_source_fixture_one
+        quemusic_duplicate_source_fixture_two
+        quemusic_invalid_valid_fixture
+        quemusic_empty_id_source_fixture
+        quemusic_empty_sdk_source_fixture
+        quemusic_missing_name_source_fixture
+        quemusic_initialization_failure_fixture
+        quemusic_not_source_fixture
+    )
+    add_test(NAME quemusic_source_manager_test COMMAND quemusic_source_manager_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}
