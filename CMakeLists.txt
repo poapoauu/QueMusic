@@ -22,19 +22,19 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network Multimedia Concu
 # 独立 Mesh Gradient 组件（AGPL-3.0，衍生自 AMLL）：以独立库 target 聚合
 add_subdirectory(meshgradient)
 
+add_library(quemusic_source_sdk STATIC
+    sdk/source/SourceTypes.cpp
+    sdk/source/SourceTypes.h
+)
+target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
+target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
+target_include_directories(quemusic_source_sdk PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
+)
+
 if(BUILD_TESTING)
     enable_testing()
     find_package(Qt6 REQUIRED COMPONENTS Test)
-
-    add_library(quemusic_source_sdk STATIC
-        sdk/source/SourceTypes.cpp
-        sdk/source/SourceTypes.h
-    )
-    target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
-    target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
-    target_include_directories(quemusic_source_sdk PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
-    )
 
     qt_add_executable(quemusic_source_types_test
         tests/tst_SourceTypes.cpp
