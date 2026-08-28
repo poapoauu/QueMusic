@@ -48,6 +48,19 @@ target_include_directories(quemusic_source_manager PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+add_library(quemusic_source_startup STATIC
+    core/source/SourceStartup.cpp
+    core/source/SourceStartup.h
+)
+target_compile_features(quemusic_source_startup PUBLIC cxx_std_17)
+target_link_libraries(quemusic_source_startup PUBLIC
+    quemusic_source_manager
+    Qt6::Core
+)
+target_include_directories(quemusic_source_startup PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/source
+)
+
 add_library(quemusic_playback_sdk STATIC
     sdk/playback/IPlaybackEngine.h
     sdk/playback/IPlaybackPlugin.h
@@ -194,6 +207,18 @@ if(BUILD_TESTING)
         quemusic_not_source_fixture
     )
     add_test(NAME quemusic_source_manager_test COMMAND quemusic_source_manager_test)
+
+    qt_add_executable(quemusic_plugin_startup_test
+        tests/tst_PluginStartup.cpp
+    )
+    target_compile_features(quemusic_plugin_startup_test PRIVATE cxx_std_17)
+    target_link_libraries(quemusic_plugin_startup_test PRIVATE
+        quemusic_source_startup
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::Test
+    )
+    add_test(NAME quemusic_plugin_startup_test COMMAND quemusic_plugin_startup_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}
@@ -346,6 +371,7 @@ target_link_libraries(${PROJECT_NAME}
         QCloudMusicApi
         cryptopp::cryptopp
         quemusic_meshgradientplugin
+        quemusic_source_startup
         z
     PUBLIC QWindowKit::Quick
 )
