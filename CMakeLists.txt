@@ -64,6 +64,12 @@ target_include_directories(quemusic_source_startup PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+if(BUILD_TESTING)
+    enable_testing()
+endif()
+
+add_subdirectory(plugins/navidrome-source)
+
 add_library(quemusic_playback_sdk STATIC
     sdk/playback/IPlaybackEngine.h
     sdk/playback/IPlaybackPlugin.h
