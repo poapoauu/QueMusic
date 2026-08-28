@@ -21,6 +21,7 @@ private slots:
     void fakeSourceCancellationSuppressesResult();
     void fakeSourceCompletesStreamResolution();
     void fakeSourceCompletesArtworkFetch();
+    void baseOnlyFixtureDoesNotExposeArtworkInterface();
 };
 
 namespace {
@@ -236,6 +237,21 @@ void SourceManagerTest::fakeSourceCompletesArtworkFetch()
     QCOMPARE(artwork.value(QStringLiteral("url")).toString(),
              QStringLiteral("https://example.invalid/test-track-1.png"));
     QCOMPARE(artwork.value(QStringLiteral("mimeType")).toString(), QStringLiteral("image/png"));
+}
+
+void SourceManagerTest::baseOnlyFixtureDoesNotExposeArtworkInterface()
+{
+    SourceManager manager;
+    QObject parent;
+    const SourceAccount account{QStringLiteral("fixture.valid"), QStringLiteral("account-1"),
+                                QStringLiteral("Fixture Account")};
+
+    manager.addSearchPath(fixtureDirectory(QStringLiteral("invalid")));
+    QCOMPARE(manager.loadAll(), 1);
+
+    IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
+    QVERIFY(session != nullptr);
+    QCOMPARE(qobject_cast<IMusicSourceArtworkSession *>(session), nullptr);
 }
 
 QTEST_MAIN(SourceManagerTest)
