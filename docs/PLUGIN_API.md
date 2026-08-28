@@ -97,6 +97,11 @@ prompt, or ABI isolation layer. Only install plugins from trusted sources.
 - `initialize(SourcePluginContext &context)` runs once when the plugin is loaded.
 - `createSession(const SourceAccount &, QObject *parent)` creates a per-account
   session owned by the provided parent.
+- `SourceAccount` keeps its identity fields (`sourceId`, `accountId`, and
+  `displayName`) first, then provides plugin-defined connection data through
+  `parameters` (`QVariantMap`) and sensitive bytes through `secret`
+  (`QByteArray`). Plugins must document the parameter keys they accept and must
+  never log `secret` or derived credentials.
 - `IMusicSourceSession` handles async provider work and must implement:
   `search`, `browse`, `resolveStream`, the retained legacy `fetchArtwork`,
   `fetchLyrics`, and `cancel`, in that virtual order.

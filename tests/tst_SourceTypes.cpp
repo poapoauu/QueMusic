@@ -11,6 +11,7 @@ class SourceTypesTest : public QObject {
 private slots:
     void locksStableSourceIids();
     void roundTripsDescriptorWithCapabilities();
+    void sourceAccountCarriesConnectionParametersWithoutChangingIdentity();
     void keepsProviderIdsNamespacedBySource();
     void preservesExpiringStreamHeadersAndMediaKind();
     void mapsUnknownErrorKindToUnknown();
@@ -60,6 +61,26 @@ void SourceTypesTest::roundTripsDescriptorWithCapabilities()
              SourceCapability::Scrobble}) {
         QVERIFY(roundTripped.capabilities.testFlag(capability));
     }
+}
+
+void SourceTypesTest::sourceAccountCarriesConnectionParametersWithoutChangingIdentity()
+{
+    const SourceAccount account{
+        QStringLiteral("navidrome"),
+        QStringLiteral("admin"),
+        QStringLiteral("Navidrome Admin"),
+        {{QStringLiteral("serverUrl"), QStringLiteral("http://example.invalid:8533")},
+         {QStringLiteral("username"), QStringLiteral("admin")}},
+        QByteArrayLiteral("test-password")};
+
+    QCOMPARE(account.sourceId, QStringLiteral("navidrome"));
+    QCOMPARE(account.accountId, QStringLiteral("admin"));
+    QCOMPARE(account.displayName, QStringLiteral("Navidrome Admin"));
+    QCOMPARE(account.parameters.value(QStringLiteral("serverUrl")).toString(),
+             QStringLiteral("http://example.invalid:8533"));
+    QCOMPARE(account.parameters.value(QStringLiteral("username")).toString(),
+             QStringLiteral("admin"));
+    QCOMPARE(account.secret, QByteArrayLiteral("test-password"));
 }
 
 void SourceTypesTest::keepsProviderIdsNamespacedBySource()

@@ -1,11 +1,13 @@
 #pragma once
 
+#include <QByteArray>
 #include <QDateTime>
 #include <QFlags>
 #include <QJsonObject>
 #include <QMap>
 #include <QString>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <optional>
 
@@ -57,6 +59,8 @@ struct SourceAccount {
     QString sourceId;
     QString accountId;
     QString displayName;
+    QVariantMap parameters;
+    QByteArray secret;
 };
 
 struct TrackRef {
