@@ -101,10 +101,14 @@ IMusicSourceSession
 ├── search(SearchQuery)
 ├── browse(BrowseQuery)
 ├── resolveStream(TrackRef)
-├── fetchArtwork(ArtworkRef)
 ├── fetchLyrics(TrackRef)
 ├── read/write playlists when supported
 └── fetchVideo(TrackRef) when supported
+
+Optional capability interfaces extend a session without changing this base
+vtable. For example, `IMusicSourceArtworkSession` provides
+`fetchArtwork(const TrackRef &)`. Other optional capabilities follow the same
+independently versioned pattern.
 ```
 
 The exact C++ declarations will be chosen during implementation, but the
@@ -123,6 +127,23 @@ following constraints are fixed:
   and media kind; a stream is not represented by a URL alone.
 - Source errors are normalized into categories such as authentication,
   network, permission, not-found, rate-limit, unsupported, and parse failure.
+
+### ABI compatibility decision
+
+The base `IMusicSourceSession` contract and
+`org.quemusic.MusicSourcePlugin/1.0` IID are immutable after publication. The
+artwork operation is an optional capability interface rather than a new pure
+virtual method on the base session. Its initial interface is
+`IMusicSourceArtworkSession` with its own IID,
+`org.quemusic.MusicSourceArtworkSession/1.0`, and the operation
+`fetchArtwork(const TrackRef &)`. A session may implement that interface in
+addition to `IMusicSourceSession`; the host discovers it with
+`qobject_cast` only when the source advertises `Artwork`.
+
+This preserves binary compatibility for existing source plugins while still
+allowing capability-specific APIs to evolve independently. Any breaking
+change to the base source or playback contracts requires a new major IID;
+old IID semantics are never silently changed.
 
 ### Capabilities
 
@@ -242,6 +263,7 @@ sdk/
   source/
     IMusicSourcePlugin.h
     IMusicSourceSession.h
+    IMusicSourceArtworkSession.h
     SourceTypes.h
 core/
   source/
@@ -286,6 +308,9 @@ component must retain its copyright and license notices.
   to unified models.
 - Playback tests verify that source plugins return descriptors and never depend
   on a concrete engine.
+- Optional capability interfaces are versioned independently from the base
+  source session, and an older base-session plugin remains loadable when an
+  optional capability is absent.
 - Existing QueMusic build and local-lyrics tests remain green.
 - No QML code performs source HTTP requests or token handling.
 
@@ -301,6 +326,10 @@ The recommended first implementation is:
 4. Implement Local and Navidrome source adapters before migrating Kugou and
    NetEase.
 5. Keep the Issue #12 branch independent from this architecture branch.
+
+The approved ABI decision is to keep `IMusicSourceSession` and the base source
+IID stable, and expose artwork through the separately versioned optional
+`IMusicSourceArtworkSession` interface described above.
 
 This design is ready for review. Implementation should begin only after the
 architecture and first milestone are approved.
