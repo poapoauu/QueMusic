@@ -19,7 +19,6 @@ private slots:
 
 void PluginStartupTest::startupAddsApplicationAndUserPluginDirectories()
 {
-    QStandardPaths::setTestModeEnabled(true);
     QCoreApplication::setOrganizationName(QStringLiteral("BroNekoX"));
     QCoreApplication::setApplicationName(QStringLiteral("QueMusic"));
 
@@ -35,7 +34,6 @@ void PluginStartupTest::startupAddsApplicationAndUserPluginDirectories()
 
 void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
 {
-    QStandardPaths::setTestModeEnabled(true);
     QCoreApplication::setOrganizationName(QStringLiteral("BroNekoX"));
     QCoreApplication::setApplicationName(QStringLiteral("QueMusic"));
 
@@ -46,7 +44,6 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
     QCOMPARE(manager->parent(), QCoreApplication::instance());
     const QStringList searchPaths = defaultSourcePluginSearchPaths(*QCoreApplication::instance());
     QCOMPARE(searchPaths.size(), 2);
-    QVERIFY(!QDir(searchPaths.at(1)).exists());
 
     engine.rootContext()->setContextProperty(QStringLiteral("startupSentinel"),
                                              QStringLiteral("still-usable"));

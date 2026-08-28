@@ -30,4 +30,5 @@ private:
 
     std::vector<RegisteredPlugin> m_plugins;
     IPlaybackEngine *m_currentEngine = nullptr;
+    QObject *m_currentEnginePlugin = nullptr;
 };

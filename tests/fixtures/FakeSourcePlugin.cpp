@@ -1,6 +1,7 @@
 #include "IMusicSourcePlugin.h"
 
-#include <QJsonValue>
+#include <QJsonArray>
+#include <QTimer>
 
 class FixtureSourceSession final : public IMusicSourceSession {
     Q_OBJECT
@@ -8,11 +9,33 @@ class FixtureSourceSession final : public IMusicSourceSession {
 public:
     using IMusicSourceSession::IMusicSourceSession;
 
-    QUuid search(const SearchQuery &) override { return QUuid::createUuid(); }
-    QUuid browse(const BrowseQuery &) override { return QUuid::createUuid(); }
-    QUuid resolveStream(const TrackRef &) override { return QUuid::createUuid(); }
-    QUuid fetchLyrics(const TrackRef &) override { return QUuid::createUuid(); }
+    QUuid search(const SearchQuery &) override { return completeSuccess(QStringLiteral("search")); }
+    QUuid browse(const BrowseQuery &) override { return completeUnsupported(); }
+    QUuid resolveStream(const TrackRef &) override { return completeUnsupported(); }
+    QUuid fetchArtwork(const TrackRef &) override { return completeUnsupported(); }
+    QUuid fetchLyrics(const TrackRef &) override { return completeUnsupported(); }
     void cancel(const QUuid &) override { }
+
+private:
+    QUuid completeSuccess(const QString &operation)
+    {
+        const QUuid requestId = QUuid::createUuid();
+        QTimer::singleShot(0, this, [this, requestId, operation] {
+            emit requestSucceeded(requestId, operation, QJsonArray{});
+        });
+        return requestId;
+    }
+
+    QUuid completeUnsupported()
+    {
+        const QUuid requestId = QUuid::createUuid();
+        QTimer::singleShot(0, this, [this, requestId] {
+            emit requestFailed(requestId,
+                               {SourceErrorKind::Unsupported,
+                                QStringLiteral("Fixture operation is unsupported"), std::nullopt});
+        });
+        return requestId;
+    }
 };
 
 #if defined(QUEMUSIC_FIXTURE_NOT_SOURCE)
@@ -37,7 +60,7 @@ public:
                 QStringLiteral("1.0.0"),
                 QStringLiteral("test"),
                 QStringLiteral(QUEMUSIC_FIXTURE_SDK_VERSION),
-                SourceCapability::Search | SourceCapability::StreamAudio};
+                SourceCapability::Search};
     }
 
     bool initialize(SourcePluginContext &) override

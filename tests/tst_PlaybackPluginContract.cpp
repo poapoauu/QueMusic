@@ -46,6 +46,7 @@ private slots:
     void rejectsDuplicatePlaybackEngineId();
     void rejectsNonQObjectPlaybackPlugin();
     void removesDestroyedPlaybackPluginRegistration();
+    void destroysActiveEngineWhenSupplyingPluginIsDestroyed();
     void forwardsStreamDescriptorWithoutSourceDependency();
 };
 
@@ -94,6 +95,25 @@ void PlaybackPluginContractTest::removesDestroyedPlaybackPluginRegistration()
     FakePlaybackPlugin replacement;
     QVERIFY(manager.registerPlugin(&replacement));
     QVERIFY(manager.useEngine(replacement.engineId()));
+}
+
+void PlaybackPluginContractTest::destroysActiveEngineWhenSupplyingPluginIsDestroyed()
+{
+    PlaybackEngineManager manager;
+    auto *plugin = new FakePlaybackPlugin;
+
+    QVERIFY(manager.registerPlugin(plugin));
+    QVERIFY(manager.useEngine(plugin->engineId()));
+    QVERIFY(manager.currentEngine() != nullptr);
+
+    delete plugin;
+
+    QVERIFY(manager.currentEngine() == nullptr);
+
+    FakePlaybackPlugin replacement;
+    QVERIFY(manager.registerPlugin(&replacement));
+    QVERIFY(manager.useEngine(replacement.engineId()));
+    QVERIFY(manager.currentEngine() != nullptr);
 }
 
 void PlaybackPluginContractTest::forwardsStreamDescriptorWithoutSourceDependency()

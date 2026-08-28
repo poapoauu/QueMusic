@@ -17,4 +17,13 @@ public:
 };
 
 #define QUEMUSIC_MUSIC_SOURCE_PLUGIN_IID "org.quemusic.MusicSourcePlugin/1.0"
+#define QUEMUSIC_MUSIC_SOURCE_SDK_VERSION "1.0"
+
+// IID 1.0 accepts only the exact source SDK contract version. Any compatible
+// expansion requires an explicit host policy change and focused test coverage.
+inline bool isMusicSourceSdkVersionCompatible(const QString &sdkVersion)
+{
+    return sdkVersion == QStringLiteral(QUEMUSIC_MUSIC_SOURCE_SDK_VERSION);
+}
+
 Q_DECLARE_INTERFACE(IMusicSourcePlugin, QUEMUSIC_MUSIC_SOURCE_PLUGIN_IID)

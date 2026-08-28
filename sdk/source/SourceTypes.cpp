@@ -40,6 +40,9 @@ SourceErrorKind sourceErrorKindFromString(const QString &value)
     if (value == QStringLiteral("unavailable")) {
         return SourceErrorKind::Unavailable;
     }
+    if (value == QStringLiteral("unsupported")) {
+        return SourceErrorKind::Unsupported;
+    }
     return SourceErrorKind::Unknown;
 }
 

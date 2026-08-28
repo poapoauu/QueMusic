@@ -3,7 +3,9 @@
 #include "SourcePluginContext.h"
 
 #include <QNetworkAccessManager>
+#include <QSignalSpy>
 #include <QTest>
+#include <QTimer>
 
 class FakeMusicSourceSession final : public IMusicSourceSession {
     Q_OBJECT
@@ -13,15 +15,41 @@ public:
 
     QUuid search(const SearchQuery &query) override
     {
+        return completeSuccess(QStringLiteral("search"), QJsonValue(query.query));
+    }
+
+    QUuid browse(const BrowseQuery &) override { return completeUnsupported(); }
+    QUuid resolveStream(const TrackRef &track) override
+    {
+        return completeSuccess(QStringLiteral("resolveStream"),
+                               QJsonObject{{QStringLiteral("url"),
+                                            QStringLiteral("https://example.invalid/%1.mp3")
+                                                .arg(track.nativeId)}});
+    }
+    QUuid fetchArtwork(const TrackRef &) override { return completeUnsupported(); }
+    QUuid fetchLyrics(const TrackRef &) override { return completeUnsupported(); }
+    void cancel(const QUuid &) override { }
+
+private:
+    QUuid completeSuccess(const QString &operation, const QJsonValue &result)
+    {
         const QUuid requestId = QUuid::createUuid();
-        emit requestSucceeded(requestId, QStringLiteral("search"), QJsonValue(query.query));
+        QTimer::singleShot(0, this, [this, requestId, operation, result] {
+            emit requestSucceeded(requestId, operation, result);
+        });
         return requestId;
     }
 
-    QUuid browse(const BrowseQuery &) override { return QUuid::createUuid(); }
-    QUuid resolveStream(const TrackRef &) override { return QUuid::createUuid(); }
-    QUuid fetchLyrics(const TrackRef &) override { return QUuid::createUuid(); }
-    void cancel(const QUuid &) override { }
+    QUuid completeUnsupported()
+    {
+        const QUuid requestId = QUuid::createUuid();
+        QTimer::singleShot(0, this, [this, requestId] {
+            emit requestFailed(requestId,
+                               {SourceErrorKind::Unsupported,
+                                QStringLiteral("Fake operation is unsupported"), std::nullopt});
+        });
+        return requestId;
+    }
 };
 
 class FakeMusicSourcePlugin final : public QObject, public IMusicSourcePlugin {
@@ -77,21 +105,14 @@ void SourcePluginContractTest::createsSessionThroughStableContract()
 void SourcePluginContractTest::reportsAsyncOperationByRequestId()
 {
     FakeMusicSourceSession session;
-    QUuid completedRequestId;
-    QString operation;
-    QObject::connect(&session, &IMusicSourceSession::requestSucceeded, &session,
-                     [&completedRequestId, &operation](const QUuid &requestId,
-                                                        const QString &operationName,
-                                                        const QJsonValue &) {
-                         completedRequestId = requestId;
-                         operation = operationName;
-                     });
+    QSignalSpy succeeded(&session, &IMusicSourceSession::requestSucceeded);
 
     const QUuid requestId = session.search({QStringLiteral("ambient"), 10});
 
     QVERIFY(!requestId.isNull());
-    QCOMPARE(completedRequestId, requestId);
-    QCOMPARE(operation, QStringLiteral("search"));
+    QVERIFY(succeeded.wait(1000));
+    QCOMPARE(succeeded.constFirst().at(0).toUuid(), requestId);
+    QCOMPARE(succeeded.constFirst().at(1).toString(), QStringLiteral("search"));
 }
 
 void SourcePluginContractTest::exposesCapabilitiesWithoutProviderBranching()

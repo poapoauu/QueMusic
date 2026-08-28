@@ -15,8 +15,11 @@ private slots:
     void rejectsUnknownSourceId();
     void rejectsDuplicateSourceIdWithoutStoppingOtherSources();
     void rejectsInvalidPluginsWithoutStoppingOtherSources();
+    void rejectsUnsupportedSdkVersionWithoutStoppingOtherSources();
     void fakeSourceReturnsNamespacedTrack();
     void fakeSourceCancellationSuppressesResult();
+    void fakeSourceCompletesStreamResolution();
+    void fakeSourceCompletesArtworkFetch();
 };
 
 namespace {
@@ -117,6 +120,20 @@ void SourceManagerTest::rejectsInvalidPluginsWithoutStoppingOtherSources()
     QCOMPARE(manager.sourceIds(), QStringList({QStringLiteral("fixture.valid")}));
 }
 
+void SourceManagerTest::rejectsUnsupportedSdkVersionWithoutStoppingOtherSources()
+{
+    SourceManager manager;
+    QSignalSpy failed(&manager, &SourceManager::sourceLoadFailed);
+
+    manager.addSearchPath(fixtureDirectory(QStringLiteral("incompatible")));
+    manager.addSearchPath(testSourcePluginDirectory());
+
+    QCOMPARE(manager.loadAll(), 1);
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(manager.sourceIds(), QStringList({QStringLiteral("test-source")}));
+    QVERIFY(failed.constFirst().at(1).toString().contains(QStringLiteral("2.0")));
+}
+
 void SourceManagerTest::fakeSourceReturnsNamespacedTrack()
 {
     SourceManager manager;
@@ -164,6 +181,58 @@ void SourceManagerTest::fakeSourceCancellationSuppressesResult()
 
     QTest::qWait(50);
     QCOMPARE(succeeded.count(), 0);
+}
+
+void SourceManagerTest::fakeSourceCompletesStreamResolution()
+{
+    SourceManager manager;
+    QObject parent;
+    const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
+                                QStringLiteral("Test Account")};
+
+    manager.addSearchPath(testSourcePluginDirectory());
+    QCOMPARE(manager.loadAll(), 1);
+    IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
+    QVERIFY(session != nullptr);
+
+    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
+    const TrackRef track{QStringLiteral("test-source"), QStringLiteral("test-track-1")};
+    const QUuid requestId = session->resolveStream(track);
+
+    QVERIFY(succeeded.wait(1000));
+    const QList<QVariant> arguments = succeeded.constFirst();
+    QCOMPARE(arguments.at(0).toUuid(), requestId);
+    QCOMPARE(arguments.at(1).toString(), QStringLiteral("resolveStream"));
+    const QJsonObject stream = arguments.at(2).toJsonValue().toObject();
+    QCOMPARE(stream.value(QStringLiteral("url")).toString(),
+             QStringLiteral("https://example.invalid/test-track-1.mp3"));
+    QCOMPARE(stream.value(QStringLiteral("mimeType")).toString(), QStringLiteral("audio/mpeg"));
+}
+
+void SourceManagerTest::fakeSourceCompletesArtworkFetch()
+{
+    SourceManager manager;
+    QObject parent;
+    const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
+                                QStringLiteral("Test Account")};
+
+    manager.addSearchPath(testSourcePluginDirectory());
+    QCOMPARE(manager.loadAll(), 1);
+    IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
+    QVERIFY(session != nullptr);
+
+    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
+    const TrackRef track{QStringLiteral("test-source"), QStringLiteral("test-track-1")};
+    const QUuid requestId = session->fetchArtwork(track);
+
+    QVERIFY(succeeded.wait(1000));
+    const QList<QVariant> arguments = succeeded.constFirst();
+    QCOMPARE(arguments.at(0).toUuid(), requestId);
+    QCOMPARE(arguments.at(1).toString(), QStringLiteral("fetchArtwork"));
+    const QJsonObject artwork = arguments.at(2).toJsonValue().toObject();
+    QCOMPARE(artwork.value(QStringLiteral("url")).toString(),
+             QStringLiteral("https://example.invalid/test-track-1.png"));
+    QCOMPARE(artwork.value(QStringLiteral("mimeType")).toString(), QStringLiteral("image/png"));
 }
 
 QTEST_MAIN(SourceManagerTest)

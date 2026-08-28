@@ -16,6 +16,7 @@ public:
     virtual QUuid search(const SearchQuery &query) = 0;
     virtual QUuid browse(const BrowseQuery &query) = 0;
     virtual QUuid resolveStream(const TrackRef &track) = 0;
+    virtual QUuid fetchArtwork(const TrackRef &track) = 0;
     virtual QUuid fetchLyrics(const TrackRef &track) = 0;
     virtual void cancel(const QUuid &requestId) = 0;
 

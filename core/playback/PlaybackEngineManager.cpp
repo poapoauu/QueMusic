@@ -33,11 +33,16 @@ bool PlaybackEngineManager::registerPlugin(IPlaybackPlugin *plugin)
     }
 
     m_plugins.push_back({engineId, pluginObject, plugin});
-    connect(pluginObject, &QObject::destroyed, this, [this, pluginObject] {
+    connect(pluginObject, &QObject::destroyed, this, [this](QObject *destroyedPlugin) {
+        if (m_currentEnginePlugin == destroyedPlugin) {
+            delete m_currentEngine;
+            m_currentEngine = nullptr;
+            m_currentEnginePlugin = nullptr;
+        }
         m_plugins.erase(std::remove_if(m_plugins.begin(), m_plugins.end(),
-                                       [pluginObject](const RegisteredPlugin &candidate) {
+                                       [destroyedPlugin](const RegisteredPlugin &candidate) {
                                            return candidate.object.isNull()
-                                               || candidate.object.data() == pluginObject;
+                                               || candidate.object.data() == destroyedPlugin;
                                        }),
                         m_plugins.end());
     });
@@ -74,6 +79,7 @@ bool PlaybackEngineManager::useEngine(const QString &engineId)
 
     delete m_currentEngine;
     m_currentEngine = engine;
+    m_currentEnginePlugin = plugin->object.data();
     return true;
 }
 

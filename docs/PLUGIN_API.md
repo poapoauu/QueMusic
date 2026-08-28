@@ -9,12 +9,15 @@ providers.
 - Interface: `IMusicSourcePlugin`
 - Session base class: `IMusicSourceSession`
 - Plugin IID: `org.quemusic.MusicSourcePlugin/1.0`
-- SDK version field: `SourceDescriptor::sdkVersion`
+- SDK version field: `SourceDescriptor::sdkVersion` (exactly `1.0` for IID 1.0)
 
 Plugins must be built against the same Qt major version and the QueMusic source
-SDK headers shipped in `sdk/source`. A plugin is rejected if it does not expose
-the required IID, has an empty source id, sdk version, or display name, or if
-another loaded plugin already uses the same source id.
+SDK headers shipped in `sdk/source`. IID 1.0 has one authoritative compatibility
+policy: `sdkVersion` must exactly equal `1.0`; empty, older, newer, or differently
+formatted values are rejected before `initialize()` runs. A future compatible
+version must be added intentionally to the host policy with tests. A plugin is
+also rejected if it does not expose the required IID, has an empty source id or
+display name, or if another loaded plugin already uses the same source id.
 
 ## Required Metadata
 
@@ -72,9 +75,15 @@ prompt, or ABI isolation layer. Only install plugins from trusted sources.
 - `createSession(const SourceAccount &, QObject *parent)` creates a per-account
   session owned by the provided parent.
 - `IMusicSourceSession` handles async provider work and must implement:
-  `search`, `browse`, `resolveStream`, `fetchLyrics`, and `cancel`.
+  `search`, `browse`, `resolveStream`, `fetchArtwork`, `fetchLyrics`, and `cancel`.
 - A session reports results with `requestSucceeded`, failures with
   `requestFailed`, and auth state changes with `authenticationChanged`.
+- Every advertised capability must complete a non-cancelled request. For this
+  contract, `StreamAudio` completes `resolveStream` with a JSON
+  `StreamDescriptor` DTO (`track`, `url`, optional `headers`, `mimeType`,
+  `expiresAt`, `video`, and `seekable`); `Artwork` completes `fetchArtwork`
+  with a JSON DTO containing `track`, `url`, and `mimeType`. Unsupported
+  operations emit `requestFailed` with `SourceErrorKind::Unsupported`.
 
 ## Minimal Plugin Skeleton
 
@@ -90,6 +99,7 @@ public:
     QUuid search(const SearchQuery &) override { return QUuid::createUuid(); }
     QUuid browse(const BrowseQuery &) override { return QUuid::createUuid(); }
     QUuid resolveStream(const TrackRef &) override { return QUuid::createUuid(); }
+    QUuid fetchArtwork(const TrackRef &) override { return QUuid::createUuid(); }
     QUuid fetchLyrics(const TrackRef &) override { return QUuid::createUuid(); }
     void cancel(const QUuid &) override {}
 };
@@ -108,7 +118,7 @@ public:
             QStringLiteral("1.0.0"),
             QStringLiteral("example"),
             QStringLiteral("1.0"),
-            SourceCapability::Search | SourceCapability::StreamAudio
+            SourceCapability::None
         };
     }
 

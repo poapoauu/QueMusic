@@ -35,6 +35,7 @@ enum class SourceErrorKind {
     RateLimited,
     InvalidRequest,
     Unavailable,
+    Unsupported,
 };
 
 struct SourceError {

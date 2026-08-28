@@ -62,8 +62,11 @@ int SourceManager::loadAll()
                 reportLoadFailure(pluginPath, QStringLiteral("Duplicate plugin source ID: %1").arg(descriptor.id));
                 continue;
             }
-            if (descriptor.sdkVersion.isEmpty()) {
-                reportLoadFailure(pluginPath, QStringLiteral("Plugin SDK version is empty"));
+            if (!isMusicSourceSdkVersionCompatible(descriptor.sdkVersion)) {
+                reportLoadFailure(pluginPath,
+                                  QStringLiteral("Unsupported plugin SDK version: %1 (host supports %2)")
+                                      .arg(descriptor.sdkVersion,
+                                           QStringLiteral(QUEMUSIC_MUSIC_SOURCE_SDK_VERSION)));
                 continue;
             }
             if (descriptor.name.isEmpty()) {

@@ -30,6 +30,7 @@ add_library(quemusic_source_sdk STATIC
     sdk/source/SourceTypes.h
 )
 target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
+set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
 target_include_directories(quemusic_source_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
@@ -68,6 +69,7 @@ add_library(quemusic_playback_sdk STATIC
     sdk/playback/PlaybackTypes.h
 )
 target_compile_features(quemusic_playback_sdk PUBLIC cxx_std_17)
+set_target_properties(quemusic_playback_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_playback_sdk PUBLIC
     quemusic_source_sdk
     Qt6::Core
@@ -126,6 +128,7 @@ if(BUILD_TESTING)
         target_link_libraries(${target} PRIVATE quemusic_source_sdk)
         set_target_properties(${target} PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/${directory}"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/${directory}"
         )
     endfunction()
 
@@ -184,6 +187,14 @@ if(BUILD_TESTING)
         QUEMUSIC_FIXTURE_NOT_SOURCE
     )
 
+    add_source_plugin_fixture(quemusic_incompatible_sdk_source_fixture incompatible)
+    target_compile_definitions(quemusic_incompatible_sdk_source_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.incompatible-sdk"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Incompatible SDK Source"
+        QUEMUSIC_FIXTURE_SDK_VERSION="2.0"
+        QUEMUSIC_FIXTURE_INITIALIZE_FAILS
+    )
+
     qt_add_executable(quemusic_source_manager_test
         tests/tst_SourceManager.cpp
     )
@@ -206,6 +217,7 @@ if(BUILD_TESTING)
         quemusic_missing_name_source_fixture
         quemusic_initialization_failure_fixture
         quemusic_not_source_fixture
+        quemusic_incompatible_sdk_source_fixture
     )
     add_test(NAME quemusic_source_manager_test COMMAND quemusic_source_manager_test)
 
