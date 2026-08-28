@@ -11,6 +11,7 @@
 #include <QtQuick/QQuickWindow>
 #include <QSettings>
 #include <QFileInfo>
+#include "core/source/SourceStartup.h"
 #include "cpp/FolderModel.h"
 #include "cpp/Favorites.h"
 #include "cpp/AccountManager.h"
@@ -161,6 +162,9 @@ int main(int argc, char *argv[])
     // 日志系统：接管 Qt 消息并写入“安装目录/logs”，中文、可分级筛选（默认记录错误及以上）
     LogManager *logManager = new LogManager(&engine);
     engine.rootContext()->setContextProperty("logManager", logManager);
+
+    SourceManager *sourceManager = initializeSourceStartupBoundary(application, engine);
+    Q_UNUSED(sourceManager);
 
     // 创建模型实例
     FolderModel *myFolderModel = new FolderModel(&engine);
