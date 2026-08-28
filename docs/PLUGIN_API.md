@@ -54,6 +54,39 @@ the first startup search path discovers them without application-specific code.
 The application directory is intended for bundled plugins. The app-data
 directory is intended for user-installed plugins on the local machine.
 
+## Navidrome source configuration
+
+The bundled `navidrome` source plugin uses the Subsonic-compatible Navidrome
+API. Construct its `SourceAccount` with these plugin-defined fields:
+
+| Field | Required value |
+| --- | --- |
+| `sourceId` | `navidrome` |
+| `parameters[serverUrl]` | Absolute `http` or `https` server URL; a trailing `/rest` is accepted and normalized. |
+| `parameters[username]` | Subsonic username. |
+| `secret` | UTF-8 password bytes, kept only in process memory. |
+
+The plugin advertises `Search`, `Browse`, `StreamAudio`, `Artwork`, and
+`Lyrics`. Root browse is Navidrome's simulated tag-based view (`getIndexes`),
+while non-root browse uses the server's simulated music-directory endpoint;
+neither is a physical NAS filesystem browser. Stream and artwork operations
+return authenticated URLs. Those URLs can contain short-lived token material,
+so callers must not log or persist them.
+
+Every non-cancelled request emits one terminal result with its original request
+ID. `cancel()` suppresses terminal signals and aborts any in-flight reply,
+including the second request used by lyrics lookup. Subsonic token
+authentication uses a fresh salt and `md5(password + salt)` per request; the
+password, token, salt, complete authenticated URLs, and response bodies must
+never be logged.
+
+For a private-server check, build the `quemusic_navidrome_smoke` executable,
+then set `QUEMUSIC_NAVIDROME_URL`, `QUEMUSIC_NAVIDROME_USER`, and
+`QUEMUSIC_NAVIDROME_PASSWORD` in your own shell before running it. The command
+is opt-in and is not part of CTest. It prints only operation, outcome, error
+kind, and elapsed time; see
+[`navidrome-smoke-test.md`](superpowers/runbooks/navidrome-smoke-test.md).
+
 ## Capability Rules
 
 Capabilities advertise what a session can do. They are declarative and should

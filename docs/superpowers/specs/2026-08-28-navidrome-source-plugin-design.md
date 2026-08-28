@@ -99,7 +99,8 @@ plugins/navidrome-source/
 ```
 
 The target links to `quemusic_source_sdk`, Qt Core, and Qt Network, and is
-emitted to the normal `plugins/source` build directory. Its descriptor is:
+emitted to `<build>/bin/plugins/source` beside the application runtime. Its
+descriptor is:
 
 - id: `navidrome`
 - protocol: `subsonic`
@@ -123,7 +124,8 @@ Each public session method follows this pipeline:
 6. Parse HTTP and Subsonic response status.
 7. Emit exactly one terminal `requestSucceeded` or `requestFailed` signal,
    unless the request was cancelled.
-8. Remove reply/state tracking and securely clear transient token material.
+8. Remove reply/state tracking. The session securely clears its in-memory
+   password bytes when it is destroyed.
 
 No nested event loop or synchronous network request is allowed. Cancellation
 must abort all replies associated with the public request ID, including the
@@ -199,8 +201,7 @@ successful response with no lines, not a network failure.
 
 ## 6. Error handling and security
 
-- Non-2xx HTTP responses become `Network` unless the body contains a recognized
-  Subsonic authentication, authorization, or not-found error.
+- Non-2xx HTTP responses become `Network` with the HTTP status when available.
 - JSON protocol responses with `status: failed` are never treated as success.
 - Invalid base URLs, missing account fields, malformed JSON, and missing
   required response objects produce actionable error messages without secrets.
@@ -233,9 +234,10 @@ Tests must not contain the real server address or credentials.
 After automated tests pass, run an opt-in local command against the user-provided
 Navidrome server using credentials supplied through environment variables or an
 untracked local configuration. The smoke test will perform `ping`, one search,
-one browse, one stream URL resolution, artwork, and lyrics. Its output will
-record only endpoint names, status, and elapsed time; it must redact all query
-credentials and response secrets.
+one browse, one stream URL resolution, artwork, and lyrics when the search
+finds a playable track. Its output will record only operation names, outcomes,
+error kinds, and elapsed time; it must redact all query credentials and
+response secrets.
 
 ## 8. Build and acceptance criteria
 
