@@ -255,3 +255,65 @@ Result: no diagnostics
 - The no-raw-QML-exposure check now runs against the same `QQmlApplicationEngine`
   passed through the startup boundary helper, not a disconnected empty engine.
 - The test still avoids any `MusicApiService` dependency.
+
+## Follow-up Fix: Align Startup Boundary Test With Real Runtime Layout
+
+Reviewer finding addressed on 2026-08-28.
+
+### What changed
+
+- `tests/tst_PluginStartup.cpp` no longer requires
+  `manager->sourceIds() == ["test-source"]`.
+- The startup-boundary test still invokes
+  `initializeSourceStartupBoundary(*QCoreApplication::instance(), engine)` on
+  the same `QQmlApplicationEngine`.
+- It continues to verify:
+  - application-lifetime parenting on the real application object
+  - startup usability while the user plugin directory is missing
+  - no raw `sourceManager`, `sourceSession`, or `musicSourcePlugin` context
+    properties on that same engine
+- Production search paths and runtime behavior were left unchanged.
+
+### Verification after the alignment fix
+
+Build command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /tmp/quemusic-task6-harness/build -j 8
+```
+
+Result: success
+
+Focused test command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /tmp/quemusic-task6-harness/build -R "quemusic_(plugin_startup|source_manager)_test" --output-on-failure
+```
+
+Result:
+
+```text
+Test project /tmp/quemusic-task6-harness/build
+    Start 1: quemusic_source_manager_test
+1/2 Test #1: quemusic_source_manager_test .....   Passed    0.09 sec
+    Start 2: quemusic_plugin_startup_test
+2/2 Test #2: quemusic_plugin_startup_test .....   Passed    0.72 sec
+
+100% tests passed, 0 tests failed out of 2
+```
+
+Formatting command:
+
+```bash
+git diff --check
+```
+
+Result: no diagnostics
+
+### Alignment self-review
+
+- The startup-boundary test is back to its intended scope: startup ownership,
+  missing-directory tolerance, same-engine usability, and QML isolation.
+- Formal dynamic plugin discovery remains covered by the dedicated source/plugin
+  tests instead of being reasserted here through an accidental runtime-layout
+  assumption.

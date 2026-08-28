@@ -44,8 +44,9 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
         initializeSourceStartupBoundary(*QCoreApplication::instance(), engine);
     QVERIFY(manager != nullptr);
     QCOMPARE(manager->parent(), QCoreApplication::instance());
-    QCOMPARE(manager->sourceIds(), QStringList({QStringLiteral("test-source")}));
-    QVERIFY(!QDir(defaultSourcePluginSearchPaths(*QCoreApplication::instance()).at(1)).exists());
+    const QStringList searchPaths = defaultSourcePluginSearchPaths(*QCoreApplication::instance());
+    QCOMPARE(searchPaths.size(), 2);
+    QVERIFY(!QDir(searchPaths.at(1)).exists());
 
     engine.rootContext()->setContextProperty(QStringLiteral("startupSentinel"),
                                              QStringLiteral("still-usable"));
