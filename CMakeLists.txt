@@ -56,6 +56,7 @@ target_compile_features(quemusic_source_startup PUBLIC cxx_std_17)
 target_link_libraries(quemusic_source_startup PUBLIC
     quemusic_source_manager
     Qt6::Core
+    Qt6::Qml
 )
 target_include_directories(quemusic_source_startup PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source

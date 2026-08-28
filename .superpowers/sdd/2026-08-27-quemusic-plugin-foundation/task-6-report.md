@@ -178,3 +178,80 @@ Result: no diagnostics
 - Because of those blockers, validation was completed with a focused harness
   covering the touched startup boundary and existing `SourceManager` behavior
   instead of the full application tree.
+
+## Follow-up Fix: Startup Boundary Test Gap
+
+Reviewer finding addressed on 2026-08-28.
+
+### What changed
+
+- `tests/tst_PluginStartup.cpp` now exercises the production startup boundary on
+  the same `QQmlApplicationEngine` instance used for the assertion boundary.
+- `core/source/SourceStartup.h` and `core/source/SourceStartup.cpp` now expose a
+  narrow `initializeSourceStartupBoundary(...)` helper that delegates to
+  `createAndLoadSourceManager(...)` while fixing application-lifetime ownership
+  to the real `QCoreApplication` instance.
+- `main.cpp` now uses `initializeSourceStartupBoundary(application, engine)` so
+  the tested path matches production startup more closely.
+
+### Red step for the review fix
+
+Command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /tmp/quemusic-task6-harness/build -j 8
+```
+
+Result:
+
+```text
+/tmp/quemusic-task6-repo/tests/tst_PluginStartup.cpp:44:9: error: use of undeclared identifier 'initializeSourceStartupBoundary'
+```
+
+This confirmed the revised test was demanding a production startup-boundary
+entry point that did not yet exist.
+
+### Verification after the fix
+
+Build command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /tmp/quemusic-task6-harness/build -j 8
+```
+
+Result: success
+
+Focused test command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /tmp/quemusic-task6-harness/build -R "quemusic_(plugin_startup|source_manager)_test" --output-on-failure
+```
+
+Result:
+
+```text
+Test project /tmp/quemusic-task6-harness/build
+    Start 1: quemusic_source_manager_test
+1/2 Test #1: quemusic_source_manager_test .....   Passed    0.09 sec
+    Start 2: quemusic_plugin_startup_test
+2/2 Test #2: quemusic_plugin_startup_test .....   Passed    0.21 sec
+
+100% tests passed, 0 tests failed out of 2
+```
+
+Formatting command:
+
+```bash
+git diff --check
+```
+
+Result: no diagnostics
+
+### Follow-up self-review
+
+- The startup test now proves that missing user plugin directories do not block
+  startup progress: the manager is created through the production boundary,
+  discovers the bundled test plugin, and the same engine context remains usable.
+- The no-raw-QML-exposure check now runs against the same `QQmlApplicationEngine`
+  passed through the startup boundary helper, not a disconnected empty engine.
+- The test still avoids any `MusicApiService` dependency.

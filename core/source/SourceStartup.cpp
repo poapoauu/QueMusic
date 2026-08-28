@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QStandardPaths>
+#include <QtQml/QQmlApplicationEngine>
 
 QStringList defaultSourcePluginSearchPaths(const QCoreApplication &application)
 {
@@ -33,4 +34,11 @@ SourceManager *createAndLoadSourceManager(const QCoreApplication &application, Q
                      });
     manager->loadAll();
     return manager;
+}
+
+SourceManager *initializeSourceStartupBoundary(const QCoreApplication &application,
+                                              QQmlApplicationEngine &engine)
+{
+    Q_UNUSED(engine);
+    return createAndLoadSourceManager(application, const_cast<QCoreApplication *>(&application));
 }

@@ -163,7 +163,7 @@ int main(int argc, char *argv[])
     LogManager *logManager = new LogManager(&engine);
     engine.rootContext()->setContextProperty("logManager", logManager);
 
-    SourceManager *sourceManager = createAndLoadSourceManager(application, &application);
+    SourceManager *sourceManager = initializeSourceStartupBoundary(application, engine);
     Q_UNUSED(sourceManager);
 
     // 创建模型实例
