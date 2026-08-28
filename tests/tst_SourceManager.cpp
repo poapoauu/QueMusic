@@ -58,6 +58,8 @@ void SourceManagerTest::loadsValidSourcePlugin()
     QCOMPARE(source.value(QStringLiteral("version")).toString(), QStringLiteral("1.0.0"));
     QCOMPARE(source.value(QStringLiteral("protocol")).toString(), QStringLiteral("test"));
     QCOMPARE(source.value(QStringLiteral("capabilities")).toULongLong(), qulonglong(21));
+    QVERIFY(source.value(QStringLiteral("capabilities")).toULongLong() &
+            static_cast<qulonglong>(SourceCapability::Artwork));
 
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
     QVERIFY(session != nullptr);
@@ -248,6 +250,11 @@ void SourceManagerTest::baseOnlyFixtureDoesNotExposeArtworkInterface()
 
     manager.addSearchPath(fixtureDirectory(QStringLiteral("invalid")));
     QCOMPARE(manager.loadAll(), 1);
+
+    const QVariantMap source = manager.availableSources().constFirst().toMap();
+    QCOMPARE(source.value(QStringLiteral("capabilities")).toULongLong(), qulonglong(1));
+    QVERIFY((source.value(QStringLiteral("capabilities")).toULongLong() &
+             static_cast<qulonglong>(SourceCapability::Artwork)) == 0);
 
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
     QVERIFY(session != nullptr);

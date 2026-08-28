@@ -149,6 +149,8 @@ void SourcePluginContractTest::createsSessionThroughStableContract()
     QVERIFY(plugin.initialize(context));
     IMusicSourceSession *session = plugin.createSession(account, &plugin);
 
+    QCOMPARE(QString::fromLatin1(QUEMUSIC_MUSIC_SOURCE_PLUGIN_IID),
+             QStringLiteral("org.quemusic.MusicSourcePlugin/1.0"));
     QVERIFY(session != nullptr);
     QCOMPARE(session->parent(), &plugin);
 }
@@ -172,6 +174,8 @@ void SourcePluginContractTest::exposesOptionalArtworkInterfaceByRequestId()
     FakeArtworkMusicSourceSession artworkSession;
     QSignalSpy succeeded(&artworkSession, &IMusicSourceSession::requestSucceeded);
 
+    QCOMPARE(QString::fromLatin1(QUEMUSIC_MUSIC_SOURCE_ARTWORK_SESSION_IID),
+             QStringLiteral("org.quemusic.MusicSourceArtworkSession/1.0"));
     QVERIFY(qobject_cast<IMusicSourceArtworkSession *>(&baseSession) == nullptr);
 
     auto *artworkInterface = qobject_cast<IMusicSourceArtworkSession *>(&artworkSession);
