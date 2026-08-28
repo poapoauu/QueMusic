@@ -130,7 +130,7 @@ public:
             QStringLiteral("1.0.0"),
             QStringLiteral("example"),
             QStringLiteral("1.0"),
-            SourceCapability::None
+            SourceCapability::Artwork
         };
     }
 
