@@ -12,7 +12,6 @@ public:
     QUuid search(const SearchQuery &) override { return completeSuccess(QStringLiteral("search")); }
     QUuid browse(const BrowseQuery &) override { return completeUnsupported(); }
     QUuid resolveStream(const TrackRef &) override { return completeUnsupported(); }
-    QUuid fetchArtwork(const TrackRef &) override { return completeUnsupported(); }
     QUuid fetchLyrics(const TrackRef &) override { return completeUnsupported(); }
     void cancel(const QUuid &) override { }
 

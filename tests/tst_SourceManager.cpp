@@ -1,3 +1,4 @@
+#include "IMusicSourceArtworkSession.h"
 #include "SourceManager.h"
 
 #include <QDir>
@@ -220,10 +221,12 @@ void SourceManagerTest::fakeSourceCompletesArtworkFetch()
     QCOMPARE(manager.loadAll(), 1);
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
     QVERIFY(session != nullptr);
+    auto *artworkSession = qobject_cast<IMusicSourceArtworkSession *>(session);
+    QVERIFY(artworkSession != nullptr);
 
     QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
     const TrackRef track{QStringLiteral("test-source"), QStringLiteral("test-track-1")};
-    const QUuid requestId = session->fetchArtwork(track);
+    const QUuid requestId = artworkSession->fetchArtwork(track);
 
     QVERIFY(succeeded.wait(1000));
     const QList<QVariant> arguments = succeeded.constFirst();

@@ -23,6 +23,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network Multimedia Concu
 add_subdirectory(meshgradient)
 
 add_library(quemusic_source_sdk STATIC
+    sdk/source/IMusicSourceArtworkSession.h
     sdk/source/IMusicSourcePlugin.h
     sdk/source/IMusicSourceSession.h
     sdk/source/SourcePluginContext.h
