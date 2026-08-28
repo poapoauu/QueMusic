@@ -1,3 +1,5 @@
+#include "IMusicSourceArtworkSession.h"
+#include "IMusicSourcePlugin.h"
 #include "SourceTypes.h"
 
 #include <QJsonDocument>
@@ -7,11 +9,20 @@ class SourceTypesTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void locksStableSourceIids();
     void roundTripsDescriptorWithCapabilities();
     void keepsProviderIdsNamespacedBySource();
     void preservesExpiringStreamHeadersAndMediaKind();
     void mapsUnknownErrorKindToUnknown();
 };
+
+void SourceTypesTest::locksStableSourceIids()
+{
+    QCOMPARE(QString::fromLatin1(QUEMUSIC_MUSIC_SOURCE_PLUGIN_IID),
+             QStringLiteral("org.quemusic.MusicSourcePlugin/1.0"));
+    QCOMPARE(QString::fromLatin1(QUEMUSIC_MUSIC_SOURCE_ARTWORK_SESSION_IID),
+             QStringLiteral("org.quemusic.MusicSourceArtworkSession/1.0"));
+}
 
 void SourceTypesTest::roundTripsDescriptorWithCapabilities()
 {

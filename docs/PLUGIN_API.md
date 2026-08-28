@@ -8,7 +8,9 @@ providers.
 
 - Interface: `IMusicSourcePlugin`
 - Session base class: `IMusicSourceSession`
+- Optional artwork interface: `IMusicSourceArtworkSession`
 - Plugin IID: `org.quemusic.MusicSourcePlugin/1.0`
+- Artwork IID: `org.quemusic.MusicSourceArtworkSession/1.0`
 - SDK version field: `SourceDescriptor::sdkVersion` (exactly `1.0` for IID 1.0)
 
 Plugins must be built against the same Qt major version and the QueMusic source
@@ -18,6 +20,13 @@ formatted values are rejected before `initialize()` runs. A future compatible
 version must be added intentionally to the host policy with tests. A plugin is
 also rejected if it does not expose the required IID, has an empty source id or
 display name, or if another loaded plugin already uses the same source id.
+
+`IMusicSourceSession` is already published with this exact virtual order:
+`search`, `browse`, `resolveStream`, `fetchArtwork`, `fetchLyrics`, `cancel`.
+The legacy `fetchArtwork(const TrackRef &)` slot is retained permanently for
+`MusicSourcePlugin/1.0` binary compatibility. `IMusicSourceArtworkSession` does
+not replace or remove that slot; it is an additive, independently versioned
+interface for explicit runtime capability discovery.
 
 ## Required Metadata
 
@@ -61,6 +70,20 @@ match real behavior. Current flags come from `SourceCapability`:
 Do not claim a capability unless the session can perform that operation and emit
 either `requestSucceeded` or `requestFailed` for it.
 
+Artwork dispatch is metadata-gated and follows this policy:
+
+- Without `SourceCapability::Artwork`, the host does not call either artwork
+  interface, even if the session exposes `IMusicSourceArtworkSession`.
+- With `SourceCapability::Artwork`, the host prefers
+  `IMusicSourceArtworkSession::fetchArtwork` when that interface is present.
+- A v1 session that advertises Artwork but does not expose the optional
+  interface remains supported through the retained
+  `IMusicSourceSession::fetchArtwork` slot.
+- Newly written plugins that advertise Artwork should implement
+  `IMusicSourceArtworkSession`, declare it with `Q_INTERFACES`, and keep the
+  required v1 base override. One `fetchArtwork` override satisfies both
+  interfaces when their signatures match.
+
 ## Trusted Native-Code Model
 
 Source plugins are trusted native code loaded into the QueMusic process. They
@@ -75,33 +98,51 @@ prompt, or ABI isolation layer. Only install plugins from trusted sources.
 - `createSession(const SourceAccount &, QObject *parent)` creates a per-account
   session owned by the provided parent.
 - `IMusicSourceSession` handles async provider work and must implement:
-  `search`, `browse`, `resolveStream`, `fetchArtwork`, `fetchLyrics`, and `cancel`.
+  `search`, `browse`, `resolveStream`, the retained legacy `fetchArtwork`,
+  `fetchLyrics`, and `cancel`, in that virtual order.
+- `IMusicSourceArtworkSession` is optional. Sessions that advertise
+  `SourceCapability::Artwork` should also implement
+  `org.quemusic.MusicSourceArtworkSession/1.0`, declare
+  `Q_INTERFACES(IMusicSourceArtworkSession)`, and be discoverable with
+  `qobject_cast<IMusicSourceArtworkSession *>(session)`.
 - A session reports results with `requestSucceeded`, failures with
   `requestFailed`, and auth state changes with `authenticationChanged`.
 - Every advertised capability must complete a non-cancelled request. For this
   contract, `StreamAudio` completes `resolveStream` with a JSON
   `StreamDescriptor` DTO (`track`, `url`, optional `headers`, `mimeType`,
-  `expiresAt`, `video`, and `seekable`); `Artwork` completes `fetchArtwork`
-  with a JSON DTO containing `track`, `url`, and `mimeType`. Unsupported
-  operations emit `requestFailed` with `SourceErrorKind::Unsupported`.
+  `expiresAt`, `video`, and `seekable`). `Artwork` pairs the capability flag
+  with optional-interface dispatch when available and the retained v1 base
+  fallback otherwise; either path completes with a JSON DTO containing
+  `track`, `url`, and `mimeType`. Unsupported operations emit `requestFailed`
+  with `SourceErrorKind::Unsupported`.
 
 ## Minimal Plugin Skeleton
 
+The skeleton is declaration-only: method bodies are intentionally omitted.
+Every real request method must return a request ID and later, asynchronously,
+emit exactly one matching `requestSucceeded` or `requestFailed` signal unless
+that request was cancelled. Returning a fresh UUID without scheduling a terminal
+signal violates the contract. `descriptor()` must include
+`SourceCapability::Artwork` when using the artwork interface below.
+
 ```cpp
+#include "IMusicSourceArtworkSession.h"
 #include "IMusicSourcePlugin.h"
 
-class ExampleSession final : public IMusicSourceSession {
+class ExampleSession final : public IMusicSourceSession,
+                             public IMusicSourceArtworkSession {
     Q_OBJECT
+    Q_INTERFACES(IMusicSourceArtworkSession)
 
 public:
     using IMusicSourceSession::IMusicSourceSession;
 
-    QUuid search(const SearchQuery &) override { return QUuid::createUuid(); }
-    QUuid browse(const BrowseQuery &) override { return QUuid::createUuid(); }
-    QUuid resolveStream(const TrackRef &) override { return QUuid::createUuid(); }
-    QUuid fetchArtwork(const TrackRef &) override { return QUuid::createUuid(); }
-    QUuid fetchLyrics(const TrackRef &) override { return QUuid::createUuid(); }
-    void cancel(const QUuid &) override {}
+    QUuid search(const SearchQuery &) override;
+    QUuid browse(const BrowseQuery &) override;
+    QUuid resolveStream(const TrackRef &) override;
+    QUuid fetchArtwork(const TrackRef &) override;
+    QUuid fetchLyrics(const TrackRef &) override;
+    void cancel(const QUuid &) override;
 };
 
 class ExampleSourcePlugin final : public QObject, public IMusicSourcePlugin {
@@ -110,27 +151,9 @@ class ExampleSourcePlugin final : public QObject, public IMusicSourcePlugin {
     Q_INTERFACES(IMusicSourcePlugin)
 
 public:
-    SourceDescriptor descriptor() const override
-    {
-        return {
-            QStringLiteral("example.source"),
-            QStringLiteral("Example Source"),
-            QStringLiteral("1.0.0"),
-            QStringLiteral("example"),
-            QStringLiteral("1.0"),
-            SourceCapability::None
-        };
-    }
-
-    bool initialize(SourcePluginContext &context) override
-    {
-        return context.network != nullptr;
-    }
-
-    IMusicSourceSession *createSession(const SourceAccount &account, QObject *parent) override
-    {
-        Q_UNUSED(account);
-        return new ExampleSession(parent);
-    }
+    SourceDescriptor descriptor() const override;
+    bool initialize(SourcePluginContext &context) override;
+    IMusicSourceSession *createSession(const SourceAccount &account,
+                                       QObject *parent) override;
 };
 ```

@@ -1,13 +1,16 @@
 #pragma once
 
+#include "IMusicSourceArtworkSession.h"
 #include "IMusicSourceSession.h"
 
 #include <QSet>
 
 class QJsonValue;
 
-class TestSourceSession final : public IMusicSourceSession {
+class TestSourceSession final : public IMusicSourceSession,
+                                public IMusicSourceArtworkSession {
     Q_OBJECT
+    Q_INTERFACES(IMusicSourceArtworkSession)
 
 public:
     using IMusicSourceSession::IMusicSourceSession;

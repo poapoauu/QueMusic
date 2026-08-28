@@ -1,5 +1,9 @@
 #pragma once
 
+// Frozen from MusicSourcePlugin/1.0 as published on main at 8ad8e59.
+// In particular, fetchArtwork occupies the slot between resolveStream and
+// fetchLyrics.
+
 #include "SourceTypes.h"
 
 #include <QJsonValue>
@@ -13,7 +17,6 @@ public:
     using QObject::QObject;
     ~IMusicSourceSession() override = default;
 
-    // MusicSourcePlugin/1.0 ABI: do not remove or reorder these virtuals.
     virtual QUuid search(const SearchQuery &query) = 0;
     virtual QUuid browse(const BrowseQuery &query) = 0;
     virtual QUuid resolveStream(const TrackRef &track) = 0;

@@ -1,10 +1,21 @@
 #include "IMusicSourcePlugin.h"
 
+#if defined(QUEMUSIC_FIXTURE_ARTWORK_INTERFACE)
+#include "IMusicSourceArtworkSession.h"
+#endif
+
 #include <QJsonArray>
 #include <QTimer>
 
-class FixtureSourceSession final : public IMusicSourceSession {
+class FixtureSourceSession final : public IMusicSourceSession
+#if defined(QUEMUSIC_FIXTURE_ARTWORK_INTERFACE)
+                                 , public IMusicSourceArtworkSession
+#endif
+{
     Q_OBJECT
+#if defined(QUEMUSIC_FIXTURE_ARTWORK_INTERFACE)
+    Q_INTERFACES(IMusicSourceArtworkSession)
+#endif
 
 public:
     using IMusicSourceSession::IMusicSourceSession;
@@ -12,7 +23,14 @@ public:
     QUuid search(const SearchQuery &) override { return completeSuccess(QStringLiteral("search")); }
     QUuid browse(const BrowseQuery &) override { return completeUnsupported(); }
     QUuid resolveStream(const TrackRef &) override { return completeUnsupported(); }
-    QUuid fetchArtwork(const TrackRef &) override { return completeUnsupported(); }
+    QUuid fetchArtwork(const TrackRef &) override
+    {
+#if defined(QUEMUSIC_FIXTURE_ARTWORK_INTERFACE)
+        return completeSuccess(QStringLiteral("fetchArtwork"));
+#else
+        return completeUnsupported();
+#endif
+    }
     QUuid fetchLyrics(const TrackRef &) override { return completeUnsupported(); }
     void cancel(const QUuid &) override { }
 
