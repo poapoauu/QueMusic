@@ -15,6 +15,8 @@ class PluginStartupTest : public QObject {
 private slots:
     void startupAddsApplicationAndUserPluginDirectories();
     void startupBoundaryKeepsEngineUsableWithoutRawQmlExposure();
+    void startupLoadsBuiltNavidromePlugin();
+    void sourceManagerCreatesNavidromeSessionAndDispatchesArtwork();
 };
 
 void PluginStartupTest::startupAddsApplicationAndUserPluginDirectories()
@@ -52,6 +54,43 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("sourceManager")).isValid());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("sourceSession")).isValid());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("musicSourcePlugin")).isValid());
+}
+
+void PluginStartupTest::startupLoadsBuiltNavidromePlugin()
+{
+    SourceManager manager;
+    const QString pluginDirectory =
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("plugins/source"));
+    manager.addSearchPath(pluginDirectory);
+
+    QVERIFY(manager.loadAll() >= 1);
+    QVERIFY(manager.sourceIds().contains(QStringLiteral("navidrome")));
+}
+
+void PluginStartupTest::sourceManagerCreatesNavidromeSessionAndDispatchesArtwork()
+{
+    SourceManager manager;
+    manager.addSearchPath(QDir(QCoreApplication::applicationDirPath())
+                              .filePath(QStringLiteral("plugins/source")));
+    QCOMPARE(manager.loadAll(), 1);
+    const SourceAccount account{
+        QStringLiteral("navidrome"),
+        QStringLiteral("admin"),
+        QStringLiteral("Navidrome Admin"),
+        {{QStringLiteral("serverUrl"), QStringLiteral("http://example.invalid:8533")},
+         {QStringLiteral("username"), QStringLiteral("admin")}},
+        QByteArrayLiteral("test-password")};
+    IMusicSourceSession *session = manager.createSession(QStringLiteral("navidrome"), account, &manager);
+    QVERIFY(session != nullptr);
+    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
+
+    const QUuid requestId = manager.requestArtwork(
+        QStringLiteral("navidrome"), session,
+        {QStringLiteral("navidrome"), QStringLiteral("cover-1")});
+
+    QVERIFY(succeeded.wait(1000));
+    QCOMPARE(succeeded.constFirst().at(0).toUuid(), requestId);
+    QCOMPARE(succeeded.constFirst().at(1).toString(), QStringLiteral("fetchArtwork"));
 }
 
 QTEST_MAIN(PluginStartupTest)

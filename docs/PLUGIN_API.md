@@ -47,6 +47,10 @@ At startup QueMusic loads source plugins from exactly these directories:
 - `QCoreApplication::applicationDirPath()/plugins/source`
 - `QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)/plugins/source`
 
+When built from the root CMake project, bundled source modules are emitted to
+`<build>/bin/plugins/source`, next to the application's runtime directory, so
+the first startup search path discovers them without application-specific code.
+
 The application directory is intended for bundled plugins. The app-data
 directory is intended for user-installed plugins on the local machine.
 

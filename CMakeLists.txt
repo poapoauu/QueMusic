@@ -245,7 +245,7 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_source_manager_test PRIVATE cxx_std_17)
     target_compile_definitions(quemusic_source_manager_test PRIVATE
         QUEMUSIC_TEST_PLUGIN_ROOT="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins"
-        QUEMUSIC_TEST_SOURCE_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins/source"
+        QUEMUSIC_TEST_SOURCE_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/primary"
         QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
     )
     target_link_libraries(quemusic_source_manager_test PRIVATE
@@ -294,6 +294,7 @@ if(BUILD_TESTING)
         Qt6::Quick
         Qt6::Test
     )
+    add_dependencies(quemusic_plugin_startup_test quemusic_navidrome_source)
     add_test(NAME quemusic_plugin_startup_test COMMAND quemusic_plugin_startup_test)
 endif()
 

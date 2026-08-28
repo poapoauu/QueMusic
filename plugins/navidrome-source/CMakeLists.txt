@@ -12,8 +12,8 @@ target_link_libraries(quemusic_navidrome_source PRIVATE
     quemusic_source_sdk
 )
 set_target_properties(quemusic_navidrome_source PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/source"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/source"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/plugins/source"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/plugins/source"
 )
 
 if(BUILD_TESTING)
