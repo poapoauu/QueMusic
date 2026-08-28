@@ -34,8 +34,16 @@ private:
         bool cancelled = false;
     };
 
+    struct TrackMetadata {
+        QString artist;
+        QString title;
+    };
+
     QUuid startRequest(const QString &operation, const QString &endpoint,
-                       QUrlQuery query = {});
+                       QUrlQuery query = {}, QUuid requestId = {});
+    bool buildAuthenticatedEndpointUrl(const QString &endpoint, QUrlQuery query, QUrl *url,
+                                      SourceError *error) const;
+    QUuid scheduleSuccess(const QString &operation, const QJsonValue &result);
     QUuid scheduleFailure(const QString &operation, const SourceError &error);
     void finishSuccess(const PendingRequest &pending, const QJsonValue &result);
     void finishFailure(const PendingRequest &pending, const SourceError &error);
@@ -44,4 +52,6 @@ private:
     SourceAccount m_account;
     QPointer<QNetworkAccessManager> m_network;
     QHash<QUuid, PendingRequest> m_pendingRequests;
+    QHash<QString, TrackMetadata> m_trackMetadata;
+    QHash<QUuid, TrackRef> m_lyricsTracks;
 };
