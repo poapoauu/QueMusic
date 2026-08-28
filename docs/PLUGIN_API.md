@@ -8,7 +8,9 @@ providers.
 
 - Interface: `IMusicSourcePlugin`
 - Session base class: `IMusicSourceSession`
+- Optional artwork interface: `IMusicSourceArtworkSession`
 - Plugin IID: `org.quemusic.MusicSourcePlugin/1.0`
+- Artwork IID: `org.quemusic.MusicSourceArtworkSession/1.0`
 - SDK version field: `SourceDescriptor::sdkVersion` (exactly `1.0` for IID 1.0)
 
 Plugins must be built against the same Qt major version and the QueMusic source
@@ -75,23 +77,32 @@ prompt, or ABI isolation layer. Only install plugins from trusted sources.
 - `createSession(const SourceAccount &, QObject *parent)` creates a per-account
   session owned by the provided parent.
 - `IMusicSourceSession` handles async provider work and must implement:
-  `search`, `browse`, `resolveStream`, `fetchArtwork`, `fetchLyrics`, and `cancel`.
+  `search`, `browse`, `resolveStream`, `fetchLyrics`, and `cancel`.
+- `IMusicSourceArtworkSession` is optional. Sessions that advertise
+  `SourceCapability::Artwork` should also implement
+  `org.quemusic.MusicSourceArtworkSession/1.0`, declare
+  `Q_INTERFACES(IMusicSourceArtworkSession)`, and be discoverable with
+  `qobject_cast<IMusicSourceArtworkSession *>(session)`.
 - A session reports results with `requestSucceeded`, failures with
   `requestFailed`, and auth state changes with `authenticationChanged`.
 - Every advertised capability must complete a non-cancelled request. For this
   contract, `StreamAudio` completes `resolveStream` with a JSON
   `StreamDescriptor` DTO (`track`, `url`, optional `headers`, `mimeType`,
-  `expiresAt`, `video`, and `seekable`); `Artwork` completes `fetchArtwork`
-  with a JSON DTO containing `track`, `url`, and `mimeType`. Unsupported
-  operations emit `requestFailed` with `SourceErrorKind::Unsupported`.
+  `expiresAt`, `video`, and `seekable`). `Artwork` pairs the
+  `SourceCapability::Artwork` flag with `IMusicSourceArtworkSession::fetchArtwork`,
+  which completes with a JSON DTO containing `track`, `url`, and `mimeType`.
+  Unsupported operations emit `requestFailed` with `SourceErrorKind::Unsupported`.
 
 ## Minimal Plugin Skeleton
 
 ```cpp
+#include "IMusicSourceArtworkSession.h"
 #include "IMusicSourcePlugin.h"
 
-class ExampleSession final : public IMusicSourceSession {
+class ExampleSession final : public IMusicSourceSession,
+                             public IMusicSourceArtworkSession {
     Q_OBJECT
+    Q_INTERFACES(IMusicSourceArtworkSession)
 
 public:
     using IMusicSourceSession::IMusicSourceSession;
@@ -99,9 +110,10 @@ public:
     QUuid search(const SearchQuery &) override { return QUuid::createUuid(); }
     QUuid browse(const BrowseQuery &) override { return QUuid::createUuid(); }
     QUuid resolveStream(const TrackRef &) override { return QUuid::createUuid(); }
-    QUuid fetchArtwork(const TrackRef &) override { return QUuid::createUuid(); }
     QUuid fetchLyrics(const TrackRef &) override { return QUuid::createUuid(); }
     void cancel(const QUuid &) override {}
+
+    QUuid fetchArtwork(const TrackRef &) override { return QUuid::createUuid(); }
 };
 
 class ExampleSourcePlugin final : public QObject, public IMusicSourcePlugin {

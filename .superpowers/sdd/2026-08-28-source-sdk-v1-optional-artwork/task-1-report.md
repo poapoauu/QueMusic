@@ -338,3 +338,126 @@ Output:
 ## Concerns
 
 - `docs/PLUGIN_API.md` still documents `fetchArtwork` as part of the base `IMusicSourceSession` contract. I left documentation untouched because the approved Task 1 brief scoped the implementation to SDK/tests, but the docs should be updated in a follow-up so they match the new optional-interface contract.
+
+## Fix round 1
+
+### Files changed
+
+- `docs/PLUGIN_API.md`
+- `.superpowers/sdd/2026-08-28-source-sdk-v1-optional-artwork/task-1-report.md`
+
+### Documentation changes
+
+- Removed `fetchArtwork` from the documented required `IMusicSourceSession` pure-virtual list.
+- Added `IMusicSourceArtworkSession` and IID `org.quemusic.MusicSourceArtworkSession/1.0` to the ABI section.
+- Documented that `SourceCapability::Artwork` pairs with `IMusicSourceArtworkSession`, which should be declared with `Q_INTERFACES(IMusicSourceArtworkSession)` and discovered with `qobject_cast<IMusicSourceArtworkSession *>(session)`.
+- Updated the minimal skeleton so artwork support is optional and shown through the separate interface instead of the base session contract.
+
+### Commands and outputs
+
+Command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /private/tmp/quemusic-final-fix-verify-2 --target quemusic_source_plugin_contract_test
+```
+
+Output:
+
+```text
+[  0%] Built target quemusic_source_sdk_autogen_timestamp_deps
+[  1%] Automatic MOC for target quemusic_source_sdk
+[  1%] Built target quemusic_source_sdk_autogen
+[  7%] Built target quemusic_source_sdk
+[  7%] Built target quemusic_source_plugin_contract_test_autogen_timestamp_deps
+[  9%] Automatic MOC for target quemusic_source_plugin_contract_test
+[  9%] Built target quemusic_source_plugin_contract_test_autogen
+[ 16%] Built target quemusic_source_plugin_contract_test
+```
+
+Command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /private/tmp/quemusic-final-fix-verify-2 --target quemusic_source_manager_test
+```
+
+Output:
+
+```text
+[  0%] Built target quemusic_source_sdk_autogen_timestamp_deps
+[  1%] Automatic MOC for target quemusic_source_sdk
+[  1%] Built target quemusic_source_sdk_autogen
+[  7%] Built target quemusic_source_sdk
+[  7%] Built target quemusic_incompatible_sdk_source_fixture_autogen_timestamp_deps
+[ 10%] Automatic MOC for target quemusic_incompatible_sdk_source_fixture
+[ 10%] Built target quemusic_incompatible_sdk_source_fixture_autogen
+Built target quemusic_incompatible_sdk_source_fixture
+Built target quemusic_source_manager_autogen_timestamp_deps
+Automatic MOC for target quemusic_source_manager
+Built target quemusic_source_manager_autogen
+Built target quemusic_source_manager
+Built target quemusic_test_source_autogen_timestamp_deps
+Automatic MOC for target quemusic_test_source
+Built target quemusic_test_source_autogen
+Built target quemusic_test_source
+Built target quemusic_duplicate_source_fixture_one_autogen_timestamp_deps
+Automatic MOC for target quemusic_duplicate_source_fixture_one
+Built target quemusic_duplicate_source_fixture_one_autogen
+Built target quemusic_duplicate_source_fixture_one
+Built target quemusic_duplicate_source_fixture_two_autogen_timestamp_deps
+Automatic MOC for target quemusic_duplicate_source_fixture_two
+Built target quemusic_duplicate_source_fixture_two_autogen
+Built target quemusic_duplicate_source_fixture_two
+Built target quemusic_invalid_valid_fixture_autogen_timestamp_deps
+Automatic MOC for target quemusic_invalid_valid_fixture
+Built target quemusic_invalid_valid_fixture_autogen
+Built target quemusic_invalid_valid_fixture
+Built target quemusic_empty_id_source_fixture_autogen_timestamp_deps
+Automatic MOC for target quemusic_empty_id_source_fixture
+Built target quemusic_empty_id_source_fixture_autogen
+Built target quemusic_empty_id_source_fixture
+Built target quemusic_empty_sdk_source_fixture_autogen_timestamp_deps
+Automatic MOC for target quemusic_empty_sdk_source_fixture
+Built target quemusic_empty_sdk_source_fixture_autogen
+Built target quemusic_empty_sdk_source_fixture
+Built target quemusic_missing_name_source_fixture_autogen_timestamp_deps
+Automatic MOC for target quemusic_missing_name_source_fixture
+Built target quemusic_missing_name_source_fixture_autogen
+Built target quemusic_missing_name_source_fixture
+Built target quemusic_initialization_failure_fixture_autogen_timestamp_deps
+Automatic MOC for target quemusic_initialization_failure_fixture
+Built target quemusic_initialization_failure_fixture_autogen
+Built target quemusic_initialization_failure_fixture
+Built target quemusic_not_source_fixture_autogen_timestamp_deps
+Automatic MOC for target quemusic_not_source_fixture
+Built target quemusic_not_source_fixture_autogen
+Built target quemusic_not_source_fixture
+Built target quemusic_source_manager_test_autogen_timestamp_deps
+Automatic MOC for target quemusic_source_manager_test
+Built target quemusic_source_manager_test_autogen
+Built target quemusic_source_manager_test
+```
+
+Command:
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /private/tmp/quemusic-final-fix-verify-2 -R 'quemusic_source_plugin_contract_test|quemusic_source_manager_test' --output-on-failure
+```
+
+Output:
+
+```text
+Internal ctest changing into directory: /tmp/quemusic-final-fix-verify-2
+Test project /tmp/quemusic-final-fix-verify-2
+    Start 1: quemusic_source_manager_test
+1/2 Test #1: quemusic_source_manager_test ...........   Passed    5.13 sec
+    Start 3: quemusic_source_plugin_contract_test
+2/2 Test #3: quemusic_source_plugin_contract_test ...   Passed    0.49 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   5.63 sec
+```
+
+### Remaining concerns
+
+- None beyond the previously noted temporary harness setup requirement for `/private/tmp/quemusic-final-fix-verify-2`, which remains outside the repo and was reused successfully for this fix round.
