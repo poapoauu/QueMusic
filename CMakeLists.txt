@@ -70,6 +70,21 @@ endif()
 
 add_subdirectory(plugins/navidrome-source)
 
+qt_add_executable(quemusic_navidrome_smoke
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/NavidromeSmoke.cpp
+    plugins/navidrome-source/NavidromeSourceSession.cpp
+    plugins/navidrome-source/NavidromeSourceSession.h
+)
+target_compile_features(quemusic_navidrome_smoke PRIVATE cxx_std_17)
+target_include_directories(quemusic_navidrome_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/plugins/navidrome-source
+)
+target_link_libraries(quemusic_navidrome_smoke PRIVATE
+    Qt6::Network
+    quemusic_source_manager
+    quemusic_source_sdk
+)
+
 add_library(quemusic_playback_sdk STATIC
     sdk/playback/IPlaybackEngine.h
     sdk/playback/IPlaybackPlugin.h

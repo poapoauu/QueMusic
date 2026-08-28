@@ -16,6 +16,7 @@ class NavidromeSourceSession final : public IMusicSourceSession,
 public:
     NavidromeSourceSession(SourceAccount account, QNetworkAccessManager *network,
                            QObject *parent = nullptr);
+    ~NavidromeSourceSession() override;
 
     QUuid ping();
     QUuid search(const SearchQuery &query) override;

@@ -19,6 +19,12 @@ NavidromeSourceSession::NavidromeSourceSession(SourceAccount account,
 {
 }
 
+NavidromeSourceSession::~NavidromeSourceSession()
+{
+    m_account.secret.fill('\0');
+    m_account.secret.clear();
+}
+
 QUuid NavidromeSourceSession::ping()
 {
     return startRequest(QStringLiteral("ping"), QStringLiteral("ping"));
