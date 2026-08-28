@@ -1,7 +1,7 @@
 # Navidrome Source Plugin Design
 
-**Status:** Draft for review  
-**Date:** 2026-08-28  
+**Status:** Draft for review
+**Date:** 2026-08-28
 **Branch:** `codex/navidrome-source-plugin`
 
 ## 1. Objective
