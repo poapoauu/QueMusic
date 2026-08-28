@@ -311,6 +311,21 @@ if(BUILD_TESTING)
     )
     add_dependencies(quemusic_plugin_startup_test quemusic_navidrome_source)
     add_test(NAME quemusic_plugin_startup_test COMMAND quemusic_plugin_startup_test)
+
+    qt_add_executable(quemusic_plugin_manifest_test
+        core/plugins/PluginManifest.cpp
+        core/plugins/PluginManifest.h
+        tests/tst_PluginManifest.cpp
+    )
+    target_compile_features(quemusic_plugin_manifest_test PRIVATE cxx_std_17)
+    target_include_directories(quemusic_plugin_manifest_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/plugins
+    )
+    target_link_libraries(quemusic_plugin_manifest_test PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+    add_test(NAME quemusic_plugin_manifest_test COMMAND quemusic_plugin_manifest_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}
