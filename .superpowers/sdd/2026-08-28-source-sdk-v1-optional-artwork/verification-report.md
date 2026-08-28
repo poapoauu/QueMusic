@@ -3,12 +3,12 @@
 - Date: 2026-08-28
 - Worktree: `/Users/liqiang/Documents/ChatGPT/QueMusic/.worktrees/codex-source-sdk-v1-artwork`
 - Focused harness source: `/tmp/quemusic-task6-harness`
-- Focused harness build directory: `/private/var/folders/9_/7tqxtfdd1sz8h0f4_qcz9nd00000gn/T/quemusic-final-fix-verify-M4c1kI`
+- Focused harness build directory: `/private/var/folders/9_/7tqxtfdd1sz8h0f4_qcz9nd00000gn/T/quemusic-source-sdk-v1-artwork-final2`
 - Root-project configure build directory: `/private/var/folders/9_/7tqxtfdd1sz8h0f4_qcz9nd00000gn/T/quemusic-root-build-7EjYuA`
-- Test count: 5
+- Test count: 6
 - Result: PASS
 
-## Final diff checks
+## Initial branch diff snapshot before the final ABI fix wave
 
 Command:
 
@@ -60,7 +60,7 @@ tests/tst_SourceTypes.cpp                          |  11 +
 14 files changed, 1472 insertions(+), 13 deletions(-)
 ```
 
-The branch diff is not product-only. Intentional documentation/specification/plan/report artifacts are:
+The branch diff in this historical snapshot is not product-only. Intentional documentation/specification/plan/report artifacts are:
 
 ```text
 .superpowers/sdd/2026-08-28-source-sdk-v1-optional-artwork/task-1-report.md
@@ -117,7 +117,7 @@ CMake Error at api/QCloudMusicApi/3rdparty/cryptopp-cmake/cryptopp/CMakeLists.tx
 
 This confirms that the required fresh root-project `BUILD_TESTING=ON` configuration is blocked by the known missing qwindowkit/Crypto++ inputs; it does not produce a usable root build tree.
 
-## Focused harness refresh
+## Focused harness refresh (historical five-test snapshot)
 
 The existing `/private/tmp/quemusic-final-fix-verify-2` build tree was stale for this branch because `/tmp/quemusic-task6-harness/CMakeLists.txt` still contained the exact line `set(REPO_ROOT "/private/tmp/quemusic-final-fix-repo")`. I refreshed the harness source in place by replacing only that line with `set(REPO_ROOT "/Users/liqiang/Documents/ChatGPT/QueMusic/.worktrees/codex-source-sdk-v1-artwork")`; no harness files were copied and no product files were changed. The focused harness CMakeLists registers all five test executables and `add_test` entries unconditionally, so its `BUILD_TESTING=ON` configure warning is expected and the equivalent focused configuration is reproducible without that unused flag. I used a real temp build path instead of `/private/tmp` to avoid a Qt autogen relative-include failure caused by the `/tmp -> /private/tmp` symlink boundary.
 
@@ -195,7 +195,7 @@ test executables.
 
 ## Known full-application blockers
 
-The focused harness is green, but the full application must still be treated as blocked by the pre-existing qwindowkit, Crypto++, and Ninja issues called out in the plan. This verification does not claim a full-app green build.
+The focused harness is green, but the full application must still be treated as blocked by the pre-existing qwindowkit and Crypto++ issues reproduced above. The Ninja issue is previously reported and was not reproduced in this run. This verification does not claim a full-app green build.
 
 ## Final covering rerun after report edits
 

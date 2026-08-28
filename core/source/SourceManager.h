@@ -26,6 +26,8 @@ public:
     QStringList sourceIds() const;
     IMusicSourceSession *createSession(const QString &sourceId, const SourceAccount &account,
                                        QObject *parent);
+    QUuid requestArtwork(const QString &sourceId, IMusicSourceSession *session,
+                         const TrackRef &track) const;
 
 signals:
     void sourceLoaded(QString sourceId);

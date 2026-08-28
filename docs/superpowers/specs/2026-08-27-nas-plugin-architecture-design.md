@@ -101,14 +101,16 @@ IMusicSourceSession
 ├── search(SearchQuery)
 ├── browse(BrowseQuery)
 ├── resolveStream(TrackRef)
+├── fetchArtwork(TrackRef) [retained MusicSourcePlugin/1.0 ABI slot]
 ├── fetchLyrics(TrackRef)
 ├── read/write playlists when supported
 └── fetchVideo(TrackRef) when supported
 
-Optional capability interfaces extend a session without changing this base
-vtable. For example, `IMusicSourceArtworkSession` provides
-`fetchArtwork(const TrackRef &)`. Other optional capabilities follow the same
-independently versioned pattern.
+Optional capability interfaces are additive and do not remove or reorder the
+published base vtable. `IMusicSourceArtworkSession` repeats
+`fetchArtwork(const TrackRef &)` under its own IID for explicit capability
+discovery. Other new optional capabilities follow the same independently
+versioned pattern.
 ```
 
 The exact C++ declarations will be chosen during implementation, but the
@@ -130,20 +132,27 @@ following constraints are fixed:
 
 ### ABI compatibility decision
 
-The base `IMusicSourceSession` contract and
-`org.quemusic.MusicSourcePlugin/1.0` IID are immutable after publication. The
-artwork operation is an optional capability interface rather than a new pure
-virtual method on the base session. Its initial interface is
-`IMusicSourceArtworkSession` with its own IID,
-`org.quemusic.MusicSourceArtworkSession/1.0`, and the operation
-`fetchArtwork(const TrackRef &)`. A session may implement that interface in
-addition to `IMusicSourceSession`; the host discovers it with
-`qobject_cast` only when the source advertises `Artwork`.
+The published `IMusicSourceSession` contract for
+`org.quemusic.MusicSourcePlugin/1.0` has the virtual order `search`, `browse`,
+`resolveStream`, `fetchArtwork`, `fetchLyrics`, `cancel`. That order is
+immutable. In particular, the legacy `fetchArtwork(const TrackRef &)` slot is
+retained at its original position between `resolveStream` and `fetchLyrics`;
+removing it while retaining IID 1.0 would break existing plugin binaries.
 
-This preserves binary compatibility for existing source plugins while still
-allowing capability-specific APIs to evolve independently. Any breaking
-change to the base source or playback contracts requires a new major IID;
-old IID semantics are never silently changed.
+`IMusicSourceArtworkSession`, IID
+`org.quemusic.MusicSourceArtworkSession/1.0`, is added alongside the base
+session for new capability discovery. A newly written Artwork provider should
+inherit both interfaces and declare `Q_INTERFACES(IMusicSourceArtworkSession)`;
+one matching `fetchArtwork` override satisfies both contracts.
+
+The host gates all artwork calls on `SourceCapability::Artwork`. If the flag is
+absent, it does not use an optional artwork interface even when one is exposed.
+If the flag is present, it prefers the optional interface and otherwise falls
+back to the retained v1 base slot so legacy Artwork-advertising plugins remain
+usable. This preserves binary compatibility while allowing the optional
+interface to evolve independently. Any breaking change to the base source or
+playback contracts requires a new major IID; old IID semantics are never
+silently changed.
 
 ### Capabilities
 
@@ -309,8 +318,12 @@ component must retain its copyright and license notices.
 - Playback tests verify that source plugins return descriptors and never depend
   on a concrete engine.
 - Optional capability interfaces are versioned independently from the base
-  source session, and an older base-session plugin remains loadable when an
-  optional capability is absent.
+  source session. A frozen MusicSourcePlugin/1.0 binary built with the legacy
+  artwork slot remains loadable and dispatches trailing `fetchLyrics` and
+  `cancel` calls correctly through the current host.
+- Artwork tests cover all metadata/interface combinations used by policy:
+  advertised optional interface, advertised legacy-base fallback, and an
+  unadvertised optional interface that the host must not call.
 - Existing QueMusic build and local-lyrics tests remain green.
 - No QML code performs source HTTP requests or token handling.
 
@@ -327,9 +340,11 @@ The recommended first implementation is:
    NetEase.
 5. Keep the Issue #12 branch independent from this architecture branch.
 
-The approved ABI decision is to keep `IMusicSourceSession` and the base source
-IID stable, and expose artwork through the separately versioned optional
-`IMusicSourceArtworkSession` interface described above.
+The approved ABI decision is to keep the complete published
+`IMusicSourceSession` v1 virtual order, including its legacy artwork slot, and
+add the separately versioned `IMusicSourceArtworkSession` interface described
+above. The optional interface is additive; it is not an ABI-preserving reason
+to remove the v1 slot.
 
 This design is ready for review. Implementation should begin only after the
 architecture and first milestone are approved.

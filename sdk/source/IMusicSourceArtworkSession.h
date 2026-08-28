@@ -5,6 +5,8 @@
 #include <QtPlugin>
 #include <QUuid>
 
+// Additive capability-discovery interface. MusicSourcePlugin/1.0 still retains
+// the matching fetchArtwork virtual in IMusicSourceSession for ABI compatibility.
 class IMusicSourceArtworkSession {
 public:
     virtual ~IMusicSourceArtworkSession() = default;

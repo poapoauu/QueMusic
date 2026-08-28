@@ -1,5 +1,7 @@
 #include "SourceManager.h"
 
+#include "IMusicSourceArtworkSession.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QLibrary>
@@ -129,6 +131,31 @@ IMusicSourceSession *SourceManager::createSession(const QString &sourceId,
     }
 
     return source->plugin->createSession(account, parent);
+}
+
+QUuid SourceManager::requestArtwork(const QString &sourceId, IMusicSourceSession *session,
+                                    const TrackRef &track) const
+{
+    if (session == nullptr) {
+        return {};
+    }
+
+    const auto source = std::find_if(m_sources.cbegin(), m_sources.cend(),
+                                     [&sourceId](const LoadedSource &candidate) {
+                                         return candidate.descriptor.id == sourceId;
+                                     });
+    if (source == m_sources.cend()
+        || !source->descriptor.capabilities.testFlag(SourceCapability::Artwork)) {
+        return {};
+    }
+
+    if (auto *artworkSession = qobject_cast<IMusicSourceArtworkSession *>(session)) {
+        return artworkSession->fetchArtwork(track);
+    }
+
+    // MusicSourcePlugin/1.0 retains this legacy base-session slot. It is the
+    // compatibility path for v1 plugins that predate the optional interface.
+    return session->fetchArtwork(track);
 }
 
 void SourceManager::reportLoadFailure(const QString &pluginPath, const QString &error)

@@ -133,6 +133,34 @@ if(BUILD_TESTING)
         )
     endfunction()
 
+    add_library(quemusic_frozen_v1_source_sdk STATIC
+        tests/fixtures/frozen-v1-sdk/FrozenV1Sdk.cpp
+        tests/fixtures/frozen-v1-sdk/IMusicSourcePlugin.h
+        tests/fixtures/frozen-v1-sdk/IMusicSourceSession.h
+        tests/fixtures/frozen-v1-sdk/SourcePluginContext.h
+        tests/fixtures/frozen-v1-sdk/SourceTypes.h
+    )
+    target_compile_features(quemusic_frozen_v1_source_sdk PUBLIC cxx_std_17)
+    target_link_libraries(quemusic_frozen_v1_source_sdk PUBLIC Qt6::Core)
+    target_include_directories(quemusic_frozen_v1_source_sdk PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/frozen-v1-sdk
+    )
+    set_target_properties(quemusic_frozen_v1_source_sdk PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+    )
+
+    add_library(quemusic_frozen_v1_source_fixture MODULE
+        tests/fixtures/FrozenV1SourcePlugin.cpp
+    )
+    target_compile_features(quemusic_frozen_v1_source_fixture PRIVATE cxx_std_17)
+    target_link_libraries(quemusic_frozen_v1_source_fixture PRIVATE
+        quemusic_frozen_v1_source_sdk
+    )
+    set_target_properties(quemusic_frozen_v1_source_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
+    )
+
     add_source_plugin_fixture(quemusic_duplicate_source_fixture_one duplicate)
     target_compile_definitions(quemusic_duplicate_source_fixture_one PRIVATE
         QUEMUSIC_FIXTURE_SOURCE_ID="fixture.duplicate"
@@ -196,6 +224,15 @@ if(BUILD_TESTING)
         QUEMUSIC_FIXTURE_INITIALIZE_FAILS
     )
 
+    add_source_plugin_fixture(quemusic_optional_artwork_without_metadata_fixture
+                              optional-without-metadata)
+    target_compile_definitions(quemusic_optional_artwork_without_metadata_fixture PRIVATE
+        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.optional-without-metadata"
+        QUEMUSIC_FIXTURE_SOURCE_NAME="Optional Artwork Without Metadata"
+        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
+        QUEMUSIC_FIXTURE_ARTWORK_INTERFACE
+    )
+
     qt_add_executable(quemusic_source_manager_test
         tests/tst_SourceManager.cpp
     )
@@ -203,6 +240,7 @@ if(BUILD_TESTING)
     target_compile_definitions(quemusic_source_manager_test PRIVATE
         QUEMUSIC_TEST_PLUGIN_ROOT="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins"
         QUEMUSIC_TEST_SOURCE_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/plugins/source"
+        QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
     )
     target_link_libraries(quemusic_source_manager_test PRIVATE
         quemusic_source_manager
@@ -210,6 +248,7 @@ if(BUILD_TESTING)
     )
     add_dependencies(quemusic_source_manager_test
         quemusic_test_source
+        quemusic_frozen_v1_source_fixture
         quemusic_duplicate_source_fixture_one
         quemusic_duplicate_source_fixture_two
         quemusic_invalid_valid_fixture
@@ -219,8 +258,25 @@ if(BUILD_TESTING)
         quemusic_initialization_failure_fixture
         quemusic_not_source_fixture
         quemusic_incompatible_sdk_source_fixture
+        quemusic_optional_artwork_without_metadata_fixture
     )
     add_test(NAME quemusic_source_manager_test COMMAND quemusic_source_manager_test)
+
+    qt_add_executable(quemusic_source_v1_abi_test
+        tests/tst_SourceV1Abi.cpp
+    )
+    target_compile_features(quemusic_source_v1_abi_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_source_v1_abi_test PRIVATE
+        QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
+    )
+    target_link_libraries(quemusic_source_v1_abi_test PRIVATE
+        quemusic_source_manager
+        Qt6::Test
+    )
+    add_dependencies(quemusic_source_v1_abi_test
+        quemusic_frozen_v1_source_fixture
+    )
+    add_test(NAME quemusic_source_v1_abi_test COMMAND quemusic_source_v1_abi_test)
 
     qt_add_executable(quemusic_plugin_startup_test
         tests/tst_PluginStartup.cpp

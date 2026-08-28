@@ -1,274 +1,264 @@
-# Source SDK v1 Optional Artwork Implementation Plan
+# Source SDK v1 Optional Artwork Final-Fix Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Execute this final-review wave inline in the named
+> worktree. Do not dispatch subagents or reviewers. Steps use checkbox
+> (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve the `IMusicSourceSession` v1 ABI while moving artwork fetching into the independently versioned optional `IMusicSourceArtworkSession` capability interface.
+**Goal:** Preserve the already-published `IMusicSourceSession` v1 ABI while
+adding `IMusicSourceArtworkSession` as an independently versioned capability
+discovery interface and enforcing a safe metadata/runtime policy.
 
-**Architecture:** Keep `IMusicSourceSession` as the stable asynchronous base contract for search, browse, stream resolution, lyrics, and cancellation. Add a non-`QObject` optional interface with its own Qt IID; source sessions that advertise `Artwork` implement it alongside the base session, and the host discovers it with `qobject_cast` only when needed. Existing base-only sessions remain valid and continue to rely on advertised capabilities.
+**Architecture:** `MusicSourcePlugin/1.0` retains the exact base virtual order
+`search → browse → resolveStream → fetchArtwork → fetchLyrics → cancel`.
+Artwork metadata gates all host dispatch. The host prefers the additive
+optional interface for new plugins and falls back to the retained base slot for
+legacy v1 plugins that advertise Artwork but predate the optional IID.
 
-**Tech Stack:** Qt 6, C++17, Qt plugin metadata/IIDs, QtTest, CMake, `QPluginLoader`, `Q_OBJECT`/`Q_INTERFACES`.
+**Tech Stack:** Qt 6, C++17, Qt plugin metadata/IIDs, QtTest, CMake,
+`QPluginLoader`, `Q_OBJECT`, and `Q_INTERFACES`.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-nas-plugin-architecture-design.md`
 
 ## Global Constraints
 
-- The base `IMusicSourceSession` contract and `org.quemusic.MusicSourcePlugin/1.0` IID are immutable after publication.
-- Artwork uses `IMusicSourceArtworkSession` with IID `org.quemusic.MusicSourceArtworkSession/1.0`.
-- The host discovers the optional artwork interface with `qobject_cast` only when the source advertises `SourceCapability::Artwork`.
-- Request results use request IDs and asynchronous signals; plugins must not block the GUI thread.
-- Keep QueMusic's current Qt baseline and asynchronous style; do not make QCoro/C++20 a prerequisite yet.
-- SDK types remain independent of QML and provider-specific classes.
-- The existing Issue #12 branch remains independent from this architecture branch.
+- Keep `org.quemusic.MusicSourcePlugin/1.0` and its complete published vtable
+  unchanged. Removing or reordering any v1 virtual requires a new major IID.
+- Keep `fetchArtwork(const TrackRef &)` between `resolveStream` and
+  `fetchLyrics` in `IMusicSourceSession`.
+- Keep `IMusicSourceArtworkSession` additive with IID
+  `org.quemusic.MusicSourceArtworkSession/1.0`.
+- Without `SourceCapability::Artwork`, the host must not call either artwork
+  interface, even if the optional interface is present.
+- With Artwork metadata, prefer the optional interface; if it is absent, call
+  the retained v1 base method.
+- Request methods return request IDs and complete asynchronously through
+  `requestSucceeded` or `requestFailed` unless cancelled.
+- Preserve Qt 6/C++17, SDK independence from QML/provider code, and Issue #12
+  branch independence.
 
 ## File Map
 
-- Create: `sdk/source/IMusicSourceArtworkSession.h` — optional artwork capability contract and IID.
-- Modify: `sdk/source/IMusicSourceSession.h` — remove only the artwork pure virtual; leave the remaining base methods and signals unchanged.
-- Modify: `sdk/source/IMusicSourcePlugin.h` — document the optional capability relationship without changing the base IID.
-- Modify: `CMakeLists.txt` — include the new public header in the source SDK target.
-- Modify: `plugins/test-source/TestSourceSession.h` — implement the optional artwork interface explicitly.
-- Modify: `plugins/test-source/TestSourceSession.cpp` — retain the asynchronous artwork fixture behavior.
-- Modify: `tests/fixtures/FakeSourcePlugin.cpp` — keep the loader fixture base-only to represent an older-style session.
-- Modify: `tests/tst_SourcePluginContract.cpp` — cover optional-interface discovery and base-only compatibility.
-- Modify: `tests/tst_SourceManager.cpp` — obtain Artwork through the optional interface.
-- Modify: `tests/tst_SourceTypes.cpp` — retain capability serialization coverage and lock the Artwork bit behavior.
-- Create: `.superpowers/sdd/2026-08-28-source-sdk-v1-artwork/verification-report.md` — exact focused-harness evidence.
+- Modify: `sdk/source/IMusicSourceSession.h` — restore and label the immutable
+  v1 artwork slot.
+- Modify: `sdk/source/IMusicSourceArtworkSession.h` and
+  `sdk/source/IMusicSourcePlugin.h` — document the additive relationship.
+- Modify: `core/source/SourceManager.*` — add metadata-gated artwork dispatch
+  with optional-interface preference and v1 fallback.
+- Create: `tests/fixtures/frozen-v1-sdk/*` — frozen copies of the published v1
+  declarations, independent from HEAD SDK headers.
+- Create: `tests/fixtures/FrozenV1SourcePlugin.cpp` — real MODULE plugin built
+  only against the frozen v1 declarations.
+- Create: `tests/tst_SourceV1Abi.cpp` — load the frozen plugin through
+  `SourceManager` and exercise `fetchLyrics` and `cancel` through the new host.
+- Modify: `tests/fixtures/FakeSourcePlugin.cpp` and `tests/tst_SourceManager.cpp`
+  — cover capability metadata/runtime mismatches and fallback behavior.
+- Modify: `CMakeLists.txt` — build the independent frozen SDK/MODULE, dedicated
+  ABI test, and optional-without-metadata fixture.
+- Modify: `docs/PLUGIN_API.md`, the architecture spec, and this plan — state
+  the retained-slot ruling and async skeleton contract without contradiction.
+- Refresh: `.superpowers/sdd/2026-08-28-source-sdk-v1-optional-artwork/verification-report.md`.
+- Create: `.superpowers/sdd/2026-08-28-source-sdk-v1-artwork/final-fix-report.md`.
 
-### Task 1: Add the independently versioned artwork interface
+### Task 1: Prove and repair the v1 ABI regression
 
 **Files:**
-- Create: `sdk/source/IMusicSourceArtworkSession.h`
+
+- Create: `tests/fixtures/frozen-v1-sdk/SourceTypes.h`
+- Create: `tests/fixtures/frozen-v1-sdk/SourcePluginContext.h`
+- Create: `tests/fixtures/frozen-v1-sdk/IMusicSourceSession.h`
+- Create: `tests/fixtures/frozen-v1-sdk/IMusicSourcePlugin.h`
+- Create: `tests/fixtures/frozen-v1-sdk/FrozenV1Sdk.cpp`
+- Create: `tests/fixtures/FrozenV1SourcePlugin.cpp`
+- Create: `tests/tst_SourceV1Abi.cpp`
 - Modify: `sdk/source/IMusicSourceSession.h`
-- Modify: `sdk/source/IMusicSourcePlugin.h`
-- Modify: `CMakeLists.txt`
+- Modify: `tests/fixtures/FakeSourcePlugin.cpp`
 - Modify: `tests/tst_SourcePluginContract.cpp`
+- Modify: `CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: existing `TrackRef`, `QUuid`, and `IMusicSourceSession` request signals.
-- Produces: `IMusicSourceArtworkSession`, `QUEMUSIC_MUSIC_SOURCE_ARTWORK_SESSION_IID`, and an unchanged base-session vtable.
 
-- [ ] **Step 1: Write the failing contract test**
+- Consumes: the exact pre-change `MusicSourcePlugin/1.0` declarations from
+  main commit `8ad8e59`.
+- Produces: a separately compiled MODULE with no `quemusic_source_sdk` link and
+  an immutable host-side regression for the trailing vtable slots.
 
-Add a base-only fake session and an artwork-capable fake session to
-`tests/tst_SourcePluginContract.cpp`. The artwork-capable class inherits from
-both interfaces, declares `Q_INTERFACES(IMusicSourceArtworkSession)`, and
-implements `QUuid fetchArtwork(const TrackRef &track) override`. Add a test
-that casts the base-only object to `IMusicSourceArtworkSession` and expects
-`nullptr`, casts the artwork-capable object and expects non-null, then waits
-for its asynchronous `requestSucceeded` signal and checks the returned request
-ID. Remove `fetchArtwork()` from the base-only fake session.
+- [x] **Step 1: Add the frozen declarations, MODULE fixture, and failing test**
 
-- [ ] **Step 2: Run the test to verify it fails**
-
-```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /private/tmp/quemusic-final-fix-verify-2 --target quemusic_source_plugin_contract_test
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /private/tmp/quemusic-final-fix-verify-2 -R quemusic_source_plugin_contract_test --output-on-failure
-```
-
-Expected: compilation fails because the optional header and interface do not
-exist, and the current base session still owns `fetchArtwork()`.
-
-- [ ] **Step 3: Implement the minimal SDK change**
-
-Create `sdk/source/IMusicSourceArtworkSession.h` with this exact public shape:
+The frozen session declares this exact sequence:
 
 ```cpp
-#pragma once
-
-#include "SourceTypes.h"
-
-#include <QtPlugin>
-#include <QUuid>
-
-class IMusicSourceArtworkSession {
-public:
-    virtual ~IMusicSourceArtworkSession() = default;
-    virtual QUuid fetchArtwork(const TrackRef &track) = 0;
-};
-
-#define QUEMUSIC_MUSIC_SOURCE_ARTWORK_SESSION_IID \
-    "org.quemusic.MusicSourceArtworkSession/1.0"
-
-Q_DECLARE_INTERFACE(IMusicSourceArtworkSession,
-                    QUEMUSIC_MUSIC_SOURCE_ARTWORK_SESSION_IID)
+virtual QUuid search(const SearchQuery &query) = 0;
+virtual QUuid browse(const BrowseQuery &query) = 0;
+virtual QUuid resolveStream(const TrackRef &track) = 0;
+virtual QUuid fetchArtwork(const TrackRef &track) = 0;
+virtual QUuid fetchLyrics(const TrackRef &track) = 0;
+virtual void cancel(const QUuid &requestId) = 0;
 ```
 
-Delete only `fetchArtwork` from `IMusicSourceSession`. Keep the order and
-signatures of `search`, `browse`, `resolveStream`, `fetchLyrics`, and `cancel`
-unchanged, and do not alter its signals. Add the header to the
-`quemusic_source_sdk` source list. Add a short comment to
-`IMusicSourcePlugin.h`; do not change `QUEMUSIC_MUSIC_SOURCE_PLUGIN_IID`.
+Load the MODULE with `SourceManager`. Call `fetchLyrics` and assert the
+operation name/payload, then issue a second lyrics request, call `cancel`, and
+assert no success signal arrives.
 
-- [ ] **Step 4: Run the focused contract test to verify it passes**
+- [x] **Step 2: Verify RED before changing the host SDK**
+
+Run the focused manager test against the slot-removed host. Expected and
+observed failure: the host's `fetchLyrics` call dispatches the frozen plugin's
+`fetchArtwork` implementation, yielding `"fetchArtwork"` instead of
+`"fetchLyrics"`.
+
+- [x] **Step 3: Restore the legacy slot and concrete overrides**
+
+Restore only `fetchArtwork(const TrackRef &)` at its original base position.
+Do not change the plugin IID or any other signature/order. Add required legacy
+overrides to current concrete base-session test fixtures.
+
+- [x] **Step 4: Verify GREEN through the dedicated ABI target**
 
 ```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /private/tmp/quemusic-final-fix-verify-2 --target quemusic_source_plugin_contract_test
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /private/tmp/quemusic-final-fix-verify-2 -R quemusic_source_plugin_contract_test --output-on-failure
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build \
+  /private/var/folders/9_/7tqxtfdd1sz8h0f4_qcz9nd00000gn/T/quemusic-source-sdk-v1-artwork-final \
+  --target quemusic_source_v1_abi_test
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir \
+  /private/var/folders/9_/7tqxtfdd1sz8h0f4_qcz9nd00000gn/T/quemusic-source-sdk-v1-artwork-final \
+  -R '^quemusic_source_v1_abi_test$' --output-on-failure
 ```
 
-Expected: the base-only cast is null and the optional artwork request passes.
+Expected: the frozen cross-DSO lyrics dispatch and cancellation both pass.
 
-- [ ] **Step 5: Commit the SDK contract change**
-
-```bash
-git add sdk/source/IMusicSourceArtworkSession.h sdk/source/IMusicSourceSession.h sdk/source/IMusicSourcePlugin.h CMakeLists.txt tests/tst_SourcePluginContract.cpp
-git commit -m "fix: version source artwork capability separately"
-```
-
-### Task 2: Adapt the built-in test source and loader fixtures
+### Task 2: Make Artwork metadata/interface policy executable
 
 **Files:**
-- Modify: `plugins/test-source/TestSourceSession.h`
-- Modify: `plugins/test-source/TestSourceSession.cpp`
+
+- Modify: `core/source/SourceManager.h`
+- Modify: `core/source/SourceManager.cpp`
 - Modify: `tests/fixtures/FakeSourcePlugin.cpp`
 - Modify: `tests/tst_SourceManager.cpp`
+- Modify: `CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `IMusicSourceArtworkSession` and `SourceCapability::Artwork`.
-- Produces: a source whose Artwork metadata matches its optional interface,
-  plus a loadable base-only fixture with no Artwork capability.
 
-- [ ] **Step 1: Write the failing manager assertions**
+- Produces:
+  `QUuid SourceManager::requestArtwork(const QString &, IMusicSourceSession *,
+  const TrackRef &) const`.
 
-Change `fakeSourceCompletesArtworkFetch()` to call:
+- [x] **Step 1: Write the policy tests before the helper**
 
-```cpp
-auto *artworkSession = qobject_cast<IMusicSourceArtworkSession *>(session);
-QVERIFY(artworkSession != nullptr);
-const QUuid requestId = artworkSession->fetchArtwork(track);
-```
+Cover all three host branches:
 
-Add a manager test for the base-only fixture that creates its session and
-asserts `qobject_cast<IMusicSourceArtworkSession *>(session) == nullptr`.
-Keep that fixture's descriptor limited to `SourceCapability::Search`.
+1. Artwork metadata plus optional IID uses the optional interface.
+2. Artwork metadata without the optional IID uses the retained base slot.
+3. Optional IID without Artwork metadata is not invoked and returns a null
+   request ID without terminal signals.
 
-- [ ] **Step 2: Run the manager test to verify it fails**
+The second case uses the frozen v1 MODULE. The third uses a current fixture
+that intentionally exposes `IMusicSourceArtworkSession` while advertising only
+Search. No test or implementation may branch on a provider name.
 
-```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /private/tmp/quemusic-final-fix-verify-2 --target quemusic_source_manager_test
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /private/tmp/quemusic-final-fix-verify-2 -R quemusic_source_manager_test --output-on-failure
-```
+- [x] **Step 2: Verify RED**
 
-Expected: the test does not compile until the built-in source implements the
-new optional interface and the manager test includes its header.
+Build the manager test before adding the helper. Expected and observed failure:
+compilation reports that `SourceManager` has no `requestArtwork` member.
 
-- [ ] **Step 3: Implement the fixture migration**
+- [x] **Step 3: Implement the narrow dispatch helper**
 
-Include the optional header in `TestSourceSession.h`, inherit from both
-interfaces, and add `Q_INTERFACES(IMusicSourceArtworkSession)`. Keep the
-existing `fetchArtwork()` implementation and asynchronous JSON payload in
-`TestSourceSession.cpp`. Remove the obsolete `fetchArtwork()` override from
-`tests/fixtures/FakeSourcePlugin.cpp`; do not add Artwork to that fixture.
+Look up the registered descriptor by source ID. Return a null UUID for a null
+session, unknown source, or missing Artwork capability. For advertised Artwork,
+call the optional interface when `qobject_cast` succeeds; otherwise call the
+retained `IMusicSourceSession::fetchArtwork` method.
 
-- [ ] **Step 4: Run both source tests**
+- [x] **Step 4: Verify the manager and ABI tests**
 
 ```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /private/tmp/quemusic-final-fix-verify-2 -R 'quemusic_(source_manager|source_plugin_contract)_test' --output-on-failure
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir \
+  /private/var/folders/9_/7tqxtfdd1sz8h0f4_qcz9nd00000gn/T/quemusic-source-sdk-v1-artwork-final \
+  -R 'quemusic_(source_manager|source_v1_abi)_test' \
+  --output-on-failure
 ```
 
-Expected: both tests pass; the built-in source exposes Artwork and the
-base-only fixture remains valid.
+Expected: both targets pass.
 
-- [ ] **Step 5: Commit the fixture migration**
-
-```bash
-git add plugins/test-source/TestSourceSession.h plugins/test-source/TestSourceSession.cpp tests/fixtures/FakeSourcePlugin.cpp tests/tst_SourceManager.cpp
-git commit -m "test: migrate artwork fixture to optional source capability"
-```
-
-### Task 3: Lock the ABI and metadata regression cases
+### Task 3: Correct public documentation and examples
 
 **Files:**
-- Modify: `tests/tst_SourcePluginContract.cpp`
-- Modify: `tests/tst_SourceManager.cpp`
-- Modify: `tests/tst_SourceTypes.cpp`
 
-**Interfaces:**
-- Consumes: stable base IID, optional Artwork IID, source capability metadata,
-  and loader failure isolation.
-- Produces: regression coverage showing optional capability absence through
-  interface discovery rather than provider-name branching.
+- Modify: `docs/PLUGIN_API.md`
+- Modify: `docs/superpowers/specs/2026-08-27-nas-plugin-architecture-design.md`
+- Modify: `docs/superpowers/plans/2026-08-28-source-sdk-v1-optional-artwork.md`
+- Modify: `sdk/source/IMusicSourceSession.h`
+- Modify: `sdk/source/IMusicSourceArtworkSession.h`
+- Modify: `sdk/source/IMusicSourcePlugin.h`
 
-- [ ] **Step 1: Add exact IID and capability assertions**
+- [x] **Step 1: State the binding ABI ruling without euphemism**
 
-Add these QtTest assertions:
+Document the exact v1 virtual order, the retained legacy artwork slot, and that
+removing the slot under IID 1.0 is a binary break. Describe the optional
+interface as additive and independently versioned.
 
-```cpp
-QCOMPARE(QString::fromLatin1(QUEMUSIC_MUSIC_SOURCE_PLUGIN_IID),
-         QStringLiteral("org.quemusic.MusicSourcePlugin/1.0"));
-QCOMPARE(QString::fromLatin1(QUEMUSIC_MUSIC_SOURCE_ARTWORK_SESSION_IID),
-         QStringLiteral("org.quemusic.MusicSourceArtworkSession/1.0"));
-```
+- [x] **Step 2: Document the metadata/runtime policy**
 
-Verify that the Artwork-advertising test source casts successfully and the
-base-only fixture does not. Keep the existing descriptor JSON round-trip and
-all capability-bit coverage.
+State metadata-first gating, optional-interface preference, legacy v1 fallback,
+and the expectation that newly written Artwork sources pair metadata with
+`Q_INTERFACES(IMusicSourceArtworkSession)`.
 
-- [ ] **Step 2: Run the regression suite**
+- [x] **Step 3: Replace the misleading implementation skeleton**
 
-```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /private/tmp/quemusic-final-fix-verify-2 -R 'quemusic_(source_types|source_manager|source_plugin_contract)_test' --output-on-failure
-```
+Use declarations only. Explicitly say bodies are omitted and every real request
+must asynchronously emit one matching success/failure signal unless cancelled;
+returning a UUID alone violates the contract. Keep dual inheritance and
+`Q_INTERFACES` in the declaration.
 
-Expected: all selected tests pass after the implementation from Tasks 1–2.
-
-- [ ] **Step 3: Commit the regression coverage**
-
-```bash
-git add tests/tst_SourcePluginContract.cpp tests/tst_SourceManager.cpp tests/tst_SourceTypes.cpp
-git commit -m "test: lock source capability ABI versions"
-```
-
-### Task 4: Verify the focused harness and record the handoff
+### Task 4: Final verification, reporting, and commit
 
 **Files:**
-- Create: `.superpowers/sdd/2026-08-28-source-sdk-v1-artwork/verification-report.md`
 
-**Interfaces:**
-- Consumes: all SDK, fixture, manager, and test changes from Tasks 1–3.
-- Produces: reproducible verification evidence and a clean reviewable branch.
+- Refresh: `.superpowers/sdd/2026-08-28-source-sdk-v1-optional-artwork/verification-report.md`
+- Create: `.superpowers/sdd/2026-08-28-source-sdk-v1-artwork/final-fix-report.md`
 
-- [ ] **Step 1: Check the final diff**
+- [ ] **Step 1: Configure and build a fresh focused harness**
 
-Run:
+Because the root configure is independently blocked by missing qwindowkit and
+Crypto++ inputs, use the repository's focused harness mirror and record its
+exact source/build paths. Build all six focused executables, including
+`quemusic_source_v1_abi_test`.
+
+- [ ] **Step 2: Run all focused tests**
+
+```bash
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest \
+  --test-dir /private/var/folders/9_/7tqxtfdd1sz8h0f4_qcz9nd00000gn/T/quemusic-source-sdk-v1-artwork-final \
+  --output-on-failure
+```
+
+Expected: six tests, zero failures.
+
+- [ ] **Step 3: Run final diff and compatibility checks**
 
 ```bash
 git diff --check
 git status --short
 git diff --stat main...HEAD
+git diff main...HEAD -- sdk/source/IMusicSourceSession.h
 ```
 
-Expected: no whitespace errors and only the optional-artwork SDK, fixture,
-test, and verification files are changed.
+The session-header diff must not remove or reorder any v1 virtual.
 
-- [ ] **Step 2: Build and run all focused tests**
+- [ ] **Step 4: Refresh both reports accurately**
 
-Use a fresh out-of-tree `BUILD_TESTING=ON` configuration if the existing
-focused build is stale, then run:
+Record changed files, design choices, RED/GREEN evidence, exact commands and
+outputs, six-test results, and remaining limitations. Label branch statistics
+as captured before the report/commit when appropriate. Describe Ninja only as
+a previously reported issue not reproduced in this run.
 
-```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build /private/tmp/quemusic-final-fix-verify-2
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir /private/tmp/quemusic-final-fix-verify-2 --output-on-failure
-```
+- [ ] **Step 5: Commit the complete final-fix wave**
 
-Expected: the five focused tests pass with 0 failures. Do not claim the full
-application build is green while the known qwindowkit/Crypto++/Ninja blockers
-remain.
-
-- [ ] **Step 3: Write and commit the verification report**
-
-Record the exact build directory, commands, test count, pass/fail result, and
-any pre-existing full-application blockers in
-`.superpowers/sdd/2026-08-28-source-sdk-v1-artwork/verification-report.md`.
-
-```bash
-git diff --check
-git add .superpowers/sdd/2026-08-28-source-sdk-v1-artwork/verification-report.md
-git commit -m "docs: record optional artwork ABI verification"
-```
+Stage the ignored report explicitly, inspect the staged diff, run a final
+covering test pass on the staged tree, and create one final-fix commit.
 
 ## Execution Notes
 
-- Run commands from `/Users/liqiang/Documents/ChatGPT/QueMusic/.worktrees/codex-source-sdk-v1-artwork`.
-- Keep the parent worktree on `codex/issue-12-local-lyrics` untouched.
-- After implementation, use `superpowers:verification-before-completion` before claiming completion and `superpowers:requesting-code-review` before asking to merge or publish the branch.
+- Work only in
+  `/Users/liqiang/Documents/ChatGPT/QueMusic/.worktrees/codex-source-sdk-v1-artwork`.
+- Keep the parent Issue #12 worktree untouched.
+- The cosmetic Task-1 report-round naming remains deferred.
+- Do not claim a full-application build while root configuration is blocked by
+  unrelated missing third-party sources.

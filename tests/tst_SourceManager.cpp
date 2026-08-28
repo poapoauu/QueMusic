@@ -22,6 +22,8 @@ private slots:
     void fakeSourceCompletesStreamResolution();
     void fakeSourceCompletesArtworkFetch();
     void baseOnlyFixtureDoesNotExposeArtworkInterface();
+    void legacyArtworkMetadataFallsBackToV1BaseSession();
+    void optionalArtworkInterfaceWithoutMetadataIsNotUsed();
 };
 
 namespace {
@@ -34,6 +36,11 @@ QString fixtureDirectory(const QString &name)
 QString testSourcePluginDirectory()
 {
     return QStringLiteral(QUEMUSIC_TEST_SOURCE_PLUGIN_DIR);
+}
+
+QString frozenV1PluginDirectory()
+{
+    return QStringLiteral(QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR);
 }
 
 }
@@ -229,7 +236,7 @@ void SourceManagerTest::fakeSourceCompletesArtworkFetch()
 
     QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
     const TrackRef track{QStringLiteral("test-source"), QStringLiteral("test-track-1")};
-    const QUuid requestId = artworkSession->fetchArtwork(track);
+    const QUuid requestId = manager.requestArtwork(account.sourceId, session, track);
 
     QVERIFY(succeeded.wait(1000));
     const QList<QVariant> arguments = succeeded.constFirst();
@@ -259,6 +266,61 @@ void SourceManagerTest::baseOnlyFixtureDoesNotExposeArtworkInterface()
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
     QVERIFY(session != nullptr);
     QCOMPARE(qobject_cast<IMusicSourceArtworkSession *>(session), nullptr);
+}
+
+void SourceManagerTest::legacyArtworkMetadataFallsBackToV1BaseSession()
+{
+    SourceManager manager;
+    QObject parent;
+    const SourceAccount account{QStringLiteral("fixture.frozen-v1"),
+                                QStringLiteral("account-1"),
+                                QStringLiteral("Frozen v1 Account")};
+
+    manager.addSearchPath(frozenV1PluginDirectory());
+    QCOMPARE(manager.loadAll(), 1);
+    IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
+    QVERIFY(session != nullptr);
+    QCOMPARE(qobject_cast<IMusicSourceArtworkSession *>(session), nullptr);
+
+    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
+    const TrackRef track{account.sourceId, QStringLiteral("cover-1")};
+    const QUuid requestId = manager.requestArtwork(account.sourceId, session, track);
+
+    QVERIFY(!requestId.isNull());
+    QVERIFY(succeeded.wait(1000));
+    QCOMPARE(succeeded.constFirst().at(0).toUuid(), requestId);
+    QCOMPARE(succeeded.constFirst().at(1).toString(), QStringLiteral("fetchArtwork"));
+    QCOMPARE(succeeded.constFirst().at(2).toString(), QStringLiteral("cover-1"));
+}
+
+void SourceManagerTest::optionalArtworkInterfaceWithoutMetadataIsNotUsed()
+{
+    SourceManager manager;
+    QObject parent;
+    const SourceAccount account{QStringLiteral("fixture.optional-without-metadata"),
+                                QStringLiteral("account-1"),
+                                QStringLiteral("No Artwork Metadata Account")};
+
+    manager.addSearchPath(fixtureDirectory(QStringLiteral("optional-without-metadata")));
+    QCOMPARE(manager.loadAll(), 1);
+    const QVariantMap descriptor = manager.availableSources().constFirst().toMap();
+    QVERIFY((descriptor.value(QStringLiteral("capabilities")).toULongLong() &
+             static_cast<qulonglong>(SourceCapability::Artwork)) == 0);
+
+    IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
+    QVERIFY(session != nullptr);
+    QVERIFY(qobject_cast<IMusicSourceArtworkSession *>(session) != nullptr);
+    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
+    QSignalSpy failed(session, &IMusicSourceSession::requestFailed);
+
+    const QUuid requestId = manager.requestArtwork(
+        account.sourceId, session,
+        {account.sourceId, QStringLiteral("must-not-dispatch")});
+
+    QVERIFY(requestId.isNull());
+    QTest::qWait(50);
+    QCOMPARE(succeeded.count(), 0);
+    QCOMPARE(failed.count(), 0);
 }
 
 QTEST_MAIN(SourceManagerTest)

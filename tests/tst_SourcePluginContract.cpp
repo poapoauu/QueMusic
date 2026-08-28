@@ -27,6 +27,7 @@ public:
                                             QStringLiteral("https://example.invalid/%1.mp3")
                                                 .arg(track.nativeId)}});
     }
+    QUuid fetchArtwork(const TrackRef &) override { return completeUnsupported(); }
     QUuid fetchLyrics(const TrackRef &) override { return completeUnsupported(); }
     void cancel(const QUuid &) override { }
 
