@@ -12,8 +12,11 @@ target_link_libraries(quemusic_navidrome_source PRIVATE
     quemusic_source_sdk
 )
 set_target_properties(quemusic_navidrome_source PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome/$<CONFIG>"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome/$<CONFIG>"
+    # Keep a package directory directly below <build>/plugins so it matches
+    # SourceStartup's development search root for both single- and multi-config
+    # generators.
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome"
 )
 configure_file(
     manifest.json.in
@@ -21,7 +24,7 @@ configure_file(
     @ONLY
 )
 set(QUEMUSIC_NAVIDROME_MANIFEST
-    "${CMAKE_BINARY_DIR}/plugins/navidrome/$<CONFIG>/manifest.json")
+    "${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json")
 file(GENERATE
     OUTPUT "${QUEMUSIC_NAVIDROME_MANIFEST}"
     INPUT "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in")

@@ -20,14 +20,20 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network Multimedia Concu
 # TagLib is vendored so local metadata parsing works consistently on all
 # supported platforms without requiring a system package.
 set(BUILD_BINDINGS OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+# TagLib uses BUILD_TESTING as a directory option. Keep it disabled only while
+# configuring that dependency; forcing its cache entry would also disable this
+# project's PluginCore test targets.
+set(_quemusic_build_testing ${BUILD_TESTING})
+set(BUILD_TESTING OFF)
 # qwindowkit may set BUILD_SHARED_LIBS globally. Keep TagLib static so the
 # application bundle does not require a separately deployed libtag dylib.
 set(_quemusic_build_shared_libs ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 add_subdirectory(ThirdParty/taglib ${CMAKE_BINARY_DIR}/_deps/taglib-build EXCLUDE_FROM_ALL)
 set(BUILD_SHARED_LIBS ${_quemusic_build_shared_libs})
+set(BUILD_TESTING ${_quemusic_build_testing})
 unset(_quemusic_build_shared_libs)
+unset(_quemusic_build_testing)
 #add_subdirectory(api)
 #include_directories(api)
 
