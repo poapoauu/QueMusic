@@ -1,43 +1,70 @@
 # Architecture
 
-## Runtime Boundary
+## Native PluginCore
 
-QueMusic now initializes source plugin discovery once during application
-startup. After `QGuiApplication` exists and before `engine.load(...)`, the app
-creates exactly one `SourceManager` owned for the lifetime of the application.
-That manager:
+QueMusic has one application-lifetime `PluginManager`, created after
+`QGuiApplication` and before `engine.load(...)`. It owns package manifests,
+`QPluginLoader` objects, and active-use leases. `SourceManager` is an adapter
+over that core: it validates `IMusicSourcePlugin` descriptors, initializes
+sources, and creates account-scoped sessions.
 
-- adds the bundled plugin search root under `applicationDirPath()/plugins/source`
-- adds the user plugin search root under
-  `QStandardPaths::AppDataLocation/plugins/source`
-- logs `sourceLoadFailed` through Qt warnings so the existing `LogManager`
-  message handler records loader problems
-- calls `loadAll()` immediately to populate the in-process source registry
+```text
+QGuiApplication
+  ├─ PluginManager
+  │   ├─ PluginManifest
+  │   ├─ QPluginLoader (only while loaded)
+  │   └─ PluginLease (one per active source session)
+  └─ SourceManager
+      └─ registered source descriptors and sessions
+```
 
-This boundary is intentionally C++-only. `SourceManager`, source sessions, and
-plugin instances are not exposed as direct QML context properties. The existing
-QML-facing objects, playback path, and `MusicApiService` singleton continue to
-define the active user-facing runtime.
+Plugin discovery reads external `manifest.json` files without executing their
+libraries. A native package must pass package API, Qt-major, optional CPU and
+build-mode checks before `QPluginLoader::instance()` runs. A loaded `source`
+package must also implement `IMusicSourcePlugin`; its manifest `sourceId` must
+match its returned `SourceDescriptor`.
 
-## Ownership Model
+## Runtime and ownership
 
-- `QGuiApplication` owns the application-lifetime `SourceManager`
-- `SourceManager` owns plugin loaders and keeps loaded plugin instances alive
-- individual source sessions are created later per account and are owned by the
-  caller-provided parent
+`SourceManager::createSession()` acquires a `PluginLease` and parents a private
+lease guard to the returned `IMusicSourceSession`. Consequently a package is
+Busy while any of its sessions exist. An unused package may unload: the source
+registry removes its entry as part of that state change, preventing dangling
+plugin pointers. Reloading creates a fresh native instance and re-registers
+the source.
 
-This keeps discovery global while session state remains explicit and scoped.
+`PluginManager` is the only plugin object exposed to QML, as the
+`pluginManager` context property. It exposes a read-only package list and
+Discover/Load/Unload/Reload invokables. `SourceManager`, raw plugin instances,
+and sessions remain C++-only. The Settings 音源 page uses the manager to show
+state, errors, and active session counts; unload and reload controls are
+disabled while a package has active leases.
 
-## Deliberate Non-Goals
+## Plugin roots
 
-This startup integration does not:
+The manager scans:
 
-- replace or modify `MusicApiService`
-- change existing QML context properties
-- reroute local lyrics behavior
-- alter playback or playback plugin wiring
-- add plugin sandboxing, permission prompts, or signature verification
-- solve Issue #12 or touch `meshgradient`
+- `QueMusic.app/Contents/PlugIns/quemusic` in a macOS application bundle;
+- `<applicationDir>/../plugins` for a development build; and
+- `QStandardPaths::AppDataLocation/plugins` for user-installed packages.
 
-Those changes belong to later, separately reviewable tasks once source adapters
-and compatibility layers exist.
+Each root contains package directories, each with `manifest.json` beside its
+shared library. The build emits the Navidrome module and its manifest to the
+development package root.
+
+## Deliberate boundaries
+
+The first PluginCore release supports native `source` packages only. Local
+music, Kugou, NetEase, QQ, lyrics, MV, GUI, and language plugins are planned
+future package categories and are not converted by this milestone. Existing
+`MusicApiService`, playback wiring, and the rest of the QML data model remain
+unchanged.
+
+Native plugins are trusted in-process code. Manifest checks improve diagnostics
+but do not sandbox a library, validate a signature, provide permission prompts,
+or guarantee compatibility across Qt/toolchain versions.
+
+JavaScript plugins are intentionally deferred. Their QuickJS-style isolated VM,
+permissions, package integrity, and hot-reload design is recorded in
+`docs/superpowers/specs/2026-08-29-js-plugin-runtime-design.md`; no JavaScript
+runtime is linked or loaded today.

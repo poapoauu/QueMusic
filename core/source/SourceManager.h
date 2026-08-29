@@ -44,6 +44,8 @@ private:
         QString packageId;
     };
 
+    void synchronizeSourcePackage(const QString &packageId);
+    void removeSourcePackage(const QString &packageId);
     void reportLoadFailure(const QString &pluginPath, const QString &error);
 
     QStringList m_searchPaths;

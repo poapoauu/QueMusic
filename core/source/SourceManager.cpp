@@ -31,6 +31,10 @@ SourceManager::SourceManager(PluginManager *pluginManager, QObject *parent)
     : QObject(parent)
     , m_pluginManager(pluginManager)
 {
+    if (m_pluginManager != nullptr) {
+        connect(m_pluginManager, &PluginManager::pluginChanged, this,
+                [this](const QString &packageId) { synchronizeSourcePackage(packageId); });
+    }
 }
 
 SourceManager::~SourceManager() = default;
@@ -135,6 +139,13 @@ bool SourceManager::loadSourcePackage(const QString &packageId)
         return false;
     }
 
+    if (std::any_of(m_sources.cbegin(), m_sources.cend(),
+                    [&packageId](const LoadedSource &source) {
+                        return source.packageId == packageId;
+                    })) {
+        return true;
+    }
+
     const PluginSpec package = m_pluginManager->plugin(packageId);
     if (package.category != PluginCategory::Source) {
         return false;
@@ -164,6 +175,39 @@ bool SourceManager::loadSourcePackage(const QString &packageId)
     emit sourceLoaded(descriptor.id);
     emit sourceChanged();
     return true;
+}
+
+void SourceManager::synchronizeSourcePackage(const QString &packageId)
+{
+    if (m_pluginManager == nullptr) {
+        return;
+    }
+
+    const PluginSpec package = m_pluginManager->plugin(packageId);
+    if (package.category != PluginCategory::Source) {
+        return;
+    }
+
+    if (package.state == PluginState::Loaded) {
+        loadSourcePackage(packageId);
+        return;
+    }
+
+    removeSourcePackage(packageId);
+}
+
+void SourceManager::removeSourcePackage(const QString &packageId)
+{
+    const auto firstRemoved = std::remove_if(m_sources.begin(), m_sources.end(),
+                                             [&packageId](const LoadedSource &source) {
+                                                 return source.packageId == packageId;
+                                             });
+    if (firstRemoved == m_sources.end()) {
+        return;
+    }
+
+    m_sources.erase(firstRemoved, m_sources.end());
+    emit sourceChanged();
 }
 
 QVariantList SourceManager::availableSources() const

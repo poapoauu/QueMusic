@@ -26,6 +26,7 @@ private slots:
     void legacyArtworkMetadataFallsBackToV1BaseSession();
     void optionalArtworkInterfaceWithoutMetadataIsNotUsed();
     void sourceSessionKeepsNativePackageLoaded();
+    void nativePackageLifecycleKeepsSourceRegistryInSync();
 };
 
 namespace {
@@ -343,6 +344,28 @@ void SourceManagerTest::sourceSessionKeepsNativePackageLoaded()
     delete session;
     QCOMPARE(plugins.unload(QStringLiteral("org.quemusic.source.fixture")),
              PluginOperationResult::Success);
+}
+
+void SourceManagerTest::nativePackageLifecycleKeepsSourceRegistryInSync()
+{
+    PluginManager plugins;
+    plugins.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+    SourceManager manager(&plugins);
+    QObject parent;
+    const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
+                                QStringLiteral("Test Account")};
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture");
+
+    QCOMPARE(manager.loadAll(), 1);
+    QCOMPARE(manager.sourceIds(), QStringList({account.sourceId}));
+
+    QCOMPARE(plugins.unload(packageId), PluginOperationResult::Success);
+    QCOMPARE(manager.sourceIds(), QStringList());
+    QVERIFY(manager.createSession(account.sourceId, account, &parent) == nullptr);
+
+    QCOMPARE(plugins.reload(packageId), PluginOperationResult::Success);
+    QCOMPARE(manager.sourceIds(), QStringList({account.sourceId}));
+    QVERIFY(manager.createSession(account.sourceId, account, &parent) != nullptr);
 }
 
 QTEST_MAIN(SourceManagerTest)

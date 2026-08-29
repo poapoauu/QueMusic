@@ -1,8 +1,53 @@
 # Plugin API
 
 QueMusic source plugins are native Qt plugins loaded at application startup by
-`SourceManager`. This document defines the current ABI boundary for music source
-providers.
+`PluginManager` and adapted by `SourceManager`. This document defines the
+current package format and ABI boundary for music source providers.
+
+## Native package format
+
+A native plugin is a directory, one level below a plugin root. It contains a
+`manifest.json` and the shared library named by the manifest:
+
+```text
+plugins/
+  navidrome/
+    manifest.json
+    libquemusic_navidrome_source.dylib
+```
+
+The current runtime accepts `source` packages with `runtime` set to
+`native-qt`. Other category names are reserved for future lyrics, MV, GUI, and
+language plugin APIs; they cannot be loaded yet.
+
+```json
+{
+  "id": "org.quemusic.source.example",
+  "sourceId": "example",
+  "name": "Example Source",
+  "version": "1.0.0",
+  "category": "source",
+  "runtime": "native-qt",
+  "library": "libquemusic_example_source.dylib",
+  "pluginApi": { "major": 1, "minHostMinor": 0 },
+  "interfaces": [
+    { "id": "org.quemusic.MusicSourcePlugin/1.0", "version": "1.0" }
+  ],
+  "runtimeRequirements": { "qtMajor": 6 }
+}
+```
+
+`id`, `sourceId`, `name`, `version`, `category`, `runtime`, `library`,
+`pluginApi`, and the source interface declaration are required. `library` is a
+relative filename inside the package: absolute paths, `.` and `..` path
+components, and directories are rejected. `runtimeRequirements.architecture`
+and `runtimeRequirements.buildMode` are optional exact-match gates.
+
+The host validates this metadata before creating a `QPluginLoader` instance.
+Plugin API major must be `1`; `minHostMinor` must not exceed the host's current
+minor (`0`). Qt major, architecture, and build mode must match whenever the
+package declares them. `QPluginLoader` remains the final native binary and ABI
+compatibility gate.
 
 ## ABI and IID
 
@@ -42,17 +87,45 @@ Each plugin must implement `IMusicSourcePlugin::descriptor()` and return a
 
 ## Search Paths
 
-At startup QueMusic loads source plugins from exactly these directories:
+At startup QueMusic scans package directories from these roots:
 
-- `QCoreApplication::applicationDirPath()/plugins/source`
-- `QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)/plugins/source`
+- macOS application bundle: `QueMusic.app/Contents/PlugIns/quemusic`
+- development build fallback: `QCoreApplication::applicationDirPath()/../plugins`
+- user packages: `QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)/plugins`
 
-When built from the root CMake project, bundled source modules are emitted to
-`<build>/bin/plugins/source`, next to the application's runtime directory, so
-the first startup search path discovers them without application-specific code.
+When built from the root CMake project, bundled source package outputs are
+written below `<build>/plugins`; this matches the development fallback when the
+application runs from `<build>/bin`.
 
 The application directory is intended for bundled plugins. The app-data
 directory is intended for user-installed plugins on the local machine.
+
+## Discovery, lifecycle, and Settings
+
+`PluginManager::discover()` reads manifests without executing plugin code.
+`load()` creates a compatible Qt plugin instance, and `SourceManager` then
+validates its descriptor, initializes it, and adds its source ID to the source
+registry. The Settings “音源” page exposes `pluginManager` to list package
+metadata and offers Discover, Load, Unload, and Reload actions.
+
+The QML `plugins` list contains `id`, `sourceId`, `name`, `version`,
+`category`, `state`, `error`, `path`, `activeLeases`, and `reloadable`.
+States are `discovered`, `loaded`, `failed`, and `unloaded`.
+
+Each source session owns a package lease. Unload and reload return Busy while
+any session from that package remains alive, and the Settings controls are
+disabled in that state. When an unused source package unloads, `SourceManager`
+removes the corresponding source registry entry before it can be used again.
+Reloading creates a new plugin instance and reinitializes the source entry.
+This is a trusted-native-code lifecycle only; there is no sandbox, signature,
+permission, or cross-version ABI isolation.
+
+## Deferred JavaScript runtime
+
+JavaScript packages are designed but deliberately not implemented. Do not add
+an engine, JS package loader, SDK, or runtime dependency until the project
+owner explicitly requests it. The frozen design is in
+[`2026-08-29-js-plugin-runtime-design.md`](superpowers/specs/2026-08-29-js-plugin-runtime-design.md).
 
 ## Navidrome source configuration
 
