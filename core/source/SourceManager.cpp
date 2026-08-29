@@ -34,6 +34,18 @@ SourceManager::SourceManager(PluginManager *pluginManager, QObject *parent)
     if (m_pluginManager != nullptr) {
         connect(m_pluginManager, &PluginManager::pluginChanged, this,
                 [this](const QString &packageId) { synchronizeSourcePackage(packageId); });
+        connect(m_pluginManager, &QObject::destroyed, this, [this] {
+            m_pluginManager = nullptr;
+            const auto firstRemoved = std::remove_if(
+                m_sources.begin(), m_sources.end(), [](const LoadedSource &source) {
+                    return !source.packageId.isEmpty();
+                });
+            if (firstRemoved == m_sources.end()) {
+                return;
+            }
+            m_sources.erase(firstRemoved, m_sources.end());
+            emit sourceChanged();
+        });
     }
 }
 
@@ -135,7 +147,12 @@ int SourceManager::loadAll()
 
 bool SourceManager::loadSourcePackage(const QString &packageId)
 {
-    if (m_pluginManager == nullptr || !m_pluginManager->load(packageId)) {
+    if (m_pluginManager == nullptr) {
+        return false;
+    }
+
+    if (m_pluginManager->plugin(packageId).state != PluginState::Loaded
+        && !m_pluginManager->load(packageId)) {
         return false;
     }
 
@@ -148,26 +165,47 @@ bool SourceManager::loadSourcePackage(const QString &packageId)
 
     const PluginSpec package = m_pluginManager->plugin(packageId);
     if (package.category != PluginCategory::Source) {
+        m_pluginManager->failLoadedPlugin(packageId,
+                                          QStringLiteral("Package category is not source"));
         return false;
     }
     QObject *pluginObject = m_pluginManager->pluginInstance(packageId);
     IMusicSourcePlugin *plugin = qobject_cast<IMusicSourcePlugin *>(pluginObject);
     if (plugin == nullptr) {
+        m_pluginManager->failLoadedPlugin(packageId,
+                                          QStringLiteral("Package does not implement IMusicSourcePlugin"));
         return false;
     }
 
     const SourceDescriptor descriptor = plugin->descriptor();
-    if (descriptor.id != package.sourceId || descriptor.name.isEmpty()
-        || !isMusicSourceSdkVersionCompatible(descriptor.sdkVersion)
-        || std::any_of(m_sources.cbegin(), m_sources.cend(),
-                       [&descriptor](const LoadedSource &source) {
-                           return source.descriptor.id == descriptor.id;
-                       })) {
+    if (descriptor.id != package.sourceId) {
+        m_pluginManager->failLoadedPlugin(
+            packageId, QStringLiteral("Plugin source descriptor ID does not match manifest source ID"));
+        return false;
+    }
+    if (descriptor.name.isEmpty()) {
+        m_pluginManager->failLoadedPlugin(packageId, QStringLiteral("Plugin display name is empty"));
+        return false;
+    }
+    if (!isMusicSourceSdkVersionCompatible(descriptor.sdkVersion)) {
+        m_pluginManager->failLoadedPlugin(
+            packageId, QStringLiteral("Unsupported plugin SDK version: %1 (host supports %2)")
+                           .arg(descriptor.sdkVersion,
+                                QStringLiteral(QUEMUSIC_MUSIC_SOURCE_SDK_VERSION)));
+        return false;
+    }
+    if (std::any_of(m_sources.cbegin(), m_sources.cend(),
+                    [&descriptor](const LoadedSource &source) {
+                        return source.descriptor.id == descriptor.id;
+                    })) {
+        m_pluginManager->failLoadedPlugin(
+            packageId, QStringLiteral("Duplicate plugin source ID: %1").arg(descriptor.id));
         return false;
     }
 
     SourcePluginContext context{&m_network, {}};
     if (!plugin->initialize(context)) {
+        m_pluginManager->failLoadedPlugin(packageId, QStringLiteral("Plugin initialization failed"));
         return false;
     }
 
@@ -249,6 +287,9 @@ IMusicSourceSession *SourceManager::createSession(const QString &sourceId,
 
     PluginLease lease;
     if (!source->packageId.isEmpty()) {
+        if (m_pluginManager == nullptr) {
+            return nullptr;
+        }
         lease = m_pluginManager->acquire(source->packageId);
         if (!lease.isValid()) {
             return nullptr;

@@ -63,6 +63,7 @@ public:
     int discover();
 
     bool load(const QString &packageId);
+    bool failLoadedPlugin(const QString &packageId, const QString &error);
     PluginOperationResult unload(const QString &packageId);
     PluginOperationResult reload(const QString &packageId);
     PluginLease acquire(const QString &packageId);

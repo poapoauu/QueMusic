@@ -4,6 +4,7 @@
 
 #include <QNetworkAccessManager>
 #include <QObject>
+#include <QPointer>
 #include <QStringList>
 #include <QVariantList>
 
@@ -49,7 +50,7 @@ private:
     void reportLoadFailure(const QString &pluginPath, const QString &error);
 
     QStringList m_searchPaths;
-    PluginManager *m_pluginManager = nullptr;
+    QPointer<PluginManager> m_pluginManager;
     QNetworkAccessManager m_network;
     std::vector<std::unique_ptr<QPluginLoader>> m_loaders;
     std::vector<LoadedSource> m_sources;

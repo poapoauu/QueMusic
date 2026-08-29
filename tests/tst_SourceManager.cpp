@@ -3,9 +3,11 @@
 #include "SourceManager.h"
 
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 class SourceManagerTest : public QObject {
@@ -27,6 +29,9 @@ private slots:
     void optionalArtworkInterfaceWithoutMetadataIsNotUsed();
     void sourceSessionKeepsNativePackageLoaded();
     void nativePackageLifecycleKeepsSourceRegistryInSync();
+    void failedSourceInitializationMarksPackageFailed();
+    void failedSourceActivationCanBeRetriedWithoutSecondLoader();
+    void destroyedPluginManagerRemovesPackageSources();
 };
 
 namespace {
@@ -44,6 +49,41 @@ QString testSourcePluginDirectory()
 QString frozenV1PluginDirectory()
 {
     return QStringLiteral(QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR);
+}
+
+QString initializationFailurePackage(QTemporaryDir *root)
+{
+    if (!root->isValid()) {
+        return {};
+    }
+    const QDir sourceDirectory(fixtureDirectory(QStringLiteral("invalid")));
+    const QStringList libraries = sourceDirectory.entryList(QDir::Files);
+    const auto library = std::find_if(libraries.cbegin(), libraries.cend(),
+                                      [](const QString &name) {
+                                          return name.contains(
+                                              QStringLiteral("initialization_failure"));
+                                      });
+    if (library == libraries.cend()) {
+        return {};
+    }
+    const QString libraryName = *library;
+
+    const QString packageDirectory = QDir(root->path()).filePath(QStringLiteral("package"));
+    if (!QDir().mkpath(packageDirectory)
+        || !QFile::copy(sourceDirectory.filePath(libraryName),
+                        QDir(packageDirectory).filePath(libraryName))) {
+        return {};
+    }
+
+    QFile manifest(QDir(packageDirectory).filePath(QStringLiteral("manifest.json")));
+    if (!manifest.open(QIODevice::WriteOnly)) {
+        return {};
+    }
+    manifest.write(QStringLiteral(R"({"id":"org.quemusic.source.initialization-failure","sourceId":"fixture.initialize-failure","name":"Initialization Failure Source","version":"1.0.0","category":"source","runtime":"native-qt","library":"%1","pluginApi":{"major":1,"minHostMinor":0},"interfaces":[{"id":"org.quemusic.MusicSourcePlugin/1.0","version":"1.0"}],"runtimeRequirements":{"qtMajor":6}})")
+                       .arg(libraryName)
+                       .toUtf8());
+    manifest.close();
+    return root->path();
 }
 
 }
@@ -366,6 +406,52 @@ void SourceManagerTest::nativePackageLifecycleKeepsSourceRegistryInSync()
     QCOMPARE(plugins.reload(packageId), PluginOperationResult::Success);
     QCOMPARE(manager.sourceIds(), QStringList({account.sourceId}));
     QVERIFY(manager.createSession(account.sourceId, account, &parent) != nullptr);
+}
+
+void SourceManagerTest::failedSourceInitializationMarksPackageFailed()
+{
+    QTemporaryDir packageRoot;
+    PluginManager plugins;
+    const QString packagePath = initializationFailurePackage(&packageRoot);
+    QVERIFY(!packagePath.isEmpty());
+    plugins.addSearchPath(packagePath);
+    SourceManager sources(&plugins);
+
+    QCOMPARE(sources.loadAll(), 0);
+    const PluginSpec package = plugins.plugin(
+        QStringLiteral("org.quemusic.source.initialization-failure"));
+    QCOMPARE(package.state, PluginState::Failed);
+    QVERIFY(package.error.contains(QStringLiteral("initialization")));
+}
+
+void SourceManagerTest::failedSourceActivationCanBeRetriedWithoutSecondLoader()
+{
+    QTemporaryDir packageRoot;
+    PluginManager plugins;
+    const QString packagePath = initializationFailurePackage(&packageRoot);
+    QVERIFY(!packagePath.isEmpty());
+    plugins.addSearchPath(packagePath);
+    SourceManager sources(&plugins);
+    QCOMPARE(plugins.discover(), 1);
+
+    QVERIFY(!sources.loadSourcePackage(
+        QStringLiteral("org.quemusic.source.initialization-failure")));
+    QCOMPARE(plugins.plugin(QStringLiteral("org.quemusic.source.initialization-failure")).state,
+             PluginState::Failed);
+    QVERIFY(!sources.loadSourcePackage(
+        QStringLiteral("org.quemusic.source.initialization-failure")));
+}
+
+void SourceManagerTest::destroyedPluginManagerRemovesPackageSources()
+{
+    auto *plugins = new PluginManager;
+    SourceManager sources(plugins);
+    plugins->addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(sources.loadAll(), 1);
+    delete plugins;
+
+    QCOMPARE(sources.sourceIds(), QStringList());
+    QVERIFY(sources.createSession(QStringLiteral("test-source"), {}, nullptr) == nullptr);
 }
 
 QTEST_MAIN(SourceManagerTest)

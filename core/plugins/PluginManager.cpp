@@ -160,8 +160,8 @@ bool PluginManager::load(const QString &packageId)
     if (entry == nullptr) {
         return false;
     }
-    if (entry->spec.state == PluginState::Loaded) {
-        return true;
+    if (entry->loader != nullptr) {
+        return false;
     }
 
     QString error;
@@ -196,6 +196,23 @@ bool PluginManager::load(const QString &packageId)
     return true;
 }
 
+bool PluginManager::failLoadedPlugin(const QString &packageId, const QString &error)
+{
+    Entry *entry = findEntry(packageId);
+    if (entry == nullptr || entry->loader == nullptr || entry->spec.activeLeases != 0) {
+        return false;
+    }
+    if (!entry->loader->unload()) {
+        fail(*entry, error + QStringLiteral(": ") + entry->loader->errorString());
+        return false;
+    }
+
+    entry->loader.reset();
+    entry->instance = nullptr;
+    fail(*entry, error);
+    return true;
+}
+
 PluginOperationResult PluginManager::unload(const QString &packageId)
 {
     Entry *entry = findEntry(packageId);
@@ -205,7 +222,7 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
     if (entry->spec.activeLeases != 0) {
         return PluginOperationResult::Busy;
     }
-    if (entry->spec.state != PluginState::Loaded) {
+    if (entry->loader == nullptr) {
         return PluginOperationResult::Success;
     }
     if (!entry->loader->unload()) {
