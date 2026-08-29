@@ -127,6 +127,7 @@ int PluginManager::discover()
             entry->manifest = manifest;
             entry->spec = {
                 manifest.id(),
+                manifest.sourceId(),
                 manifest.name(),
                 manifest.version(),
                 manifest.category(),
@@ -252,6 +253,7 @@ QVariantList PluginManager::plugins() const
         const PluginSpec &spec = entry->spec;
         result.append(QVariantMap{
             {QStringLiteral("id"), spec.id},
+            {QStringLiteral("sourceId"), spec.sourceId},
             {QStringLiteral("name"), spec.name},
             {QStringLiteral("version"), spec.version},
             {QStringLiteral("category"), pluginCategoryName(spec.category)},

@@ -25,6 +25,7 @@ enum class PluginOperationResult {
 
 struct PluginSpec {
     QString id;
+    QString sourceId;
     QString name;
     QString version;
     PluginCategory category = PluginCategory::Unknown;

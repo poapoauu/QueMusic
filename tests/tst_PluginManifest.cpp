@@ -14,6 +14,7 @@ QJsonObject validNativeSourceManifest()
 {
     return QJsonObject{
         {QStringLiteral("id"), QStringLiteral("org.quemusic.source.fixture")},
+        {QStringLiteral("sourceId"), QStringLiteral("fixture")},
         {QStringLiteral("name"), QStringLiteral("Fixture")},
         {QStringLiteral("version"), QStringLiteral("1.0.0")},
         {QStringLiteral("category"), QStringLiteral("source")},

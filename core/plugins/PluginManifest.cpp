@@ -84,6 +84,10 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     if (version.isEmpty()) {
         return invalidManifest(QStringLiteral("Manifest version is empty"), error);
     }
+    const QString sourceId = object.value(QStringLiteral("sourceId")).toString();
+    if (sourceId.isEmpty()) {
+        return invalidManifest(QStringLiteral("Manifest source ID is empty"), error);
+    }
     if (object.value(QStringLiteral("runtime")).toString() != QStringLiteral("native-qt")) {
         return invalidManifest(QStringLiteral("Manifest runtime is not native-qt"), error);
     }
@@ -119,6 +123,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     PluginManifest manifest;
     manifest.m_valid = true;
     manifest.m_id = id;
+    manifest.m_sourceId = sourceId;
     manifest.m_name = name;
     manifest.m_version = version;
     manifest.m_category = PluginCategory::Source;
@@ -142,6 +147,11 @@ bool PluginManifest::isValid() const
 QString PluginManifest::id() const
 {
     return m_id;
+}
+
+QString PluginManifest::sourceId() const
+{
+    return m_sourceId;
 }
 
 QString PluginManifest::name() const

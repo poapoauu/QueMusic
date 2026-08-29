@@ -58,6 +58,7 @@ add_library(quemusic_source_manager STATIC
 )
 target_compile_features(quemusic_source_manager PUBLIC cxx_std_17)
 target_link_libraries(quemusic_source_manager PUBLIC
+    quemusic_plugin_core
     quemusic_source_sdk
     Qt6::Network
 )
@@ -277,6 +278,7 @@ if(BUILD_TESTING)
         QUEMUSIC_TEST_PLUGIN_ROOT="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins"
         QUEMUSIC_TEST_SOURCE_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/primary"
         QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
+        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
     )
     target_link_libraries(quemusic_source_manager_test PRIVATE
         quemusic_source_manager

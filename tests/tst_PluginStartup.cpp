@@ -1,5 +1,6 @@
 #include "SourceManager.h"
 #include "SourceStartup.h"
+#include "PluginManager.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -28,10 +29,10 @@ void PluginStartupTest::startupAddsApplicationAndUserPluginDirectories()
     QCOMPARE(searchPaths.size(), 2);
     QCOMPARE(searchPaths.at(0),
              QDir(QCoreApplication::applicationDirPath())
-                 .filePath(QStringLiteral("plugins/source")));
+                 .filePath(QStringLiteral("../plugins")));
     QCOMPARE(searchPaths.at(1),
              QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
-                 .filePath(QStringLiteral("plugins/source")));
+                 .filePath(QStringLiteral("plugins")));
 }
 
 void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
@@ -43,6 +44,7 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
     SourceManager *manager =
         initializeSourceStartupBoundary(*QCoreApplication::instance(), engine);
     QVERIFY(manager != nullptr);
+    QVERIFY(manager->pluginManager() != nullptr);
     QCOMPARE(manager->parent(), QCoreApplication::instance());
     const QStringList searchPaths = defaultSourcePluginSearchPaths(*QCoreApplication::instance());
     QCOMPARE(searchPaths.size(), 2);
@@ -58,9 +60,10 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
 
 void PluginStartupTest::startupLoadsBuiltNavidromePlugin()
 {
-    SourceManager manager;
+    PluginManager plugins;
+    SourceManager manager(&plugins);
     const QString pluginDirectory =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("plugins/source"));
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("../plugins"));
     manager.addSearchPath(pluginDirectory);
 
     QVERIFY(manager.loadAll() >= 1);
@@ -69,9 +72,10 @@ void PluginStartupTest::startupLoadsBuiltNavidromePlugin()
 
 void PluginStartupTest::sourceManagerCreatesNavidromeSessionAndDispatchesArtwork()
 {
-    SourceManager manager;
+    PluginManager plugins;
+    SourceManager manager(&plugins);
     manager.addSearchPath(QDir(QCoreApplication::applicationDirPath())
-                              .filePath(QStringLiteral("plugins/source")));
+                              .filePath(QStringLiteral("../plugins")));
     QCOMPARE(manager.loadAll(), 1);
     const SourceAccount account{
         QStringLiteral("navidrome"),

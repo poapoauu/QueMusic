@@ -1,11 +1,11 @@
 {
-  "id": "org.quemusic.source.fixture",
-  "sourceId": "test-source",
-  "name": "Fixture Source",
+  "id": "org.quemusic.source.navidrome",
+  "sourceId": "navidrome",
+  "name": "Navidrome",
   "version": "1.0.0",
   "category": "source",
   "runtime": "native-qt",
-  "library": "@CMAKE_SHARED_MODULE_PREFIX@quemusic_test_source@CMAKE_SHARED_MODULE_SUFFIX@",
+  "library": "@CMAKE_SHARED_MODULE_PREFIX@quemusic_navidrome_source@CMAKE_SHARED_MODULE_SUFFIX@",
   "pluginApi": {
     "major": 1,
     "minHostMinor": 0

@@ -1,4 +1,5 @@
 #include "IMusicSourceArtworkSession.h"
+#include "PluginManager.h"
 #include "SourceManager.h"
 
 #include <QDir>
@@ -24,6 +25,7 @@ private slots:
     void baseOnlyFixtureDoesNotExposeArtworkInterface();
     void legacyArtworkMetadataFallsBackToV1BaseSession();
     void optionalArtworkInterfaceWithoutMetadataIsNotUsed();
+    void sourceSessionKeepsNativePackageLoaded();
 };
 
 namespace {
@@ -321,6 +323,26 @@ void SourceManagerTest::optionalArtworkInterfaceWithoutMetadataIsNotUsed()
     QTest::qWait(50);
     QCOMPARE(succeeded.count(), 0);
     QCOMPARE(failed.count(), 0);
+}
+
+void SourceManagerTest::sourceSessionKeepsNativePackageLoaded()
+{
+    PluginManager plugins;
+    plugins.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+    SourceManager manager(&plugins);
+    QObject parent;
+    const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
+                                QStringLiteral("Test Account")};
+
+    QCOMPARE(manager.loadAll(), 1);
+    IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
+    QVERIFY(session != nullptr);
+    QCOMPARE(plugins.unload(QStringLiteral("org.quemusic.source.fixture")),
+             PluginOperationResult::Busy);
+
+    delete session;
+    QCOMPARE(plugins.unload(QStringLiteral("org.quemusic.source.fixture")),
+             PluginOperationResult::Success);
 }
 
 QTEST_MAIN(SourceManagerTest)

@@ -1,6 +1,7 @@
 #include "SourceManager.h"
 
 #include "IMusicSourceArtworkSession.h"
+#include "PluginManager.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -10,8 +11,25 @@
 
 #include <algorithm>
 
-SourceManager::SourceManager(QObject *parent)
+namespace {
+
+class SourceSessionLeaseGuard final : public QObject {
+public:
+    explicit SourceSessionLeaseGuard(PluginLease lease, QObject *parent)
+        : QObject(parent)
+        , m_lease(std::move(lease))
+    {
+    }
+
+private:
+    PluginLease m_lease;
+};
+
+}
+
+SourceManager::SourceManager(PluginManager *pluginManager, QObject *parent)
     : QObject(parent)
+    , m_pluginManager(pluginManager)
 {
 }
 
@@ -19,11 +37,29 @@ SourceManager::~SourceManager() = default;
 
 void SourceManager::addSearchPath(const QString &path)
 {
+    if (m_pluginManager != nullptr) {
+        m_pluginManager->addSearchPath(path);
+        return;
+    }
     m_searchPaths.append(path);
 }
 
 int SourceManager::loadAll()
 {
+    if (m_pluginManager != nullptr) {
+        m_pluginManager->discover();
+
+        int loadedCount = 0;
+        for (const QVariant &value : m_pluginManager->plugins()) {
+            const QVariantMap plugin = value.toMap();
+            if (plugin.value(QStringLiteral("category")).toString() == QStringLiteral("source")
+                && loadSourcePackage(plugin.value(QStringLiteral("id")).toString())) {
+                ++loadedCount;
+            }
+        }
+        return loadedCount;
+    }
+
     int loadedCount = 0;
     for (const QString &searchPath : m_searchPaths) {
         if (!QDir(searchPath).exists()) {
@@ -82,7 +118,7 @@ int SourceManager::loadAll()
                 continue;
             }
 
-            m_sources.push_back({descriptor, plugin});
+            m_sources.push_back({descriptor, plugin, {}});
             m_loaders.push_back(std::move(loader));
             ++loadedCount;
             emit sourceLoaded(descriptor.id);
@@ -91,6 +127,43 @@ int SourceManager::loadAll()
     }
 
     return loadedCount;
+}
+
+bool SourceManager::loadSourcePackage(const QString &packageId)
+{
+    if (m_pluginManager == nullptr || !m_pluginManager->load(packageId)) {
+        return false;
+    }
+
+    const PluginSpec package = m_pluginManager->plugin(packageId);
+    if (package.category != PluginCategory::Source) {
+        return false;
+    }
+    QObject *pluginObject = m_pluginManager->pluginInstance(packageId);
+    IMusicSourcePlugin *plugin = qobject_cast<IMusicSourcePlugin *>(pluginObject);
+    if (plugin == nullptr) {
+        return false;
+    }
+
+    const SourceDescriptor descriptor = plugin->descriptor();
+    if (descriptor.id != package.sourceId || descriptor.name.isEmpty()
+        || !isMusicSourceSdkVersionCompatible(descriptor.sdkVersion)
+        || std::any_of(m_sources.cbegin(), m_sources.cend(),
+                       [&descriptor](const LoadedSource &source) {
+                           return source.descriptor.id == descriptor.id;
+                       })) {
+        return false;
+    }
+
+    SourcePluginContext context{&m_network, {}};
+    if (!plugin->initialize(context)) {
+        return false;
+    }
+
+    m_sources.push_back({descriptor, plugin, packageId});
+    emit sourceLoaded(descriptor.id);
+    emit sourceChanged();
+    return true;
 }
 
 QVariantList SourceManager::availableSources() const
@@ -130,7 +203,19 @@ IMusicSourceSession *SourceManager::createSession(const QString &sourceId,
         return nullptr;
     }
 
-    return source->plugin->createSession(account, parent);
+    PluginLease lease;
+    if (!source->packageId.isEmpty()) {
+        lease = m_pluginManager->acquire(source->packageId);
+        if (!lease.isValid()) {
+            return nullptr;
+        }
+    }
+
+    IMusicSourceSession *session = source->plugin->createSession(account, parent);
+    if (session != nullptr && lease.isValid()) {
+        new SourceSessionLeaseGuard(std::move(lease), session);
+    }
+    return session;
 }
 
 QUuid SourceManager::requestArtwork(const QString &sourceId, IMusicSourceSession *session,
@@ -161,4 +246,9 @@ QUuid SourceManager::requestArtwork(const QString &sourceId, IMusicSourceSession
 void SourceManager::reportLoadFailure(const QString &pluginPath, const QString &error)
 {
     emit sourceLoadFailed(pluginPath, error);
+}
+
+PluginManager *SourceManager::pluginManager() const
+{
+    return m_pluginManager;
 }

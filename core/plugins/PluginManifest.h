@@ -13,6 +13,7 @@ public:
 
     bool isValid() const;
     QString id() const;
+    QString sourceId() const;
     QString name() const;
     QString version() const;
     PluginCategory category() const;
@@ -25,6 +26,7 @@ public:
 private:
     bool m_valid = false;
     QString m_id;
+    QString m_sourceId;
     QString m_name;
     QString m_version;
     PluginCategory m_category = PluginCategory::Unknown;
