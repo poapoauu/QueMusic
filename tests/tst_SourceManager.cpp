@@ -30,6 +30,7 @@ private slots:
     void sourceSessionKeepsNativePackageLoaded();
     void nativePackageLifecycleKeepsSourceRegistryInSync();
     void failedSourceInitializationMarksPackageFailed();
+    void forwardsPackageActivationFailureToSourceLoadFailed();
     void failedSourceActivationLeavesPackageFailed();
     void destroyedPluginManagerRemovesPackageSources();
     void managerlessSourceManagerCannotLoadNativePlugins();
@@ -528,6 +529,26 @@ void SourceManagerTest::failedSourceInitializationMarksPackageFailed()
         QStringLiteral("org.quemusic.source.initialization-failure"));
     QCOMPARE(package.state, PluginState::Failed);
     QVERIFY(package.error.contains(QStringLiteral("initialization")));
+}
+
+void SourceManagerTest::forwardsPackageActivationFailureToSourceLoadFailed()
+{
+    QTemporaryDir packageRoot;
+    PluginManager plugins;
+    bool manifestWritten = false;
+    const QString packagePath = initializationFailurePackage(&packageRoot, &manifestWritten);
+    QVERIFY(manifestWritten);
+    QVERIFY(!packagePath.isEmpty());
+    plugins.addSearchPath(packagePath);
+    SourceManager sources(&plugins);
+    QSignalSpy failures(&sources, &SourceManager::sourceLoadFailed);
+
+    QCOMPARE(sources.loadAll(), 0);
+    QCOMPARE(failures.count(), 1);
+    const QList<QVariant> failure = failures.constFirst();
+    QVERIFY(!failure.at(0).toString().isEmpty());
+    QVERIFY(!failure.at(1).toString().isEmpty());
+    QVERIFY(failure.at(1).toString().contains(QStringLiteral("initialization")));
 }
 
 void SourceManagerTest::failedSourceActivationLeavesPackageFailed()

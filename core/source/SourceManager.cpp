@@ -30,6 +30,17 @@ SourceManager::SourceManager(PluginManager *pluginManager, QObject *parent)
     if (m_pluginManager != nullptr) {
         connect(m_pluginManager, &PluginManager::pluginChanged, this,
                 [this](const QString &packageId) { synchronizeSourcePackage(packageId); });
+        connect(m_pluginManager, &PluginManager::pluginLoadFailed, this,
+                [this](const QString &packageId, const QString &error) {
+                    QString origin = packageId;
+                    if (m_pluginManager != nullptr) {
+                        const PluginSpec package = m_pluginManager->plugin(packageId);
+                        if (!package.path.isEmpty()) {
+                            origin = package.path;
+                        }
+                    }
+                    emit sourceLoadFailed(origin, error);
+                });
         connect(m_pluginManager, &QObject::destroyed, this, [this] {
             m_pluginManager = nullptr;
             const auto firstRemoved = std::remove_if(
