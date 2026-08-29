@@ -50,10 +50,110 @@ class PluginManifestTest : public QObject {
 
 private slots:
     void acceptsNativeSourcePackage();
+    void rejectsMalformedPluginApi_data();
+    void rejectsMalformedPluginApi();
+    void rejectsMalformedRuntimeRequirements_data();
+    void rejectsMalformedRuntimeRequirements();
     void rejectsLibraryOutsidePackage();
     void rejectsLibraryDirectoryPath();
     void rejectsLibrarySymlinkOutsidePackage();
 };
+
+void PluginManifestTest::rejectsMalformedPluginApi_data()
+{
+    QTest::addColumn<QJsonValue>("pluginApi");
+
+    QTest::newRow("missing") << QJsonValue(QJsonValue::Undefined);
+    QTest::newRow("null") << QJsonValue(QJsonValue::Null);
+    QTest::newRow("array") << QJsonValue(QJsonArray{});
+    QTest::newRow("major-missing")
+        << QJsonValue(QJsonObject{{QStringLiteral("minHostMinor"), 0}});
+    QTest::newRow("major-string")
+        << QJsonValue(QJsonObject{{QStringLiteral("major"), QStringLiteral("1")},
+                                  {QStringLiteral("minHostMinor"), 0}});
+    QTest::newRow("major-fractional")
+        << QJsonValue(QJsonObject{{QStringLiteral("major"), 1.5},
+                                  {QStringLiteral("minHostMinor"), 0}});
+    QTest::newRow("major-unsupported")
+        << QJsonValue(QJsonObject{{QStringLiteral("major"), 2},
+                                  {QStringLiteral("minHostMinor"), 0}});
+    QTest::newRow("minimum-minor-missing")
+        << QJsonValue(QJsonObject{{QStringLiteral("major"), 1}});
+    QTest::newRow("minimum-minor-string")
+        << QJsonValue(QJsonObject{{QStringLiteral("major"), 1},
+                                  {QStringLiteral("minHostMinor"), QStringLiteral("0")}});
+    QTest::newRow("minimum-minor-fractional")
+        << QJsonValue(QJsonObject{{QStringLiteral("major"), 1},
+                                  {QStringLiteral("minHostMinor"), 0.5}});
+    QTest::newRow("minimum-minor-negative")
+        << QJsonValue(QJsonObject{{QStringLiteral("major"), 1},
+                                  {QStringLiteral("minHostMinor"), -1}});
+}
+
+void PluginManifestTest::rejectsMalformedPluginApi()
+{
+    QFETCH(QJsonValue, pluginApi);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QFile library(QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")));
+    QVERIFY(library.open(QIODevice::WriteOnly));
+    library.close();
+
+    QJsonObject manifestObject = validNativeSourceManifest();
+    if (pluginApi.isUndefined()) {
+        manifestObject.remove(QStringLiteral("pluginApi"));
+    } else {
+        manifestObject.insert(QStringLiteral("pluginApi"), pluginApi);
+    }
+    writeManifest(directory.path(), manifestObject);
+
+    QString error;
+    const PluginManifest manifest = PluginManifest::fromFile(
+        QDir(directory.path()).filePath(QStringLiteral("manifest.json")), &error);
+
+    QVERIFY2(!manifest.isValid(), qPrintable(error));
+    QVERIFY(!error.isEmpty());
+}
+
+void PluginManifestTest::rejectsMalformedRuntimeRequirements_data()
+{
+    QTest::addColumn<QJsonValue>("runtimeRequirements");
+
+    QTest::newRow("null") << QJsonValue(QJsonValue::Null);
+    QTest::newRow("array") << QJsonValue(QJsonArray{});
+    QTest::newRow("string") << QJsonValue(QStringLiteral("native"));
+    QTest::newRow("qt-major-string")
+        << QJsonValue(QJsonObject{{QStringLiteral("qtMajor"), QStringLiteral("6")}});
+    QTest::newRow("qt-major-fractional")
+        << QJsonValue(QJsonObject{{QStringLiteral("qtMajor"), 6.5}});
+    QTest::newRow("qt-major-negative")
+        << QJsonValue(QJsonObject{{QStringLiteral("qtMajor"), -1}});
+    QTest::newRow("architecture-number")
+        << QJsonValue(QJsonObject{{QStringLiteral("architecture"), 64}});
+    QTest::newRow("build-mode-boolean")
+        << QJsonValue(QJsonObject{{QStringLiteral("buildMode"), true}});
+}
+
+void PluginManifestTest::rejectsMalformedRuntimeRequirements()
+{
+    QFETCH(QJsonValue, runtimeRequirements);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QFile library(QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")));
+    QVERIFY(library.open(QIODevice::WriteOnly));
+    library.close();
+
+    QJsonObject manifestObject = validNativeSourceManifest();
+    manifestObject.insert(QStringLiteral("runtimeRequirements"), runtimeRequirements);
+    writeManifest(directory.path(), manifestObject);
+
+    QString error;
+    const PluginManifest manifest = PluginManifest::fromFile(
+        QDir(directory.path()).filePath(QStringLiteral("manifest.json")), &error);
+
+    QVERIFY2(!manifest.isValid(), qPrintable(error));
+    QVERIFY(!error.isEmpty());
+}
 
 void PluginManifestTest::acceptsNativeSourcePackage()
 {

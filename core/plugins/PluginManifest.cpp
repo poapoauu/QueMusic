@@ -9,6 +9,9 @@
 #include <QJsonParseError>
 #include <QRegularExpression>
 
+#include <cmath>
+#include <limits>
+
 namespace {
 
 constexpr int hostPluginApiMajor = 1;
@@ -48,6 +51,22 @@ bool isPackageRelativeLibraryPath(const QString &library)
                                                  Qt::KeepEmptyParts);
     return !components.contains(QStringLiteral("."))
         && !components.contains(QStringLiteral(".."));
+}
+
+bool jsonIntegerAtLeast(const QJsonValue &value, int minimum, int *result)
+{
+    if (!value.isDouble()) {
+        return false;
+    }
+
+    const double number = value.toDouble();
+    if (!std::isfinite(number) || std::floor(number) != number || number < minimum
+        || number > std::numeric_limits<int>::max()) {
+        return false;
+    }
+
+    *result = static_cast<int>(number);
+    return true;
 }
 
 }
@@ -102,17 +121,18 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     }
 
     const QJsonValue pluginApiValue = object.value(QStringLiteral("pluginApi"));
-    const QJsonValue pluginApiMajor = pluginApiValue.isObject()
-        ? pluginApiValue.toObject().value(QStringLiteral("major"))
-        : QJsonValue();
-    if (!pluginApiMajor.isDouble()
-        || pluginApiMajor.toDouble(-1) != hostPluginApiMajor) {
+    if (!pluginApiValue.isObject()) {
+        return invalidManifest(QStringLiteral("Manifest plugin API must be an object"), error);
+    }
+    const QJsonObject pluginApi = pluginApiValue.toObject();
+    int pluginApiMajor = 0;
+    if (!jsonIntegerAtLeast(pluginApi.value(QStringLiteral("major")), 0, &pluginApiMajor)
+        || pluginApiMajor != hostPluginApiMajor) {
         return invalidManifest(QStringLiteral("Manifest plugin API major is unsupported"), error);
     }
-    const int minimumHostMinor = pluginApiValue.toObject()
-        .value(QStringLiteral("minHostMinor"))
-        .toInt(0);
-    if (minimumHostMinor < 0) {
+    int minimumHostMinor = 0;
+    if (!jsonIntegerAtLeast(pluginApi.value(QStringLiteral("minHostMinor")), 0,
+                            &minimumHostMinor)) {
         return invalidManifest(QStringLiteral("Manifest plugin API minimum host minor is invalid"),
                                error);
     }
@@ -140,12 +160,32 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     manifest.m_libraryAbsolutePath = libraryPath;
     manifest.m_minimumHostPluginApiMinor = minimumHostMinor;
 
-    const QJsonObject runtimeRequirements =
-        object.value(QStringLiteral("runtimeRequirements")).toObject();
-    manifest.m_requiredQtMajor = runtimeRequirements.value(QStringLiteral("qtMajor")).toInt(0);
-    manifest.m_requiredArchitecture =
-        runtimeRequirements.value(QStringLiteral("architecture")).toString();
-    manifest.m_requiredBuildMode = runtimeRequirements.value(QStringLiteral("buildMode")).toString();
+    const QJsonValue runtimeRequirementsValue =
+        object.value(QStringLiteral("runtimeRequirements"));
+    if (!runtimeRequirementsValue.isUndefined()) {
+        if (!runtimeRequirementsValue.isObject()) {
+            return invalidManifest(QStringLiteral("Manifest runtime requirements must be an object"),
+                                   error);
+        }
+        const QJsonObject runtimeRequirements = runtimeRequirementsValue.toObject();
+        const QJsonValue qtMajor = runtimeRequirements.value(QStringLiteral("qtMajor"));
+        if (!qtMajor.isUndefined()
+            && !jsonIntegerAtLeast(qtMajor, 0, &manifest.m_requiredQtMajor)) {
+            return invalidManifest(QStringLiteral("Manifest required Qt major is invalid"), error);
+        }
+        const QJsonValue architecture =
+            runtimeRequirements.value(QStringLiteral("architecture"));
+        if (!architecture.isUndefined() && !architecture.isString()) {
+            return invalidManifest(QStringLiteral("Manifest required architecture is invalid"),
+                                   error);
+        }
+        const QJsonValue buildMode = runtimeRequirements.value(QStringLiteral("buildMode"));
+        if (!buildMode.isUndefined() && !buildMode.isString()) {
+            return invalidManifest(QStringLiteral("Manifest required build mode is invalid"), error);
+        }
+        manifest.m_requiredArchitecture = architecture.toString();
+        manifest.m_requiredBuildMode = buildMode.toString();
+    }
     return manifest;
 }
 
