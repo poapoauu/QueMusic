@@ -76,6 +76,14 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     if (id.isEmpty()) {
         return invalidManifest(QStringLiteral("Manifest id is empty"), error);
     }
+    const QString name = object.value(QStringLiteral("name")).toString();
+    if (name.isEmpty()) {
+        return invalidManifest(QStringLiteral("Manifest name is empty"), error);
+    }
+    const QString version = object.value(QStringLiteral("version")).toString();
+    if (version.isEmpty()) {
+        return invalidManifest(QStringLiteral("Manifest version is empty"), error);
+    }
     if (object.value(QStringLiteral("runtime")).toString() != QStringLiteral("native-qt")) {
         return invalidManifest(QStringLiteral("Manifest runtime is not native-qt"), error);
     }
@@ -97,6 +105,13 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         || pluginApiMajor.toDouble(-1) != hostPluginApiMajor) {
         return invalidManifest(QStringLiteral("Manifest plugin API major is unsupported"), error);
     }
+    const int minimumHostMinor = pluginApiValue.toObject()
+        .value(QStringLiteral("minHostMinor"))
+        .toInt(0);
+    if (minimumHostMinor < 0) {
+        return invalidManifest(QStringLiteral("Manifest plugin API minimum host minor is invalid"),
+                               error);
+    }
     if (!hasSourceInterface(object.value(QStringLiteral("interfaces")))) {
         return invalidManifest(QStringLiteral("Manifest is missing the source plugin interface"), error);
     }
@@ -104,8 +119,18 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     PluginManifest manifest;
     manifest.m_valid = true;
     manifest.m_id = id;
+    manifest.m_name = name;
+    manifest.m_version = version;
     manifest.m_category = PluginCategory::Source;
     manifest.m_libraryAbsolutePath = QDir(QFileInfo(manifestPath).absolutePath()).filePath(library);
+    manifest.m_minimumHostPluginApiMinor = minimumHostMinor;
+
+    const QJsonObject runtimeRequirements =
+        object.value(QStringLiteral("runtimeRequirements")).toObject();
+    manifest.m_requiredQtMajor = runtimeRequirements.value(QStringLiteral("qtMajor")).toInt(0);
+    manifest.m_requiredArchitecture =
+        runtimeRequirements.value(QStringLiteral("architecture")).toString();
+    manifest.m_requiredBuildMode = runtimeRequirements.value(QStringLiteral("buildMode")).toString();
     return manifest;
 }
 
@@ -119,6 +144,16 @@ QString PluginManifest::id() const
     return m_id;
 }
 
+QString PluginManifest::name() const
+{
+    return m_name;
+}
+
+QString PluginManifest::version() const
+{
+    return m_version;
+}
+
 PluginCategory PluginManifest::category() const
 {
     return m_category;
@@ -127,4 +162,24 @@ PluginCategory PluginManifest::category() const
 QString PluginManifest::libraryAbsolutePath() const
 {
     return m_libraryAbsolutePath;
+}
+
+int PluginManifest::minimumHostPluginApiMinor() const
+{
+    return m_minimumHostPluginApiMinor;
+}
+
+int PluginManifest::requiredQtMajor() const
+{
+    return m_requiredQtMajor;
+}
+
+QString PluginManifest::requiredArchitecture() const
+{
+    return m_requiredArchitecture;
+}
+
+QString PluginManifest::requiredBuildMode() const
+{
+    return m_requiredBuildMode;
 }

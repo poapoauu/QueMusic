@@ -37,6 +37,21 @@ target_include_directories(quemusic_source_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
 )
 
+add_library(quemusic_plugin_core STATIC
+    core/plugins/PluginManifest.cpp
+    core/plugins/PluginManifest.h
+    core/plugins/PluginManager.cpp
+    core/plugins/PluginManager.h
+)
+target_compile_features(quemusic_plugin_core PUBLIC cxx_std_17)
+target_link_libraries(quemusic_plugin_core PUBLIC
+    quemusic_source_sdk
+    Qt6::Core
+)
+target_include_directories(quemusic_plugin_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/plugins
+)
+
 add_library(quemusic_source_manager STATIC
     core/source/SourceManager.cpp
     core/source/SourceManager.h
@@ -326,6 +341,23 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_plugin_manifest_test COMMAND quemusic_plugin_manifest_test)
+
+    qt_add_executable(quemusic_plugin_manager_test
+        tests/tst_PluginManager.cpp
+    )
+    target_compile_features(quemusic_plugin_manager_test PRIVATE cxx_std_17)
+    target_include_directories(quemusic_plugin_manager_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/plugins
+    )
+    target_compile_definitions(quemusic_plugin_manager_test PRIVATE
+        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
+    )
+    target_link_libraries(quemusic_plugin_manager_test PRIVATE
+        quemusic_plugin_core
+        Qt6::Test
+    )
+    add_dependencies(quemusic_plugin_manager_test quemusic_test_source)
+    add_test(NAME quemusic_plugin_manager_test COMMAND quemusic_plugin_manager_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}
