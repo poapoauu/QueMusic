@@ -1,4 +1,5 @@
 #include "SourceManager.h"
+#include "PluginManager.h"
 
 #include <QSignalSpy>
 #include <QTest>
@@ -12,13 +13,14 @@ private slots:
 
 void SourceV1AbiTest::preservesTrailingVirtualDispatchAcrossPluginDso()
 {
-    SourceManager manager;
+    PluginManager plugins;
+    SourceManager manager(&plugins);
     QObject parent;
     const SourceAccount account{QStringLiteral("fixture.frozen-v1"),
                                 QStringLiteral("account-1"),
                                 QStringLiteral("Frozen v1 Account")};
 
-    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR));
+    plugins.addSearchPath(QStringLiteral(QUEMUSIC_TEST_FROZEN_V1_PLUGIN_PACKAGE_DIR));
     QCOMPARE(manager.loadAll(), 1);
 
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);

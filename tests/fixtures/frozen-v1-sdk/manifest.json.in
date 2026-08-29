@@ -1,0 +1,22 @@
+{
+  "id": "org.quemusic.source.frozen-v1-fixture",
+  "sourceId": "fixture.frozen-v1",
+  "name": "Frozen v1 Source",
+  "version": "1.0.0",
+  "category": "source",
+  "runtime": "native-qt",
+  "library": "@CMAKE_SHARED_MODULE_PREFIX@quemusic_frozen_v1_source_fixture@CMAKE_SHARED_MODULE_SUFFIX@",
+  "pluginApi": {
+    "major": 1,
+    "minHostMinor": 0
+  },
+  "interfaces": [
+    {
+      "id": "org.quemusic.MusicSourcePlugin/1.0",
+      "version": "1.0"
+    }
+  ],
+  "runtimeRequirements": {
+    "qtMajor": 6
+  }
+}

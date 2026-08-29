@@ -198,6 +198,20 @@ if(BUILD_TESTING)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
     )
 
+    set(QUEMUSIC_FROZEN_V1_PACKAGE_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-v1-abi-packages/frozen-v1")
+    file(MAKE_DIRECTORY "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}")
+    configure_file(
+        tests/fixtures/frozen-v1-sdk/manifest.json.in
+        "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}/manifest.json"
+        @ONLY
+    )
+    add_custom_command(TARGET quemusic_frozen_v1_source_fixture POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:quemusic_frozen_v1_source_fixture>"
+            "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}/$<TARGET_FILE_NAME:quemusic_frozen_v1_source_fixture>"
+    )
+
     add_source_plugin_fixture(quemusic_duplicate_source_fixture_one duplicate)
     target_compile_definitions(quemusic_duplicate_source_fixture_one PRIVATE
         QUEMUSIC_FIXTURE_SOURCE_ID="fixture.duplicate"
@@ -305,7 +319,7 @@ if(BUILD_TESTING)
     )
     target_compile_features(quemusic_source_v1_abi_test PRIVATE cxx_std_17)
     target_compile_definitions(quemusic_source_v1_abi_test PRIVATE
-        QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
+        QUEMUSIC_TEST_FROZEN_V1_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-v1-abi-packages"
     )
     target_link_libraries(quemusic_source_v1_abi_test PRIVATE
         quemusic_source_manager
