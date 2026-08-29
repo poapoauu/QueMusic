@@ -1818,7 +1818,7 @@ Item {
                     x: 48
                     y: 24
                     width: parent.width - 64
-                    text: "插件功能还未开发完成，等待开发者更新喵"
+                    text: "原生插件可从应用或用户插件目录发现。音源插件在没有活动会话时可热加载、卸载和重载。"
                     wrapMode: Text.Wrap
                     color: Style.themes.textColor
                     font.bold: false
@@ -1866,13 +1866,94 @@ Item {
                     visible: false
                     width: downloadChildPage.width
                     height: downloadChildPage.height
-                    Text {
+                    clip: true
+
+                    Column {
                         anchors.fill: parent
-                        text: "音源\n并不建议使用音源，以防止出现的版权问题和违规获取"
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: Text.AlignHCenter
-                        color: Style.themes.textColor
-                        font.pixelSize: 14
+                        spacing: 12
+
+                        Row {
+                            spacing: 10
+                            Button {
+                                text: "发现插件"
+                                onClicked: pluginManager.discoverPlugins()
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "仅加载本地已安装且与当前 Qt 环境兼容的原生插件"
+                                color: Style.themes.textColor
+                                font.pixelSize: Style.settings.textmain
+                            }
+                        }
+
+                        Text {
+                            visible: pluginManager.plugins.length === 0
+                            width: parent.width
+                            text: "未发现音源插件"
+                            color: Style.themes.textColor
+                            horizontalAlignment: Text.AlignHCenter
+                            font.pixelSize: Style.settings.textmain
+                        }
+
+                        Repeater {
+                            model: pluginManager.plugins
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: musicMod.width
+                                height: 82
+                                radius: Style.settings.cubeRadius
+                                color: Style.themes.containColor
+                                border.color: Style.themes.sideColor
+                                border.width: 1
+
+                                Column {
+                                    x: 16
+                                    y: 12
+                                    width: parent.width - 32
+                                    spacing: 4
+                                    Text {
+                                        text: modelData.name + " · " + modelData.version
+                                        color: Style.themes.fontColor
+                                        font.pixelSize: Style.settings.textmain
+                                    }
+                                    Text {
+                                        text: "状态：" + modelData.state
+                                              + (modelData.activeLeases > 0
+                                                 ? "（使用中：" + modelData.activeLeases + "）" : "")
+                                              + (modelData.error ? " · " + modelData.error : "")
+                                        color: Style.themes.textColor
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                        width: parent.width
+                                    }
+                                }
+
+                                Row {
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 8
+                                    Button {
+                                        text: "加载"
+                                        visible: modelData.loadable
+                                        onClicked: pluginManager.loadPlugin(modelData.id)
+                                    }
+                                    Button {
+                                        text: modelData.state === "failed" ? "重试卸载" : "卸载"
+                                        visible: modelData.state === "loaded"
+                                                 || modelData.unloadable
+                                        enabled: modelData.unloadable
+                                        onClicked: pluginManager.unloadPlugin(modelData.id)
+                                    }
+                                    Button {
+                                        text: "重载"
+                                        enabled: modelData.reloadable
+                                        onClicked: pluginManager.reloadPlugin(modelData.id)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
