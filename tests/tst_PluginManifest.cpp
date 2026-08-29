@@ -49,6 +49,7 @@ class PluginManifestTest : public QObject {
 private slots:
     void acceptsNativeSourcePackage();
     void rejectsLibraryOutsidePackage();
+    void rejectsLibraryDirectoryPath();
 };
 
 void PluginManifestTest::acceptsNativeSourcePackage()
@@ -73,6 +74,20 @@ void PluginManifestTest::rejectsLibraryOutsidePackage()
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     writeManifest(directory.path(), manifestWithLibrary(QStringLiteral("../outside.dylib")));
+
+    QString error;
+    const PluginManifest manifest = PluginManifest::fromFile(
+        QDir(directory.path()).filePath(QStringLiteral("manifest.json")), &error);
+
+    QVERIFY(!manifest.isValid());
+    QVERIFY(error.contains(QStringLiteral("library")));
+}
+
+void PluginManifestTest::rejectsLibraryDirectoryPath()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    writeManifest(directory.path(), manifestWithLibrary(QStringLiteral(".")));
 
     QString error;
     const PluginManifest manifest = PluginManifest::fromFile(

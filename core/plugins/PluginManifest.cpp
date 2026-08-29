@@ -46,7 +46,8 @@ bool isPackageRelativeLibraryPath(const QString &library)
 
     const QStringList components = library.split(QRegularExpression(QStringLiteral("[/\\\\]")),
                                                  Qt::KeepEmptyParts);
-    return !components.contains(QStringLiteral(".."));
+    return !components.contains(QStringLiteral("."))
+        && !components.contains(QStringLiteral(".."));
 }
 
 }
