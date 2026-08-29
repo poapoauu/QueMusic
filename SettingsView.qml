@@ -1936,19 +1936,19 @@ Item {
                                     spacing: 8
                                     Button {
                                         text: "加载"
-                                        visible: modelData.state !== "loaded"
+                                        visible: modelData.loadable
                                         onClicked: pluginManager.loadPlugin(modelData.id)
                                     }
                                     Button {
-                                        text: "卸载"
+                                        text: modelData.state === "failed" ? "重试卸载" : "卸载"
                                         visible: modelData.state === "loaded"
-                                        enabled: modelData.activeLeases === 0
+                                                 || modelData.unloadable
+                                        enabled: modelData.unloadable
                                         onClicked: pluginManager.unloadPlugin(modelData.id)
                                     }
                                     Button {
                                         text: "重载"
-                                        enabled: modelData.state === "loaded"
-                                                 && modelData.activeLeases === 0
+                                        enabled: modelData.reloadable
                                         onClicked: pluginManager.reloadPlugin(modelData.id)
                                     }
                                 }

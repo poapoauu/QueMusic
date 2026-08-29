@@ -287,7 +287,10 @@ QVariantList PluginManager::plugins() const
             {QStringLiteral("error"), spec.error},
             {QStringLiteral("path"), spec.path},
             {QStringLiteral("activeLeases"), spec.activeLeases},
-            {QStringLiteral("reloadable"), spec.activeLeases == 0},
+            {QStringLiteral("loadable"), entry->loader == nullptr},
+            {QStringLiteral("unloadable"), entry->loader != nullptr && spec.activeLeases == 0},
+            {QStringLiteral("reloadable"), spec.state == PluginState::Loaded
+                 && spec.activeLeases == 0},
         });
     }
     return result;

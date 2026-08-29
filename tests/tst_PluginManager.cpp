@@ -1,9 +1,11 @@
 #include "PluginManager.h"
+#include "PluginManifest.h"
 
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPluginLoader>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -17,6 +19,7 @@ private slots:
     void malformedPackageDoesNotBlockValidPackage();
     void rejectsDuplicateSourceIdBeforeLoad();
     void failedActivationPreservesLoaderLifecycle();
+    void failedUnloadExposesRetryCapability();
     void rejectsLoadWhilePackageOwnsLoader();
 };
 
@@ -156,6 +159,40 @@ void PluginManagerTest::failedActivationPreservesLoaderLifecycle()
         QCOMPARE(retryUnload, PluginOperationResult::Failed);
         QVERIFY(manager.plugin(packageId).error != activationError);
     }
+}
+
+void PluginManagerTest::failedUnloadExposesRetryCapability()
+{
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture");
+    const QString manifestPath =
+        QDir(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR))
+            .filePath(QStringLiteral("fixture/manifest.json"));
+    QString manifestError;
+    const PluginManifest manifest = PluginManifest::fromFile(manifestPath, &manifestError);
+    QVERIFY2(manifest.isValid(), qPrintable(manifestError));
+
+    PluginManager manager;
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(manager.discover(), 1);
+    QVERIFY(manager.load(packageId));
+
+    QPluginLoader retainedReference(manifest.libraryAbsolutePath());
+    QVERIFY2(retainedReference.load(), qPrintable(retainedReference.errorString()));
+    QVERIFY(!manager.failLoadedPlugin(packageId, QStringLiteral("Activation failed")));
+
+    const PluginSpec failed = manager.plugin(packageId);
+    QCOMPARE(failed.state, PluginState::Failed);
+    QCOMPARE(failed.activeLeases, 0);
+    QVERIFY(!manager.load(packageId));
+
+    const QVariantMap visiblePackage = manager.plugins().constFirst().toMap();
+    QCOMPARE(visiblePackage.value(QStringLiteral("loadable")).toBool(), false);
+    QCOMPARE(visiblePackage.value(QStringLiteral("unloadable")).toBool(), true);
+
+    QCOMPARE(manager.unload(packageId), PluginOperationResult::Failed);
+    QCOMPARE(manager.plugin(packageId).state, PluginState::Failed);
+    QVERIFY(!manager.load(packageId));
+    retainedReference.unload();
 }
 
 void PluginManagerTest::rejectsLoadWhilePackageOwnsLoader()
