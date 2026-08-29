@@ -8,10 +8,8 @@
 #include <QStringList>
 #include <QVariantList>
 
-#include <memory>
 #include <vector>
 
-class QPluginLoader;
 class PluginManager;
 
 class SourceManager : public QObject {
@@ -47,11 +45,8 @@ private:
 
     void synchronizeSourcePackage(const QString &packageId);
     void removeSourcePackage(const QString &packageId);
-    void reportLoadFailure(const QString &pluginPath, const QString &error);
 
-    QStringList m_searchPaths;
     QPointer<PluginManager> m_pluginManager;
     QNetworkAccessManager m_network;
-    std::vector<std::unique_ptr<QPluginLoader>> m_loaders;
     std::vector<LoadedSource> m_sources;
 };

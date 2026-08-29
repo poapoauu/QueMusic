@@ -3,10 +3,6 @@
 #include "IMusicSourceArtworkSession.h"
 #include "PluginManager.h"
 
-#include <QDir>
-#include <QDirIterator>
-#include <QLibrary>
-#include <QPluginLoader>
 #include <QVariantMap>
 
 #include <algorithm>
@@ -55,93 +51,24 @@ void SourceManager::addSearchPath(const QString &path)
 {
     if (m_pluginManager != nullptr) {
         m_pluginManager->addSearchPath(path);
-        return;
     }
-    m_searchPaths.append(path);
 }
 
 int SourceManager::loadAll()
 {
-    if (m_pluginManager != nullptr) {
-        m_pluginManager->discover();
-
-        int loadedCount = 0;
-        for (const QVariant &value : m_pluginManager->plugins()) {
-            const QVariantMap plugin = value.toMap();
-            if (plugin.value(QStringLiteral("category")).toString() == QStringLiteral("source")
-                && loadSourcePackage(plugin.value(QStringLiteral("id")).toString())) {
-                ++loadedCount;
-            }
-        }
-        return loadedCount;
+    if (m_pluginManager == nullptr) {
+        return 0;
     }
 
     int loadedCount = 0;
-    for (const QString &searchPath : m_searchPaths) {
-        if (!QDir(searchPath).exists()) {
-            reportLoadFailure(searchPath, QStringLiteral("Plugin search path does not exist"));
-            continue;
-        }
-
-        QDirIterator iterator(searchPath, QDir::Files, QDirIterator::Subdirectories);
-        while (iterator.hasNext()) {
-            const QString pluginPath = iterator.next();
-            if (!QLibrary::isLibrary(pluginPath)) {
-                continue;
-            }
-
-            auto loader = std::make_unique<QPluginLoader>(pluginPath);
-            loader->setLoadHints(QLibrary::PreventUnloadHint);
-            QObject *pluginObject = loader->instance();
-            if (pluginObject == nullptr) {
-                reportLoadFailure(pluginPath, loader->errorString());
-                continue;
-            }
-
-            IMusicSourcePlugin *plugin = qobject_cast<IMusicSourcePlugin *>(pluginObject);
-            if (plugin == nullptr) {
-                reportLoadFailure(pluginPath, QStringLiteral("Plugin does not implement IMusicSourcePlugin"));
-                continue;
-            }
-
-            const SourceDescriptor descriptor = plugin->descriptor();
-            if (descriptor.id.isEmpty()) {
-                reportLoadFailure(pluginPath, QStringLiteral("Plugin source ID is empty"));
-                continue;
-            }
-            if (std::any_of(m_sources.cbegin(), m_sources.cend(),
-                            [&descriptor](const LoadedSource &source) {
-                                return source.descriptor.id == descriptor.id;
-                            })) {
-                reportLoadFailure(pluginPath, QStringLiteral("Duplicate plugin source ID: %1").arg(descriptor.id));
-                continue;
-            }
-            if (!isMusicSourceSdkVersionCompatible(descriptor.sdkVersion)) {
-                reportLoadFailure(pluginPath,
-                                  QStringLiteral("Unsupported plugin SDK version: %1 (host supports %2)")
-                                      .arg(descriptor.sdkVersion,
-                                           QStringLiteral(QUEMUSIC_MUSIC_SOURCE_SDK_VERSION)));
-                continue;
-            }
-            if (descriptor.name.isEmpty()) {
-                reportLoadFailure(pluginPath, QStringLiteral("Plugin display name is empty"));
-                continue;
-            }
-
-            SourcePluginContext context{&m_network, {}};
-            if (!plugin->initialize(context)) {
-                reportLoadFailure(pluginPath, QStringLiteral("Plugin initialization failed"));
-                continue;
-            }
-
-            m_sources.push_back({descriptor, plugin, {}});
-            m_loaders.push_back(std::move(loader));
+    m_pluginManager->discover();
+    for (const QVariant &value : m_pluginManager->plugins()) {
+        const QVariantMap plugin = value.toMap();
+        if (plugin.value(QStringLiteral("category")).toString() == QStringLiteral("source")
+            && loadSourcePackage(plugin.value(QStringLiteral("id")).toString())) {
             ++loadedCount;
-            emit sourceLoaded(descriptor.id);
-            emit sourceChanged();
         }
     }
-
     return loadedCount;
 }
 
@@ -326,11 +253,6 @@ QUuid SourceManager::requestArtwork(const QString &sourceId, IMusicSourceSession
     // MusicSourcePlugin/1.0 retains this legacy base-session slot. It is the
     // compatibility path for v1 plugins that predate the optional interface.
     return session->fetchArtwork(track);
-}
-
-void SourceManager::reportLoadFailure(const QString &pluginPath, const QString &error)
-{
-    emit sourceLoadFailed(pluginPath, error);
 }
 
 PluginManager *SourceManager::pluginManager() const

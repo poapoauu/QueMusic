@@ -16,6 +16,8 @@ private slots:
     void reloadsAfterFinalLeaseIsReleased();
     void malformedPackageDoesNotBlockValidPackage();
     void rejectsDuplicateSourceIdBeforeLoad();
+    void failedActivationPreservesLoaderLifecycle();
+    void rejectsLoadWhilePackageOwnsLoader();
 };
 
 namespace {
@@ -124,6 +126,48 @@ void PluginManagerTest::rejectsDuplicateSourceIdBeforeLoad()
     QCOMPARE(manager.discover(), 1);
     QCOMPARE(manager.plugins().size(), 1);
     QVERIFY(!manager.load(QStringLiteral("org.quemusic.source.duplicate")));
+}
+
+void PluginManagerTest::failedActivationPreservesLoaderLifecycle()
+{
+    PluginManager manager;
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture");
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+
+    QCOMPARE(manager.discover(), 1);
+    QVERIFY(manager.load(packageId));
+    const bool released = manager.failLoadedPlugin(packageId, QStringLiteral("Activation failed"));
+    if (released) {
+        QCOMPARE(manager.plugin(packageId).state, PluginState::Failed);
+        QVERIFY(manager.plugin(packageId).error.contains(QStringLiteral("Activation failed")));
+        QVERIFY(manager.pluginInstance(packageId) == nullptr);
+        QVERIFY(manager.load(packageId));
+        return;
+    }
+
+    const QString activationError = manager.plugin(packageId).error;
+    QCOMPARE(manager.plugin(packageId).state, PluginState::Failed);
+    QVERIFY(activationError.contains(QStringLiteral("Activation failed")));
+    QVERIFY(!manager.load(packageId));
+    const PluginOperationResult retryUnload = manager.unload(packageId);
+    if (retryUnload == PluginOperationResult::Success) {
+        QVERIFY(manager.load(packageId));
+    } else {
+        QCOMPARE(retryUnload, PluginOperationResult::Failed);
+        QVERIFY(manager.plugin(packageId).error != activationError);
+    }
+}
+
+void PluginManagerTest::rejectsLoadWhilePackageOwnsLoader()
+{
+    PluginManager manager;
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture");
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+
+    QCOMPARE(manager.discover(), 1);
+    QVERIFY(manager.load(packageId));
+    QVERIFY(!manager.load(packageId));
+    QCOMPARE(manager.plugin(packageId).state, PluginState::Loaded);
 }
 
 QTEST_MAIN(PluginManagerTest)

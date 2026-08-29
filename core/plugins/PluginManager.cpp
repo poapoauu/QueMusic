@@ -193,7 +193,7 @@ bool PluginManager::load(const QString &packageId)
     entry->spec.state = PluginState::Loaded;
     entry->spec.error.clear();
     emit pluginChanged(packageId);
-    return true;
+    return entry->spec.state == PluginState::Loaded && entry->loader != nullptr;
 }
 
 bool PluginManager::failLoadedPlugin(const QString &packageId, const QString &error)

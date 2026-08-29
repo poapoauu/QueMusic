@@ -30,8 +30,10 @@ private slots:
     void sourceSessionKeepsNativePackageLoaded();
     void nativePackageLifecycleKeepsSourceRegistryInSync();
     void failedSourceInitializationMarksPackageFailed();
-    void failedSourceActivationCanBeRetriedWithoutSecondLoader();
+    void failedSourceActivationLeavesPackageFailed();
     void destroyedPluginManagerRemovesPackageSources();
+    void managerlessSourceManagerCannotLoadNativePlugins();
+    void pluginManagerLoadReportsSourceActivationFailure();
 };
 
 namespace {
@@ -51,8 +53,9 @@ QString frozenV1PluginDirectory()
     return QStringLiteral(QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR);
 }
 
-QString initializationFailurePackage(QTemporaryDir *root)
+QString initializationFailurePackage(QTemporaryDir *root, bool *manifestWritten)
 {
+    *manifestWritten = false;
     if (!root->isValid()) {
         return {};
     }
@@ -79,24 +82,87 @@ QString initializationFailurePackage(QTemporaryDir *root)
     if (!manifest.open(QIODevice::WriteOnly)) {
         return {};
     }
-    manifest.write(QStringLiteral(R"({"id":"org.quemusic.source.initialization-failure","sourceId":"fixture.initialize-failure","name":"Initialization Failure Source","version":"1.0.0","category":"source","runtime":"native-qt","library":"%1","pluginApi":{"major":1,"minHostMinor":0},"interfaces":[{"id":"org.quemusic.MusicSourcePlugin/1.0","version":"1.0"}],"runtimeRequirements":{"qtMajor":6}})")
-                       .arg(libraryName)
-                       .toUtf8());
+    const QByteArray contents = QStringLiteral(R"({"id":"org.quemusic.source.initialization-failure","sourceId":"fixture.initialize-failure","name":"Initialization Failure Source","version":"1.0.0","category":"source","runtime":"native-qt","library":"%1","pluginApi":{"major":1,"minHostMinor":0},"interfaces":[{"id":"org.quemusic.MusicSourcePlugin/1.0","version":"1.0"}],"runtimeRequirements":{"qtMajor":6}})")
+                                    .arg(libraryName)
+                                    .toUtf8();
+    *manifestWritten = manifest.write(contents) == contents.size();
     manifest.close();
-    return root->path();
+    return *manifestWritten ? root->path() : QString();
 }
+
+class SourceManagerHarness {
+public:
+    explicit SourceManagerHarness(bool includePrimaryPackage = true)
+        : manager(&plugins)
+    {
+        if (includePrimaryPackage) {
+            primaryPackageReady = addPackage(testSourcePluginDirectory(),
+                                             QStringLiteral("test_source"),
+                                             QStringLiteral("org.quemusic.source.fixture"),
+                                             QStringLiteral("test-source"),
+                                             QStringLiteral("Test Source"));
+        }
+    }
+
+    bool addPackage(const QString &libraryDirectory, const QString &libraryFragment,
+                    const QString &packageId, const QString &sourceId, const QString &name)
+    {
+        if (!root.isValid()) {
+            return false;
+        }
+        const QDir sourceDirectory(libraryDirectory);
+        const QStringList libraries = sourceDirectory.entryList(QDir::Files);
+        const auto library = std::find_if(libraries.cbegin(), libraries.cend(),
+                                          [&libraryFragment](const QString &candidate) {
+                                              return candidate.contains(libraryFragment);
+                                          });
+        if (library == libraries.cend()) {
+            return false;
+        }
+
+        const QString packageDirectory = QDir(root.path()).filePath(
+            QStringLiteral("package-%1").arg(nextPackage++));
+        if (!QDir().mkpath(packageDirectory)
+            || !QFile::copy(sourceDirectory.filePath(*library),
+                            QDir(packageDirectory).filePath(*library))) {
+            return false;
+        }
+
+        const QByteArray manifestContents = QStringLiteral(
+            R"({"id":"%1","sourceId":"%2","name":"%3","version":"1.0.0","category":"source","runtime":"native-qt","library":"%4","pluginApi":{"major":1,"minHostMinor":0},"interfaces":[{"id":"org.quemusic.MusicSourcePlugin/1.0","version":"1.0"}],"runtimeRequirements":{"qtMajor":6}})")
+                                               .arg(packageId, sourceId, name, *library)
+                                               .toUtf8();
+        QFile manifest(QDir(packageDirectory).filePath(QStringLiteral("manifest.json")));
+        if (!manifest.open(QIODevice::WriteOnly)) {
+            return false;
+        }
+        const bool written = manifest.write(manifestContents) == manifestContents.size();
+        manifest.close();
+        if (written) {
+            plugins.addSearchPath(root.path());
+        }
+        return written;
+    }
+
+    QTemporaryDir root;
+    PluginManager plugins;
+    SourceManager manager;
+    bool primaryPackageReady = true;
+
+private:
+    int nextPackage = 0;
+};
 
 }
 
 void SourceManagerTest::loadsValidSourcePlugin()
 {
-    SourceManager manager;
+    SourceManagerHarness harness;
+    SourceManager &manager = harness.manager;
     QSignalSpy loaded(&manager, &SourceManager::sourceLoaded);
     const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
                                 QStringLiteral("Test Account")};
     QObject parent;
-
-    manager.addSearchPath(testSourcePluginDirectory());
 
     QCOMPARE(manager.loadAll(), 1);
     QCOMPARE(loaded.count(), 1);
@@ -118,16 +184,17 @@ void SourceManagerTest::loadsValidSourcePlugin()
 
 void SourceManagerTest::ignoresMissingSearchPath()
 {
-    SourceManager manager;
-    QSignalSpy failed(&manager, &SourceManager::sourceLoadFailed);
+    SourceManagerHarness harness(false);
+    SourceManager &manager = harness.manager;
 
-    manager.addSearchPath(fixtureDirectory(QStringLiteral("does-not-exist")));
+    harness.plugins.addSearchPath(fixtureDirectory(QStringLiteral("does-not-exist")));
 
     QCOMPARE(manager.loadAll(), 0);
-    QCOMPARE(failed.count(), 1);
     QCOMPARE(manager.sourceIds(), QStringList());
 
-    manager.addSearchPath(testSourcePluginDirectory());
+    QVERIFY(harness.addPackage(testSourcePluginDirectory(), QStringLiteral("test_source"),
+                               QStringLiteral("org.quemusic.source.fixture"),
+                               QStringLiteral("test-source"), QStringLiteral("Test Source")));
 
     QCOMPARE(manager.loadAll(), 1);
     QCOMPARE(manager.sourceIds(), QStringList({QStringLiteral("test-source")}));
@@ -135,12 +202,12 @@ void SourceManagerTest::ignoresMissingSearchPath()
 
 void SourceManagerTest::rejectsUnknownSourceId()
 {
-    SourceManager manager;
+    SourceManagerHarness harness;
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("unknown"), QStringLiteral("account-1"),
                                 QStringLiteral("Unknown Account")};
 
-    manager.addSearchPath(testSourcePluginDirectory());
     QCOMPARE(manager.loadAll(), 1);
 
     QVERIFY(manager.createSession(account.sourceId, account, &parent) == nullptr);
@@ -148,54 +215,81 @@ void SourceManagerTest::rejectsUnknownSourceId()
 
 void SourceManagerTest::rejectsDuplicateSourceIdWithoutStoppingOtherSources()
 {
-    SourceManager manager;
-    QSignalSpy failed(&manager, &SourceManager::sourceLoadFailed);
+    SourceManagerHarness harness(false);
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("fixture.duplicate"), QStringLiteral("account-1"),
                                 QStringLiteral("Duplicate Account")};
 
-    manager.addSearchPath(fixtureDirectory(QStringLiteral("duplicate")));
+    QVERIFY(harness.addPackage(fixtureDirectory(QStringLiteral("duplicate")),
+                               QStringLiteral("fixture_one"),
+                               QStringLiteral("org.quemusic.source.duplicate-one"),
+                               account.sourceId, QStringLiteral("Duplicate Source")));
+    QVERIFY(harness.addPackage(fixtureDirectory(QStringLiteral("duplicate")),
+                               QStringLiteral("fixture_two"),
+                               QStringLiteral("org.quemusic.source.duplicate-two"),
+                               account.sourceId, QStringLiteral("Duplicate Source")));
 
     QCOMPARE(manager.loadAll(), 1);
-    QCOMPARE(failed.count(), 1);
     QCOMPARE(manager.sourceIds(), QStringList({QStringLiteral("fixture.duplicate")}));
     QVERIFY(manager.createSession(account.sourceId, account, &parent) != nullptr);
 }
 
 void SourceManagerTest::rejectsInvalidPluginsWithoutStoppingOtherSources()
 {
-    SourceManager manager;
-    QSignalSpy failed(&manager, &SourceManager::sourceLoadFailed);
+    SourceManagerHarness harness(false);
+    SourceManager &manager = harness.manager;
 
-    manager.addSearchPath(fixtureDirectory(QStringLiteral("invalid")));
+    const QString invalidDirectory = fixtureDirectory(QStringLiteral("invalid"));
+    QVERIFY(harness.addPackage(invalidDirectory, QStringLiteral("invalid_valid"),
+                               QStringLiteral("org.quemusic.source.valid"),
+                               QStringLiteral("fixture.valid"), QStringLiteral("Fixture Source")));
+    QVERIFY(harness.addPackage(invalidDirectory, QStringLiteral("empty_id"),
+                               QStringLiteral("org.quemusic.source.empty-id"),
+                               QStringLiteral("manifest.empty-id"), QStringLiteral("Empty ID Source")));
+    QVERIFY(harness.addPackage(invalidDirectory, QStringLiteral("empty_sdk"),
+                               QStringLiteral("org.quemusic.source.empty-sdk"),
+                               QStringLiteral("fixture.empty-sdk"), QStringLiteral("Empty SDK Source")));
+    QVERIFY(harness.addPackage(invalidDirectory, QStringLiteral("missing_name"),
+                               QStringLiteral("org.quemusic.source.missing-name"),
+                               QStringLiteral("fixture.missing-name"), QStringLiteral("Missing Name Source")));
+    QVERIFY(harness.addPackage(invalidDirectory, QStringLiteral("initialization_failure"),
+                               QStringLiteral("org.quemusic.source.initialization-failure"),
+                               QStringLiteral("fixture.initialize-failure"),
+                               QStringLiteral("Initialization Failure Source")));
+    QVERIFY(harness.addPackage(invalidDirectory, QStringLiteral("not_source"),
+                               QStringLiteral("org.quemusic.source.not-source"),
+                               QStringLiteral("fixture.not-source"), QStringLiteral("Not Source")));
 
     QCOMPARE(manager.loadAll(), 1);
-    QCOMPARE(failed.count(), 5);
     QCOMPARE(manager.sourceIds(), QStringList({QStringLiteral("fixture.valid")}));
 }
 
 void SourceManagerTest::rejectsUnsupportedSdkVersionWithoutStoppingOtherSources()
 {
-    SourceManager manager;
-    QSignalSpy failed(&manager, &SourceManager::sourceLoadFailed);
+    SourceManagerHarness harness(false);
+    SourceManager &manager = harness.manager;
 
-    manager.addSearchPath(fixtureDirectory(QStringLiteral("incompatible")));
-    manager.addSearchPath(testSourcePluginDirectory());
+    QVERIFY(harness.addPackage(fixtureDirectory(QStringLiteral("incompatible")),
+                               QStringLiteral("incompatible_sdk"),
+                               QStringLiteral("org.quemusic.source.incompatible"),
+                               QStringLiteral("fixture.incompatible-sdk"),
+                               QStringLiteral("Incompatible SDK Source")));
+    QVERIFY(harness.addPackage(testSourcePluginDirectory(), QStringLiteral("test_source"),
+                               QStringLiteral("org.quemusic.source.fixture"),
+                               QStringLiteral("test-source"), QStringLiteral("Test Source")));
 
     QCOMPARE(manager.loadAll(), 1);
-    QCOMPARE(failed.count(), 1);
     QCOMPARE(manager.sourceIds(), QStringList({QStringLiteral("test-source")}));
-    QVERIFY(failed.constFirst().at(1).toString().contains(QStringLiteral("2.0")));
 }
 
 void SourceManagerTest::fakeSourceReturnsNamespacedTrack()
 {
-    SourceManager manager;
+    SourceManagerHarness harness;
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
                                 QStringLiteral("Test Account")};
-
-    manager.addSearchPath(testSourcePluginDirectory());
 
     QCOMPARE(manager.loadAll(), 1);
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
@@ -218,12 +312,11 @@ void SourceManagerTest::fakeSourceReturnsNamespacedTrack()
 
 void SourceManagerTest::fakeSourceCancellationSuppressesResult()
 {
-    SourceManager manager;
+    SourceManagerHarness harness;
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
                                 QStringLiteral("Test Account")};
-
-    manager.addSearchPath(testSourcePluginDirectory());
 
     QCOMPARE(manager.loadAll(), 1);
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
@@ -239,12 +332,12 @@ void SourceManagerTest::fakeSourceCancellationSuppressesResult()
 
 void SourceManagerTest::fakeSourceCompletesStreamResolution()
 {
-    SourceManager manager;
+    SourceManagerHarness harness;
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
                                 QStringLiteral("Test Account")};
 
-    manager.addSearchPath(testSourcePluginDirectory());
     QCOMPARE(manager.loadAll(), 1);
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
     QVERIFY(session != nullptr);
@@ -265,12 +358,12 @@ void SourceManagerTest::fakeSourceCompletesStreamResolution()
 
 void SourceManagerTest::fakeSourceCompletesArtworkFetch()
 {
-    SourceManager manager;
+    SourceManagerHarness harness;
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("test-source"), QStringLiteral("account-1"),
                                 QStringLiteral("Test Account")};
 
-    manager.addSearchPath(testSourcePluginDirectory());
     QCOMPARE(manager.loadAll(), 1);
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
     QVERIFY(session != nullptr);
@@ -293,12 +386,16 @@ void SourceManagerTest::fakeSourceCompletesArtworkFetch()
 
 void SourceManagerTest::baseOnlyFixtureDoesNotExposeArtworkInterface()
 {
-    SourceManager manager;
+    SourceManagerHarness harness(false);
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("fixture.valid"), QStringLiteral("account-1"),
                                 QStringLiteral("Fixture Account")};
 
-    manager.addSearchPath(fixtureDirectory(QStringLiteral("invalid")));
+    QVERIFY(harness.addPackage(fixtureDirectory(QStringLiteral("invalid")),
+                               QStringLiteral("invalid_valid"),
+                               QStringLiteral("org.quemusic.source.valid"), account.sourceId,
+                               QStringLiteral("Fixture Source")));
     QCOMPARE(manager.loadAll(), 1);
 
     const QVariantMap source = manager.availableSources().constFirst().toMap();
@@ -313,13 +410,16 @@ void SourceManagerTest::baseOnlyFixtureDoesNotExposeArtworkInterface()
 
 void SourceManagerTest::legacyArtworkMetadataFallsBackToV1BaseSession()
 {
-    SourceManager manager;
+    SourceManagerHarness harness(false);
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("fixture.frozen-v1"),
                                 QStringLiteral("account-1"),
                                 QStringLiteral("Frozen v1 Account")};
 
-    manager.addSearchPath(frozenV1PluginDirectory());
+    QVERIFY(harness.addPackage(frozenV1PluginDirectory(), QStringLiteral("frozen_v1"),
+                               QStringLiteral("org.quemusic.source.frozen-v1"), account.sourceId,
+                               QStringLiteral("Frozen v1 Source")));
     QCOMPARE(manager.loadAll(), 1);
     IMusicSourceSession *session = manager.createSession(account.sourceId, account, &parent);
     QVERIFY(session != nullptr);
@@ -338,13 +438,17 @@ void SourceManagerTest::legacyArtworkMetadataFallsBackToV1BaseSession()
 
 void SourceManagerTest::optionalArtworkInterfaceWithoutMetadataIsNotUsed()
 {
-    SourceManager manager;
+    SourceManagerHarness harness(false);
+    SourceManager &manager = harness.manager;
     QObject parent;
     const SourceAccount account{QStringLiteral("fixture.optional-without-metadata"),
                                 QStringLiteral("account-1"),
                                 QStringLiteral("No Artwork Metadata Account")};
 
-    manager.addSearchPath(fixtureDirectory(QStringLiteral("optional-without-metadata")));
+    QVERIFY(harness.addPackage(fixtureDirectory(QStringLiteral("optional-without-metadata")),
+                               QStringLiteral("optional_artwork_without_metadata"),
+                               QStringLiteral("org.quemusic.source.optional-without-metadata"),
+                               account.sourceId, QStringLiteral("Optional Artwork Without Metadata")));
     QCOMPARE(manager.loadAll(), 1);
     const QVariantMap descriptor = manager.availableSources().constFirst().toMap();
     QVERIFY((descriptor.value(QStringLiteral("capabilities")).toULongLong() &
@@ -412,7 +516,9 @@ void SourceManagerTest::failedSourceInitializationMarksPackageFailed()
 {
     QTemporaryDir packageRoot;
     PluginManager plugins;
-    const QString packagePath = initializationFailurePackage(&packageRoot);
+    bool manifestWritten = false;
+    const QString packagePath = initializationFailurePackage(&packageRoot, &manifestWritten);
+    QVERIFY(manifestWritten);
     QVERIFY(!packagePath.isEmpty());
     plugins.addSearchPath(packagePath);
     SourceManager sources(&plugins);
@@ -424,11 +530,13 @@ void SourceManagerTest::failedSourceInitializationMarksPackageFailed()
     QVERIFY(package.error.contains(QStringLiteral("initialization")));
 }
 
-void SourceManagerTest::failedSourceActivationCanBeRetriedWithoutSecondLoader()
+void SourceManagerTest::failedSourceActivationLeavesPackageFailed()
 {
     QTemporaryDir packageRoot;
     PluginManager plugins;
-    const QString packagePath = initializationFailurePackage(&packageRoot);
+    bool manifestWritten = false;
+    const QString packagePath = initializationFailurePackage(&packageRoot, &manifestWritten);
+    QVERIFY(manifestWritten);
     QVERIFY(!packagePath.isEmpty());
     plugins.addSearchPath(packagePath);
     SourceManager sources(&plugins);
@@ -452,6 +560,32 @@ void SourceManagerTest::destroyedPluginManagerRemovesPackageSources()
 
     QCOMPARE(sources.sourceIds(), QStringList());
     QVERIFY(sources.createSession(QStringLiteral("test-source"), {}, nullptr) == nullptr);
+}
+
+void SourceManagerTest::managerlessSourceManagerCannotLoadNativePlugins()
+{
+    SourceManager sources;
+    sources.addSearchPath(testSourcePluginDirectory());
+
+    QCOMPARE(sources.loadAll(), 0);
+    QCOMPARE(sources.sourceIds(), QStringList());
+}
+
+void SourceManagerTest::pluginManagerLoadReportsSourceActivationFailure()
+{
+    QTemporaryDir packageRoot;
+    PluginManager plugins;
+    bool manifestWritten = false;
+    const QString packagePath = initializationFailurePackage(&packageRoot, &manifestWritten);
+    QVERIFY(manifestWritten);
+    QVERIFY(!packagePath.isEmpty());
+    plugins.addSearchPath(packagePath);
+    SourceManager sources(&plugins);
+    const QString packageId = QStringLiteral("org.quemusic.source.initialization-failure");
+
+    QCOMPARE(plugins.discover(), 1);
+    QVERIFY(!plugins.load(packageId));
+    QCOMPARE(plugins.plugin(packageId).state, PluginState::Failed);
 }
 
 QTEST_MAIN(SourceManagerTest)
