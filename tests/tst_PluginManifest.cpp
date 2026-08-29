@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -51,12 +52,16 @@ private slots:
     void acceptsNativeSourcePackage();
     void rejectsLibraryOutsidePackage();
     void rejectsLibraryDirectoryPath();
+    void rejectsLibrarySymlinkOutsidePackage();
 };
 
 void PluginManifestTest::acceptsNativeSourcePackage()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
+    QFile library(QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")));
+    QVERIFY(library.open(QIODevice::WriteOnly));
+    library.close();
     writeManifest(directory.path(), validNativeSourceManifest());
 
     QString error;
@@ -67,7 +72,8 @@ void PluginManifestTest::acceptsNativeSourcePackage()
     QCOMPARE(manifest.id(), QStringLiteral("org.quemusic.source.fixture"));
     QCOMPARE(manifest.category(), PluginCategory::Source);
     QCOMPARE(manifest.libraryAbsolutePath(),
-             QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")));
+             QFileInfo(QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")))
+                 .canonicalFilePath());
 }
 
 void PluginManifestTest::rejectsLibraryOutsidePackage()
@@ -96,6 +102,25 @@ void PluginManifestTest::rejectsLibraryDirectoryPath()
 
     QVERIFY(!manifest.isValid());
     QVERIFY(error.contains(QStringLiteral("library")));
+}
+
+void PluginManifestTest::rejectsLibrarySymlinkOutsidePackage()
+{
+    QTemporaryDir package;
+    QTemporaryDir outside;
+    const QString external = QDir(outside.path()).filePath(QStringLiteral("external.dylib"));
+    QFile externalFile(external);
+    QVERIFY(externalFile.open(QIODevice::WriteOnly));
+    externalFile.close();
+    QVERIFY(QFile::link(external, QDir(package.path()).filePath(QStringLiteral("escape.dylib"))));
+    writeManifest(package.path(), manifestWithLibrary(QStringLiteral("escape.dylib")));
+
+    QString error;
+    const PluginManifest manifest = PluginManifest::fromFile(
+        QDir(package.path()).filePath(QStringLiteral("manifest.json")), &error);
+
+    QVERIFY(!manifest.isValid());
+    QVERIFY(error.contains(QStringLiteral("package")));
 }
 
 QTEST_MAIN(PluginManifestTest)

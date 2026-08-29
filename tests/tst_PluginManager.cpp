@@ -2,7 +2,10 @@
 
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 class PluginManagerTest : public QObject {
@@ -12,7 +15,22 @@ private slots:
     void refusesUnloadWhileLeaseIsActive();
     void reloadsAfterFinalLeaseIsReleased();
     void malformedPackageDoesNotBlockValidPackage();
+    void rejectsDuplicateSourceIdBeforeLoad();
 };
+
+namespace {
+
+void copyPackage(const QString &sourcePath, const QString &destinationPath)
+{
+    QVERIFY(QDir().mkpath(destinationPath));
+    const QDir source(sourcePath);
+    for (const QString &fileName : source.entryList(QDir::Files)) {
+        QVERIFY(QFile::copy(source.filePath(fileName),
+                            QDir(destinationPath).filePath(fileName)));
+    }
+}
+
+}
 
 void PluginManagerTest::refusesUnloadWhileLeaseIsActive()
 {
@@ -78,6 +96,34 @@ void PluginManagerTest::malformedPackageDoesNotBlockValidPackage()
     QVERIFY(manager.load(QStringLiteral("org.quemusic.source.fixture")));
 
     QVERIFY(QDir(brokenDirectory).removeRecursively());
+}
+
+void PluginManagerTest::rejectsDuplicateSourceIdBeforeLoad()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString fixturePath = QDir(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR))
+                                    .filePath(QStringLiteral("fixture"));
+    const QString firstPackage = QDir(root.path()).filePath(QStringLiteral("accepted"));
+    const QString duplicatePackage = QDir(root.path()).filePath(QStringLiteral("rejected"));
+    copyPackage(fixturePath, firstPackage);
+    copyPackage(fixturePath, duplicatePackage);
+
+    QFile duplicateManifest(QDir(duplicatePackage).filePath(QStringLiteral("manifest.json")));
+    QVERIFY(duplicateManifest.open(QIODevice::ReadOnly));
+    QJsonObject manifest = QJsonDocument::fromJson(duplicateManifest.readAll()).object();
+    duplicateManifest.close();
+    manifest.insert(QStringLiteral("id"), QStringLiteral("org.quemusic.source.duplicate"));
+    duplicateManifest.setFileName(QDir(duplicatePackage).filePath(QStringLiteral("manifest.json")));
+    QVERIFY(duplicateManifest.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    duplicateManifest.write(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+    duplicateManifest.close();
+
+    PluginManager manager;
+    manager.addSearchPath(root.path());
+    QCOMPARE(manager.discover(), 1);
+    QCOMPARE(manager.plugins().size(), 1);
+    QVERIFY(!manager.load(QStringLiteral("org.quemusic.source.duplicate")));
 }
 
 QTEST_MAIN(PluginManagerTest)

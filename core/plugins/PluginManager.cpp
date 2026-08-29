@@ -123,6 +123,14 @@ int PluginManager::discover()
                 emit pluginLoadFailed(manifest.id(), QStringLiteral("Duplicate plugin package ID"));
                 continue;
             }
+            const bool duplicateSource = std::any_of(
+                m_entries.cbegin(), m_entries.cend(), [&manifest](const auto &entry) {
+                    return entry->spec.sourceId == manifest.sourceId();
+                });
+            if (duplicateSource) {
+                emit pluginLoadFailed(manifest.id(), QStringLiteral("Duplicate plugin source ID"));
+                continue;
+            }
 
             auto entry = std::make_unique<Entry>();
             entry->manifest = manifest;

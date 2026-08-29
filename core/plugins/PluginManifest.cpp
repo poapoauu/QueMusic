@@ -120,6 +120,16 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         return invalidManifest(QStringLiteral("Manifest is missing the source plugin interface"), error);
     }
 
+    const QFileInfo packageRootInfo(QFileInfo(manifestPath).absolutePath());
+    const QFileInfo libraryInfo(
+        QDir(packageRootInfo.absoluteFilePath()).filePath(library));
+    const QString packageRoot = packageRootInfo.canonicalFilePath();
+    const QString libraryPath = libraryInfo.canonicalFilePath();
+    if (packageRoot.isEmpty() || libraryPath.isEmpty() || !libraryInfo.isFile()
+        || !libraryPath.startsWith(packageRoot + QDir::separator())) {
+        return invalidManifest(QStringLiteral("Manifest library escapes package directory"), error);
+    }
+
     PluginManifest manifest;
     manifest.m_valid = true;
     manifest.m_id = id;
@@ -127,7 +137,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     manifest.m_name = name;
     manifest.m_version = version;
     manifest.m_category = PluginCategory::Source;
-    manifest.m_libraryAbsolutePath = QDir(QFileInfo(manifestPath).absolutePath()).filePath(library);
+    manifest.m_libraryAbsolutePath = libraryPath;
     manifest.m_minimumHostPluginApiMinor = minimumHostMinor;
 
     const QJsonObject runtimeRequirements =
