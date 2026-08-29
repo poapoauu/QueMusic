@@ -53,6 +53,7 @@ private:
 
 class PluginManager : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QVariantList plugins READ plugins NOTIFY pluginsChanged)
 
 public:
     explicit PluginManager(QObject *parent = nullptr);
@@ -70,8 +71,14 @@ public:
     QVariantList plugins() const;
     QObject *pluginInstance(const QString &packageId) const;
 
+    Q_INVOKABLE void discoverPlugins();
+    Q_INVOKABLE bool loadPlugin(const QString &packageId);
+    Q_INVOKABLE bool unloadPlugin(const QString &packageId);
+    Q_INVOKABLE bool reloadPlugin(const QString &packageId);
+
 signals:
     void pluginChanged(QString packageId);
+    void pluginsChanged();
     void pluginLoadFailed(QString packageId, QString error);
 
 private:

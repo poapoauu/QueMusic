@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QtQml/QQmlApplicationEngine>
+#include <QtQml/QQmlContext>
 
 QStringList defaultSourcePluginSearchPaths(const QCoreApplication &application)
 {
@@ -50,6 +51,9 @@ SourceManager *createAndLoadSourceManager(const QCoreApplication &application, Q
 SourceManager *initializeSourceStartupBoundary(const QCoreApplication &application,
                                               QQmlApplicationEngine &engine)
 {
-    Q_UNUSED(engine);
-    return createAndLoadSourceManager(application, const_cast<QCoreApplication *>(&application));
+    SourceManager *manager =
+        createAndLoadSourceManager(application, const_cast<QCoreApplication *>(&application));
+    engine.rootContext()->setContextProperty(QStringLiteral("pluginManager"),
+                                             manager->pluginManager());
+    return manager;
 }

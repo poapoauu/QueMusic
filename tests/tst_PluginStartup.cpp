@@ -53,6 +53,10 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
                                              QStringLiteral("still-usable"));
     QCOMPARE(engine.rootContext()->contextProperty(QStringLiteral("startupSentinel")).toString(),
              QStringLiteral("still-usable"));
+    QCOMPARE(engine.rootContext()
+                 ->contextProperty(QStringLiteral("pluginManager"))
+                 .value<QObject *>(),
+             manager->pluginManager());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("sourceManager")).isValid());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("sourceSession")).isValid());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("musicSourcePlugin")).isValid());

@@ -85,6 +85,7 @@ bool PluginLease::isValid() const
 PluginManager::PluginManager(QObject *parent)
     : QObject(parent)
 {
+    connect(this, &PluginManager::pluginChanged, this, &PluginManager::pluginsChanged);
 }
 
 PluginManager::~PluginManager() = default;
@@ -271,6 +272,26 @@ QObject *PluginManager::pluginInstance(const QString &packageId) const
 {
     const Entry *entry = findEntry(packageId);
     return entry == nullptr ? nullptr : entry->instance;
+}
+
+void PluginManager::discoverPlugins()
+{
+    discover();
+}
+
+bool PluginManager::loadPlugin(const QString &packageId)
+{
+    return load(packageId);
+}
+
+bool PluginManager::unloadPlugin(const QString &packageId)
+{
+    return unload(packageId) == PluginOperationResult::Success;
+}
+
+bool PluginManager::reloadPlugin(const QString &packageId)
+{
+    return reload(packageId) == PluginOperationResult::Success;
 }
 
 PluginManager::Entry *PluginManager::findEntry(const QString &packageId)
