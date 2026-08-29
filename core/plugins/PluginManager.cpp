@@ -88,7 +88,14 @@ PluginManager::PluginManager(QObject *parent)
     connect(this, &PluginManager::pluginChanged, this, &PluginManager::pluginsChanged);
 }
 
-PluginManager::~PluginManager() = default;
+PluginManager::~PluginManager()
+{
+    for (const auto &entry : m_entries) {
+        if (entry->loader != nullptr && entry->loader->isLoaded()) {
+            entry->loader->unload();
+        }
+    }
+}
 
 void PluginManager::addSearchPath(const QString &path)
 {
@@ -174,8 +181,13 @@ bool PluginManager::load(const QString &packageId)
         return false;
     }
 
-    auto loader = std::make_unique<QPluginLoader>(entry->manifest.libraryAbsolutePath());
+    auto loader = std::make_unique<QPluginLoader>();
     loader->setLoadHints({});
+    loader->setFileName(entry->manifest.libraryAbsolutePath());
+    if (!loader->load()) {
+        fail(*entry, loader->errorString());
+        return false;
+    }
     QObject *instance = loader->instance();
     if (instance == nullptr) {
         fail(*entry, loader->errorString());
@@ -223,6 +235,14 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
         return PluginOperationResult::Busy;
     }
     if (entry->loader == nullptr) {
+        return PluginOperationResult::Success;
+    }
+    if (!entry->loader->isLoaded()) {
+        entry->loader.reset();
+        entry->instance = nullptr;
+        entry->spec.state = PluginState::Unloaded;
+        entry->spec.error.clear();
+        emit pluginChanged(packageId);
         return PluginOperationResult::Success;
     }
     if (!entry->loader->unload()) {

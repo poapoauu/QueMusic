@@ -84,10 +84,6 @@ if(BUILD_TESTING)
     enable_testing()
 endif()
 
-if(APPLE)
-    set(QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR
-        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${PROJECT_NAME}.app/Contents/PlugIns/quemusic/navidrome")
-endif()
 add_subdirectory(plugins/navidrome-source)
 
 qt_add_executable(quemusic_navidrome_smoke
@@ -411,16 +407,18 @@ elseif(APPLE)
         )
     endif()
 
-    add_dependencies(QueMusic quemusic_navidrome_source)
     set(quemusic_bundle_plugin_dir
         "$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome")
-    add_custom_command(TARGET QueMusic POST_BUILD
+    add_custom_target(quemusic_navidrome_bundle_plugin
         COMMAND ${CMAKE_COMMAND} -E remove_directory "${quemusic_bundle_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${quemusic_bundle_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:quemusic_navidrome_source>" "${quemusic_bundle_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json" "${quemusic_bundle_plugin_dir}")
+            "${QUEMUSIC_NAVIDROME_MANIFEST}" "${quemusic_bundle_plugin_dir}"
+        DEPENDS quemusic_navidrome_source "${QUEMUSIC_NAVIDROME_MANIFEST}"
+        VERBATIM)
+    add_dependencies(QueMusic quemusic_navidrome_bundle_plugin)
 endif()
 
 if(APPLE)
@@ -435,6 +433,9 @@ if(APPLE)
             "-Dbuild_config=$<CONFIG>"
             "-Dsource_library=$<TARGET_FILE:quemusic_navidrome_source>"
             "-Dbundled_library=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome/$<TARGET_FILE_NAME:quemusic_navidrome_source>"
+            "-Dbuild_target=quemusic_navidrome_bundle_plugin"
+            "-Dsource_manifest=${QUEMUSIC_NAVIDROME_MANIFEST}"
+            "-Dbundled_manifest=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome/manifest.json"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyIncrementalBundledPlugin.cmake")
     set_tests_properties(quemusic_macos_bundle_plugin_incremental_test PROPERTIES
         DEPENDS quemusic_macos_bundle_plugin_test

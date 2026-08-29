@@ -41,8 +41,9 @@ language plugin APIs; they cannot be loaded yet.
 `pluginApi`, and the source interface declaration are required. `pluginApi`
 must be an object containing numeric integer `major` and `minHostMinor` fields;
 the latter must be non-negative. `runtimeRequirements` may be absent, but when
-present it must be an object: `qtMajor` is a non-negative numeric integer, and
-`architecture` and `buildMode` are strings whenever present. `library` is a
+present it must be an object: `qtMajor` is a numeric integer greater than or
+equal to `1`, and `architecture` and `buildMode` are non-empty strings whenever
+present. `library` is a
 relative filename inside the package: absolute paths, `.` and `..` path
 components, and directories are rejected.
 

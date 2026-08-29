@@ -170,17 +170,19 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         const QJsonObject runtimeRequirements = runtimeRequirementsValue.toObject();
         const QJsonValue qtMajor = runtimeRequirements.value(QStringLiteral("qtMajor"));
         if (!qtMajor.isUndefined()
-            && !jsonIntegerAtLeast(qtMajor, 0, &manifest.m_requiredQtMajor)) {
+            && !jsonIntegerAtLeast(qtMajor, 1, &manifest.m_requiredQtMajor)) {
             return invalidManifest(QStringLiteral("Manifest required Qt major is invalid"), error);
         }
         const QJsonValue architecture =
             runtimeRequirements.value(QStringLiteral("architecture"));
-        if (!architecture.isUndefined() && !architecture.isString()) {
+        if (!architecture.isUndefined()
+            && (!architecture.isString() || architecture.toString().isEmpty())) {
             return invalidManifest(QStringLiteral("Manifest required architecture is invalid"),
                                    error);
         }
         const QJsonValue buildMode = runtimeRequirements.value(QStringLiteral("buildMode"));
-        if (!buildMode.isUndefined() && !buildMode.isString()) {
+        if (!buildMode.isUndefined()
+            && (!buildMode.isString() || buildMode.toString().isEmpty())) {
             return invalidManifest(QStringLiteral("Manifest required build mode is invalid"), error);
         }
         manifest.m_requiredArchitecture = architecture.toString();

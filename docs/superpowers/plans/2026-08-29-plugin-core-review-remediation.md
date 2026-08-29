@@ -40,7 +40,7 @@ activation failure back to that owner and holds its injected manager weakly.
   the package directory, and `PluginManager::discover()` that accepts each
   `PluginSpec::sourceId` at most once.
 
-- [ ] **Step 1: Write the failing symlink-boundary test**
+- [x] **Step 1: Write the failing symlink-boundary test**
 
 ```cpp
 void PluginManifestTest::rejectsLibrarySymlinkOutsidePackage()
@@ -62,7 +62,7 @@ void PluginManifestTest::rejectsLibrarySymlinkOutsidePackage()
 }
 ```
 
-- [ ] **Step 2: Run the manifest test to verify RED**
+- [x] **Step 2: Run the manifest test to verify RED**
 
 Run:
 `/Users/liqiang/Qt/Tools/Ninja/ninja -C build/task1 quemusic_plugin_manifest_test && /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/task1 -R '^quemusic_plugin_manifest_test$' --output-on-failure`
@@ -70,7 +70,7 @@ Run:
 Expected: `rejectsLibrarySymlinkOutsidePackage` fails because the textual
 relative-path check accepts the symlink.
 
-- [ ] **Step 3: Implement canonical library-root validation**
+- [x] **Step 3: Implement canonical library-root validation**
 
 ```cpp
 const QFileInfo packageRootInfo(QFileInfo(manifestPath).absolutePath());
@@ -84,7 +84,7 @@ if (packageRoot.isEmpty() || libraryPath.isEmpty() || !libraryInfo.isFile()
 manifest.m_libraryAbsolutePath = libraryPath;
 ```
 
-- [ ] **Step 4: Write the failing duplicate-source discovery test**
+- [x] **Step 4: Write the failing duplicate-source discovery test**
 
 ```cpp
 void PluginManagerTest::rejectsDuplicateSourceIdBeforeLoad()
@@ -101,14 +101,14 @@ Create two valid package manifests with distinct package IDs but the same
 `sourceId`; use the existing fixture MODULE for the first and a copied package
 directory for the second.
 
-- [ ] **Step 5: Run the manager test to verify RED**
+- [x] **Step 5: Run the manager test to verify RED**
 
 Run:
 `/Users/liqiang/Qt/Tools/Ninja/ninja -C build/task1 quemusic_plugin_manager_test && /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/task1 -R '^quemusic_plugin_manager_test$' --output-on-failure`
 
 Expected: both packages are discovered and the duplicate package can load.
 
-- [ ] **Step 6: Reject duplicate source IDs while discovering**
+- [x] **Step 6: Reject duplicate source IDs while discovering**
 
 ```cpp
 const bool duplicateSource = std::any_of(m_entries.cbegin(), m_entries.cend(),
@@ -119,7 +119,7 @@ if (duplicateSource) {
 }
 ```
 
-- [ ] **Step 7: Run focused tests and commit**
+- [x] **Step 7: Run focused tests and commit**
 
 Run both test expressions from Steps 2 and 5; both must pass.
 
@@ -146,7 +146,7 @@ git commit -m "fix: reject unsafe native package discovery"
   and returns false when it cannot release the library. `SourceManager` stores
   `QPointer<PluginManager>` and calls this method on descriptor/init failure.
 
-- [ ] **Step 1: Write the failing activation-status test**
+- [x] **Step 1: Write the failing activation-status test**
 
 ```cpp
 void SourceManagerTest::failedSourceInitializationMarksPackageFailed()
@@ -162,14 +162,14 @@ void SourceManagerTest::failedSourceInitializationMarksPackageFailed()
 }
 ```
 
-- [ ] **Step 2: Run the source-manager test to verify RED**
+- [x] **Step 2: Run the source-manager test to verify RED**
 
 Run:
 `/Users/liqiang/Qt/Tools/Ninja/ninja -C build/task1 quemusic_source_manager_test && /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/task1 -R '^quemusic_source_manager_test$' --output-on-failure`
 
 Expected: the package stays `Loaded` with an empty error.
 
-- [ ] **Step 3: Write the failing failed-activation retry test**
+- [x] **Step 3: Write the failing failed-activation retry test**
 
 ```cpp
 void SourceManagerTest::failedSourceActivationCanBeRetriedWithoutSecondLoader()
@@ -189,14 +189,14 @@ The test exercises the same invariant without relying on platform-specific
 `QPluginLoader::unload()` failure injection: source activation failure must
 release its first loader before a retry may create another one.
 
-- [ ] **Step 4: Run source-manager test to verify RED**
+- [x] **Step 4: Run source-manager test to verify RED**
 
 Run the focused source-manager CTest command from Step 2.
 
 Expected: the first activation failure leaves the package `Loaded` rather than
 releasing it and recording `Failed`.
 
-- [ ] **Step 5: Implement loader-preserving failure transitions**
+- [x] **Step 5: Implement loader-preserving failure transitions**
 
 ```cpp
 bool PluginManager::failLoadedPlugin(const QString &packageId, const QString &error)
@@ -229,7 +229,7 @@ failure into a precise `failLoadedPlugin` call. Use `QPointer<PluginManager>`
 for `m_pluginManager`, clear package-backed entries on `destroyed`, and return
 `nullptr` from `createSession()` when it is null.
 
-- [ ] **Step 6: Write and run the manager-destruction regression**
+- [x] **Step 6: Write and run the manager-destruction regression**
 
 ```cpp
 void SourceManagerTest::destroyedPluginManagerRemovesPackageSources()
@@ -247,7 +247,7 @@ void SourceManagerTest::destroyedPluginManagerRemovesPackageSources()
 
 Run the focused source-manager test; it must pass without a crash.
 
-- [ ] **Step 7: Run focused tests and commit**
+- [x] **Step 7: Run focused tests and commit**
 
 Run focused manager and source-manager CTest targets. Both must pass.
 
@@ -269,11 +269,13 @@ git commit -m "fix: preserve native plugin lifecycle invariants"
 
 **Interfaces:**
 - Consumes: the `quemusic_navidrome_source` target and generated
-  `${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json`.
-- Produces: `QueMusic.app/Contents/PlugIns/quemusic/navidrome/` containing the
-  native module and manifest after the QueMusic target builds on macOS.
+  `${CMAKE_BINARY_DIR}/plugins/navidrome/$<CONFIG>/manifest.json`.
+- Produces: a generator-safe `quemusic_navidrome_bundle_plugin` target that
+  copies the native module and manifest to
+  `QueMusic.app/Contents/PlugIns/quemusic/navidrome/`; QueMusic depends on
+  that deployment target on macOS.
 
-- [ ] **Step 1: Add a macOS CTest package-output assertion**
+- [x] **Step 1: Add a macOS CTest package-output assertion**
 
 Create `cmake/VerifyBundledPluginPackage.cmake`:
 
@@ -296,7 +298,7 @@ add_test(NAME quemusic_macos_bundle_plugin_test
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyBundledPluginPackage.cmake")
 ```
 
-- [ ] **Step 2: Run the package-output assertion to verify RED**
+- [x] **Step 2: Run the package-output assertion to verify RED**
 
 Run:
 `/Users/liqiang/Qt/Tools/Ninja/ninja -C build/task1 QueMusic && /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/task1 -R '^quemusic_macos_bundle_plugin_test$' --output-on-failure`
@@ -304,34 +306,37 @@ Run:
 Expected on macOS: the registered assertion fails because the package directory
 does not exist under `QueMusic.app`.
 
-- [ ] **Step 3: Add a macOS post-build package copy**
+- [x] **Step 3: Add a generator-safe macOS deployment target**
 
-After defining the `QueMusic` app target, add its dependency and post-build
-copy commands:
+After defining the `QueMusic` app target, add a deployment target whose
+commands use target generator expressions and whose dependencies include both
+the Navidrome module and its generated manifest. Make QueMusic depend on that
+target:
 
 ```cmake
 if(APPLE)
-    add_dependencies(QueMusic quemusic_navidrome_source)
     set(quemusic_bundle_plugin_dir
         "$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome")
-    add_custom_command(TARGET QueMusic POST_BUILD
+    add_custom_target(quemusic_navidrome_bundle_plugin
         COMMAND ${CMAKE_COMMAND} -E make_directory "${quemusic_bundle_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:quemusic_navidrome_source>" "${quemusic_bundle_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json" "${quemusic_bundle_plugin_dir}")
+            "${QUEMUSIC_NAVIDROME_MANIFEST}" "${quemusic_bundle_plugin_dir}"
+        DEPENDS quemusic_navidrome_source "${QUEMUSIC_NAVIDROME_MANIFEST}")
+    add_dependencies(QueMusic quemusic_navidrome_bundle_plugin)
 endif()
 ```
 
 Keep development output unchanged and do not copy test fixtures.
 
-- [ ] **Step 4: Align package version and docs**
+- [x] **Step 4: Align package version and docs**
 
 Change Navidrome's `SourceDescriptor::version` to `1.0.0`, matching its
 manifest. Update the API and architecture text to say that macOS builds copy
 the bundled source package after linking.
 
-- [ ] **Step 5: Run package-output assertion and commit**
+- [x] **Step 5: Run package-output assertion and commit**
 
 Run the command from Step 2; it must pass on macOS.
 
@@ -352,14 +357,14 @@ git commit -m "fix: deploy navidrome package with mac app"
 - Consumes: all corrected PluginCore code and regression tests.
 - Produces: a verified branch and recorded review status.
 
-- [ ] **Step 1: Build all default targets**
+- [x] **Step 1: Build all default targets**
 
 Run:
 `/Users/liqiang/Qt/Tools/Ninja/ninja -C build/task1 -j 1`
 
 Expected: exit code 0, including `QueMusic`, Navidrome module, and all tests.
 
-- [ ] **Step 2: Run the complete CTest suite**
+- [x] **Step 2: Run the complete CTest suite**
 
 Run:
 `/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/task1 --output-on-failure`
@@ -373,7 +378,7 @@ Record the final build/test result and remediation commit IDs in the SDD
 ledger. Dispatch a read-only reviewer for `main..HEAD`; fix any P1/P2 findings
 before presenting merge or PR options.
 
-- [ ] **Step 4: Commit documentation status**
+- [x] **Step 4: Commit documentation status**
 
 ```bash
 git add docs/superpowers/specs/2026-08-29-plugin-core-review-remediation-design.md \

@@ -20,6 +20,7 @@ private slots:
     void rejectsDuplicateSourceIdBeforeLoad();
     void failedActivationPreservesLoaderLifecycle();
     void failedUnloadExposesRetryCapability();
+    void destructionReleasesOwnedPluginLoaders();
     void rejectsLoadWhilePackageOwnsLoader();
 };
 
@@ -171,13 +172,17 @@ void PluginManagerTest::failedUnloadExposesRetryCapability()
     const PluginManifest manifest = PluginManifest::fromFile(manifestPath, &manifestError);
     QVERIFY2(manifest.isValid(), qPrintable(manifestError));
 
+    QPluginLoader retainedReference;
+    retainedReference.setLoadHints({});
+    retainedReference.setFileName(manifest.libraryAbsolutePath());
+    QCOMPARE(retainedReference.loadHints(), QLibrary::LoadHints{});
+    QVERIFY2(retainedReference.load(), qPrintable(retainedReference.errorString()));
+
     PluginManager manager;
     manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
     QCOMPARE(manager.discover(), 1);
     QVERIFY(manager.load(packageId));
 
-    QPluginLoader retainedReference(manifest.libraryAbsolutePath());
-    QVERIFY2(retainedReference.load(), qPrintable(retainedReference.errorString()));
     QVERIFY(!manager.failLoadedPlugin(packageId, QStringLiteral("Activation failed")));
 
     const PluginSpec failed = manager.plugin(packageId);
@@ -189,10 +194,46 @@ void PluginManagerTest::failedUnloadExposesRetryCapability()
     QCOMPARE(visiblePackage.value(QStringLiteral("loadable")).toBool(), false);
     QCOMPARE(visiblePackage.value(QStringLiteral("unloadable")).toBool(), true);
 
-    QCOMPARE(manager.unload(packageId), PluginOperationResult::Failed);
-    QCOMPARE(manager.plugin(packageId).state, PluginState::Failed);
-    QVERIFY(!manager.load(packageId));
-    retainedReference.unload();
+    QVERIFY2(retainedReference.unload(), qPrintable(retainedReference.errorString()));
+
+    QVERIFY2(manager.unload(packageId) == PluginOperationResult::Success,
+             qPrintable(manager.plugin(packageId).error));
+    QCOMPARE(manager.plugin(packageId).state, PluginState::Unloaded);
+
+    const QVariantMap unloadedPackage = manager.plugins().constFirst().toMap();
+    QCOMPARE(unloadedPackage.value(QStringLiteral("state")).toString(),
+             QStringLiteral("unloaded"));
+    QCOMPARE(unloadedPackage.value(QStringLiteral("loadable")).toBool(), true);
+    QCOMPARE(unloadedPackage.value(QStringLiteral("unloadable")).toBool(), false);
+    QVERIFY(manager.load(packageId));
+}
+
+void PluginManagerTest::destructionReleasesOwnedPluginLoaders()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString packagePath = QDir(root.path()).filePath(QStringLiteral("fixture"));
+    copyPackage(QDir(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR))
+                    .filePath(QStringLiteral("fixture")),
+                packagePath);
+
+    const QString manifestPath = QDir(packagePath).filePath(QStringLiteral("manifest.json"));
+    QString manifestError;
+    const PluginManifest manifest = PluginManifest::fromFile(manifestPath, &manifestError);
+    QVERIFY2(manifest.isValid(), qPrintable(manifestError));
+
+    {
+        PluginManager manager;
+        manager.addSearchPath(root.path());
+        QCOMPARE(manager.discover(), 1);
+        QVERIFY(manager.load(QStringLiteral("org.quemusic.source.fixture")));
+    }
+
+    QPluginLoader probe;
+    probe.setLoadHints({});
+    probe.setFileName(manifest.libraryAbsolutePath());
+    QVERIFY2(probe.load(), qPrintable(probe.errorString()));
+    QVERIFY2(probe.unload(), qPrintable(probe.errorString()));
 }
 
 void PluginManagerTest::rejectsLoadWhilePackageOwnsLoader()

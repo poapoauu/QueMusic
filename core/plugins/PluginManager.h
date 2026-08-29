@@ -8,6 +8,7 @@
 #include <QVariantList>
 
 #include <memory>
+#include <vector>
 
 enum class PluginState {
     Discovered,

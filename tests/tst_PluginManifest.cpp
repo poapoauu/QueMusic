@@ -128,10 +128,16 @@ void PluginManifestTest::rejectsMalformedRuntimeRequirements_data()
         << QJsonValue(QJsonObject{{QStringLiteral("qtMajor"), 6.5}});
     QTest::newRow("qt-major-negative")
         << QJsonValue(QJsonObject{{QStringLiteral("qtMajor"), -1}});
+    QTest::newRow("qt-major-zero")
+        << QJsonValue(QJsonObject{{QStringLiteral("qtMajor"), 0}});
     QTest::newRow("architecture-number")
         << QJsonValue(QJsonObject{{QStringLiteral("architecture"), 64}});
+    QTest::newRow("architecture-empty")
+        << QJsonValue(QJsonObject{{QStringLiteral("architecture"), QStringLiteral("")}});
     QTest::newRow("build-mode-boolean")
         << QJsonValue(QJsonObject{{QStringLiteral("buildMode"), true}});
+    QTest::newRow("build-mode-empty")
+        << QJsonValue(QJsonObject{{QStringLiteral("buildMode"), QStringLiteral("")}});
 }
 
 void PluginManifestTest::rejectsMalformedRuntimeRequirements()

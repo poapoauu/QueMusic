@@ -46,15 +46,17 @@ it.
 
 ## Deployment
 
-The development package remains under `<build>/plugins/navidrome`. On macOS,
-the QueMusic application target depends on the Navidrome module and copies its
-library plus generated manifest to:
+The development package uses the configuration-safe path
+`<build>/plugins/navidrome/$<CONFIG>`. On macOS, the
+`quemusic_navidrome_bundle_plugin` deployment target depends on the Navidrome
+module and generated manifest, then copies both to:
 
 ```text
 QueMusic.app/Contents/PlugIns/quemusic/navidrome/
 ```
 
-This is the exact bundled root selected by `defaultSourcePluginSearchPaths()`.
+QueMusic depends on this deployment target. This is the exact bundled root
+selected by `defaultSourcePluginSearchPaths()`.
 
 ## Tests and verification
 
@@ -65,6 +67,7 @@ Tests are added before each corrective implementation and must cover:
 - failed unload refusing a second loader/reload;
 - manager destruction making package-backed source use safely unavailable;
 - symlink escape rejection; and
-- macOS package output path when running on macOS.
+- macOS package output path and module/manifest-only incremental refresh when
+  running on macOS.
 
 The complete default build and full CTest suite must pass after all changes.

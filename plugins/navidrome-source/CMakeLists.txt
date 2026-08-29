@@ -12,28 +12,20 @@ target_link_libraries(quemusic_navidrome_source PRIVATE
     quemusic_source_sdk
 )
 set_target_properties(quemusic_navidrome_source PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome/$<CONFIG>"
 )
 configure_file(
     manifest.json.in
-    "${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json"
+    "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in"
     @ONLY
 )
-
-if(APPLE)
-    add_custom_command(TARGET quemusic_navidrome_source POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E remove_directory
-            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:quemusic_navidrome_source>"
-            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json"
-            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}")
-endif()
+set(QUEMUSIC_NAVIDROME_MANIFEST
+    "${CMAKE_BINARY_DIR}/plugins/navidrome/$<CONFIG>/manifest.json")
+file(GENERATE
+    OUTPUT "${QUEMUSIC_NAVIDROME_MANIFEST}"
+    INPUT "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in")
+set(QUEMUSIC_NAVIDROME_MANIFEST "${QUEMUSIC_NAVIDROME_MANIFEST}" PARENT_SCOPE)
 
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
