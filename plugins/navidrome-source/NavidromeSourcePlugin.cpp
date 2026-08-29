@@ -5,7 +5,7 @@
 SourceDescriptor NavidromeSourcePlugin::descriptor() const
 {
     return {QStringLiteral("navidrome"), QStringLiteral("Navidrome"),
-            QStringLiteral("0.1.0"), QStringLiteral("subsonic"),
+            QStringLiteral("1.0.0"), QStringLiteral("subsonic"),
             QStringLiteral("1.0"),
             SourceCapability::Search | SourceCapability::Browse |
                 SourceCapability::StreamAudio | SourceCapability::Artwork |

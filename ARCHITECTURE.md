@@ -50,7 +50,9 @@ The manager scans:
 
 Each root contains package directories, each with `manifest.json` beside its
 shared library. The build emits the Navidrome module and its manifest to the
-development package root.
+development package root. On macOS, after the QueMusic application links, the
+same generated package is copied into the application bundle at
+`Contents/PlugIns/quemusic/navidrome`.
 
 ## Deliberate boundaries
 

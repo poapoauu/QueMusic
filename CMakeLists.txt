@@ -392,6 +392,24 @@ elseif(APPLE)
             RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/resources/app/icon.icns"
         )
     endif()
+
+    add_dependencies(QueMusic quemusic_navidrome_source)
+    set(quemusic_bundle_plugin_dir
+        "$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome")
+    add_custom_command(TARGET QueMusic POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${quemusic_bundle_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:quemusic_navidrome_source>" "${quemusic_bundle_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json" "${quemusic_bundle_plugin_dir}")
+endif()
+
+if(APPLE)
+    add_test(NAME quemusic_macos_bundle_plugin_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dpackage_dir=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome"
+            "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_navidrome_source>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyBundledPluginPackage.cmake")
 endif()
 
 set_source_files_properties(

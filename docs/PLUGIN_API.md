@@ -93,9 +93,11 @@ At startup QueMusic scans package directories from these roots:
 - development build fallback: `QCoreApplication::applicationDirPath()/../plugins`
 - user packages: `QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)/plugins`
 
-When built from the root CMake project, bundled source package outputs are
-written below `<build>/plugins`; this matches the development fallback when the
-application runs from `<build>/bin`.
+When built from the root CMake project, bundled source package outputs remain
+below `<build>/plugins`; this matches the development fallback when the
+application runs from `<build>/bin`. On macOS, after `QueMusic` links, CMake
+copies the bundled Navidrome source library and generated manifest into
+`QueMusic.app/Contents/PlugIns/quemusic/navidrome`.
 
 The application directory is intended for bundled plugins. The app-data
 directory is intended for user-installed plugins on the local machine.
