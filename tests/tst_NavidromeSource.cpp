@@ -34,6 +34,7 @@ private slots:
     void pingUsesSubsonicTokenAuthentication();
     void cancelSuppressesTerminalSignal();
     void searchMapsSongsAlbumsAndArtists();
+    void searchAcceptsEmptyResultObject();
     void browseMapsRootAndDirectoryResponses();
     void resolveStreamReturnsAuthenticatedStreamDto();
     void artworkUsesOptionalInterfaceAndReturnsArtworkDto();
@@ -196,6 +197,39 @@ void NavidromeSourceTest::searchMapsSongsAlbumsAndArtists()
     QCOMPARE(items.at(0).toObject().value(QStringLiteral("sourceId")).toString(), QStringLiteral("navidrome"));
     QCOMPARE(items.at(1).toObject().value(QStringLiteral("kind")).toString(), QStringLiteral("album"));
     QCOMPARE(items.at(2).toObject().value(QStringLiteral("kind")).toString(), QStringLiteral("artist"));
+}
+
+void NavidromeSourceTest::searchAcceptsEmptyResultObject()
+{
+    QTcpServer server;
+    QVERIFY2(server.listen(QHostAddress::LocalHost), qPrintable(server.errorString()));
+    connect(&server, &QTcpServer::newConnection, this, [&] {
+        QTcpSocket *socket = server.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+            socket->readAll();
+            const QByteArray response =
+                "{\"subsonic-response\":{\"status\":\"ok\",\"searchResult3\":{}}}";
+            socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                          QByteArray::number(response.size()) +
+                          "\r\nConnection: close\r\n\r\n" + response);
+            socket->disconnectFromHost();
+        });
+    });
+
+    QNetworkAccessManager network;
+    NavidromeSourceSession session(navidromeAccount(server.serverPort()), &network);
+    QSignalSpy succeeded(&session, &IMusicSourceSession::requestSucceeded);
+    QSignalSpy failed(&session, &IMusicSourceSession::requestFailed);
+
+    session.search({QStringLiteral("unmatched query"), 10});
+
+    QVERIFY(succeeded.wait(1000));
+    QCOMPARE(failed.count(), 0);
+    const QJsonArray items = succeeded.constFirst().at(2).value<QJsonValue>()
+                                 .toObject()
+                                 .value(QStringLiteral("items"))
+                                 .toArray();
+    QVERIFY(items.isEmpty());
 }
 
 void NavidromeSourceTest::browseMapsRootAndDirectoryResponses()

@@ -201,13 +201,14 @@ QUuid NavidromeSourceSession::startRequest(const QString &operation, const QStri
         }
 
         if (request.operation == QStringLiteral("search")) {
-            const QJsonObject searchResult = response.value(QStringLiteral("searchResult3")).toObject();
-            if (searchResult.isEmpty()) {
+            const QJsonValue searchResultValue = response.value(QStringLiteral("searchResult3"));
+            if (!searchResultValue.isObject()) {
                 finishFailure(request,
                               {SourceErrorKind::InvalidRequest,
                                QStringLiteral("Navidrome search response is missing searchResult3"), status});
                 return;
             }
+            const QJsonObject searchResult = searchResultValue.toObject();
 
             QJsonArray items;
             const auto appendItems = [this, &items](const QJsonArray &source, const QString &kind) {
