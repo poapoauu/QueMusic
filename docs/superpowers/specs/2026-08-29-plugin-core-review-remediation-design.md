@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted on 2026-08-29 after independent review of the native PluginCore
-branch. This document scopes corrective work only; it does not add JavaScript
-plugins or new plugin categories.
+Accepted as the remediation design on 2026-08-29. Final branch verification
+and independent review are tracked in the accompanying remediation plan. This
+document scopes corrective work only; it does not add JavaScript plugins or new
+plugin categories.
 
 ## Goals
 

@@ -100,10 +100,10 @@ At startup QueMusic scans package directories from these roots:
 
 When built from the root CMake project, bundled source package outputs remain
 below `<build>/plugins`; this matches the development fallback when the
-application runs from `<build>/bin`. On macOS, after `QueMusic` links, CMake
-copies the bundled Navidrome source library and generated manifest into
-`QueMusic.app/Contents/PlugIns/quemusic/navidrome`. A Navidrome-only
-incremental build refreshes the same bundled package.
+application runs from `<build>/bin`. On macOS, building `QueMusic`, or the
+`quemusic_navidrome_bundle_plugin` deployment target, copies the bundled
+Navidrome source library and generated manifest into
+`QueMusic.app/Contents/PlugIns/quemusic/navidrome`.
 
 The application directory is intended for bundled plugins. The app-data
 directory is intended for user-installed plugins on the local machine.
