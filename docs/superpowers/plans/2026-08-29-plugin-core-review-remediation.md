@@ -372,11 +372,15 @@ Run:
 Expected: every registered test passes; run in the permitted local environment
 because Navidrome tests need localhost sockets.
 
-- [ ] **Step 3: Update status and request a fresh independent review**
+- [x] **Step 3: Update status and request a fresh independent review**
 
-Record the final build/test result and remediation commit IDs in the SDD
-ledger. Dispatch a read-only reviewer for `main..HEAD`; fix any P1/P2 findings
-before presenting merge or PR options.
+The final build completed successfully and the complete CTest suite passed
+11/11 in the permitted local environment. The remediation commits are
+`0e73a44`, `c4e6688`, `e831139`, `4f833c2`, `74eb61a`, `d9dc20d`, `0d2e588`,
+`7636b49`, `ecff1b1`, `2b03333`, `94417ac`, `680dc37`, and `9916000`.
+Independent reviewers found and verified the final documentation correction in
+`c362b38`; no P1/P2 findings remain. The detailed command history and review
+notes are recorded in the SDD ledger before presenting merge or PR options.
 
 - [x] **Step 4: Commit documentation status**
 
