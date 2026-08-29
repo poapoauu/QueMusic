@@ -12,7 +12,7 @@ sources, and creates account-scoped sessions.
 QGuiApplication
   ├─ PluginManager
   │   ├─ PluginManifest
-  │   ├─ QPluginLoader (only while loaded)
+  │   ├─ QPluginLoader (while resident, including after failed unload)
   │   └─ PluginLease (one per active source session)
   └─ SourceManager
       └─ registered source descriptors and sessions
@@ -30,8 +30,10 @@ match its returned `SourceDescriptor`.
 lease guard to the returned `IMusicSourceSession`. Consequently a package is
 Busy while any of its sessions exist. An unused package may unload: the source
 registry removes its entry as part of that state change, preventing dangling
-plugin pointers. Reloading creates a fresh native instance and re-registers
-the source.
+plugin pointers. If native unload fails, the package becomes Failed but retains
+its one loader and exposes an unload retry; it cannot load a second instance.
+Reloading after a successful unload creates a fresh native instance and
+re-registers the source.
 
 `PluginManager` is the only plugin object exposed to QML, as the
 `pluginManager` context property. It exposes a read-only package list and
@@ -52,7 +54,8 @@ Each root contains package directories, each with `manifest.json` beside its
 shared library. The build emits the Navidrome module and its manifest to the
 development package root. On macOS, after the QueMusic application links, the
 same generated package is copied into the application bundle at
-`Contents/PlugIns/quemusic/navidrome`.
+`Contents/PlugIns/quemusic/navidrome`. Rebuilding only the Navidrome module also
+refreshes that bundled copy.
 
 ## Deliberate boundaries
 

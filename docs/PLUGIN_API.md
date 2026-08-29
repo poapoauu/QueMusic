@@ -38,10 +38,13 @@ language plugin APIs; they cannot be loaded yet.
 ```
 
 `id`, `sourceId`, `name`, `version`, `category`, `runtime`, `library`,
-`pluginApi`, and the source interface declaration are required. `library` is a
+`pluginApi`, and the source interface declaration are required. `pluginApi`
+must be an object containing numeric integer `major` and `minHostMinor` fields;
+the latter must be non-negative. `runtimeRequirements` may be absent, but when
+present it must be an object: `qtMajor` is a non-negative numeric integer, and
+`architecture` and `buildMode` are strings whenever present. `library` is a
 relative filename inside the package: absolute paths, `.` and `..` path
-components, and directories are rejected. `runtimeRequirements.architecture`
-and `runtimeRequirements.buildMode` are optional exact-match gates.
+components, and directories are rejected.
 
 The host validates this metadata before creating a `QPluginLoader` instance.
 Plugin API major must be `1`; `minHostMinor` must not exceed the host's current
@@ -63,8 +66,9 @@ SDK headers shipped in `sdk/source`. IID 1.0 has one authoritative compatibility
 policy: `sdkVersion` must exactly equal `1.0`; empty, older, newer, or differently
 formatted values are rejected before `initialize()` runs. A future compatible
 version must be added intentionally to the host policy with tests. A plugin is
-also rejected if it does not expose the required IID, has an empty source id or
-display name, or if another loaded plugin already uses the same source id.
+also rejected if it does not expose the required IID or has an empty source id
+or display name. Packages with duplicate manifest `sourceId` values are
+rejected during discovery, before a loader is created for the duplicate.
 
 `IMusicSourceSession` is already published with this exact virtual order:
 `search`, `browse`, `resolveStream`, `fetchArtwork`, `fetchLyrics`, `cancel`.
@@ -97,7 +101,8 @@ When built from the root CMake project, bundled source package outputs remain
 below `<build>/plugins`; this matches the development fallback when the
 application runs from `<build>/bin`. On macOS, after `QueMusic` links, CMake
 copies the bundled Navidrome source library and generated manifest into
-`QueMusic.app/Contents/PlugIns/quemusic/navidrome`.
+`QueMusic.app/Contents/PlugIns/quemusic/navidrome`. A Navidrome-only
+incremental build refreshes the same bundled package.
 
 The application directory is intended for bundled plugins. The app-data
 directory is intended for user-installed plugins on the local machine.
@@ -111,13 +116,15 @@ registry. The Settings “音源” page exposes `pluginManager` to list package
 metadata and offers Discover, Load, Unload, and Reload actions.
 
 The QML `plugins` list contains `id`, `sourceId`, `name`, `version`,
-`category`, `state`, `error`, `path`, `activeLeases`, and `reloadable`.
-States are `discovered`, `loaded`, `failed`, and `unloaded`.
+`category`, `state`, `error`, `path`, `activeLeases`, `loadable`, `unloadable`,
+and `reloadable`. States are `discovered`, `loaded`, `failed`, and `unloaded`.
 
 Each source session owns a package lease. Unload and reload return Busy while
 any session from that package remains alive, and the Settings controls are
 disabled in that state. When an unused source package unloads, `SourceManager`
 removes the corresponding source registry entry before it can be used again.
+If unload fails, the Failed package retains its loader, cannot load a second
+instance, and exposes an enabled unload retry when no lease is active.
 Reloading creates a new plugin instance and reinitializes the source entry.
 This is a trusted-native-code lifecycle only; there is no sandbox, signature,
 permission, or cross-version ABI isolation.
