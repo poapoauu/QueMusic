@@ -397,7 +397,7 @@ elseif(APPLE)
     set(quemusic_bundle_plugin_dir
         "$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome")
     add_custom_command(TARGET QueMusic POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E rm -rf "${quemusic_bundle_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${quemusic_bundle_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${quemusic_bundle_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:quemusic_navidrome_source>" "${quemusic_bundle_plugin_dir}"
