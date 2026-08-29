@@ -21,6 +21,20 @@ configure_file(
     @ONLY
 )
 
+if(APPLE)
+    add_custom_command(TARGET quemusic_navidrome_source POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E remove_directory
+            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:quemusic_navidrome_source>"
+            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/plugins/navidrome/manifest.json"
+            "${QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR}")
+endif()
+
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
 

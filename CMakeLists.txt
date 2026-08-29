@@ -84,6 +84,10 @@ if(BUILD_TESTING)
     enable_testing()
 endif()
 
+if(APPLE)
+    set(QUEMUSIC_NAVIDROME_BUNDLE_PLUGIN_DIR
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${PROJECT_NAME}.app/Contents/PlugIns/quemusic/navidrome")
+endif()
 add_subdirectory(plugins/navidrome-source)
 
 qt_add_executable(quemusic_navidrome_smoke
@@ -425,6 +429,16 @@ if(APPLE)
             "-Dpackage_dir=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome"
             "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_navidrome_source>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyBundledPluginPackage.cmake")
+    add_test(NAME quemusic_macos_bundle_plugin_incremental_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dbuild_dir=${CMAKE_BINARY_DIR}"
+            "-Dbuild_config=$<CONFIG>"
+            "-Dsource_library=$<TARGET_FILE:quemusic_navidrome_source>"
+            "-Dbundled_library=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome/$<TARGET_FILE_NAME:quemusic_navidrome_source>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyIncrementalBundledPlugin.cmake")
+    set_tests_properties(quemusic_macos_bundle_plugin_incremental_test PROPERTIES
+        DEPENDS quemusic_macos_bundle_plugin_test
+        RUN_SERIAL TRUE)
 endif()
 
 set_source_files_properties(

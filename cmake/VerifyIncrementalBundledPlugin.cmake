@@ -1,0 +1,42 @@
+foreach(required_variable build_dir source_library bundled_library)
+    if(NOT DEFINED ${required_variable} OR "${${required_variable}}" STREQUAL "")
+        message(FATAL_ERROR "Missing required variable: ${required_variable}")
+    endif()
+endforeach()
+
+if(NOT EXISTS "${source_library}")
+    message(FATAL_ERROR "Missing development plugin library: ${source_library}")
+endif()
+if(NOT EXISTS "${bundled_library}")
+    message(FATAL_ERROR "Missing bundled plugin library: ${bundled_library}")
+endif()
+
+file(WRITE "${bundled_library}" "stale bundled plugin")
+file(REMOVE "${source_library}")
+
+set(build_command
+    "${CMAKE_COMMAND}" --build "${build_dir}" --target quemusic_navidrome_source)
+if(DEFINED build_config AND NOT "${build_config}" STREQUAL "")
+    list(APPEND build_command --config "${build_config}")
+endif()
+
+execute_process(
+    COMMAND ${build_command}
+    RESULT_VARIABLE build_result
+    OUTPUT_VARIABLE build_output
+    ERROR_VARIABLE build_error)
+if(NOT build_result EQUAL 0)
+    message(FATAL_ERROR
+        "Plugin-only incremental build failed (${build_result}):\n${build_output}\n${build_error}")
+endif()
+
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E compare_files "${source_library}" "${bundled_library}"
+    RESULT_VARIABLE compare_result)
+if(NOT compare_result EQUAL 0)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${source_library}" "${bundled_library}")
+    message(FATAL_ERROR
+        "Plugin-only incremental build left a stale bundled module: ${bundled_library}")
+endif()
