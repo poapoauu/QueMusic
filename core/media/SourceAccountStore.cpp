@@ -100,7 +100,9 @@ bool SourceAccountStore::upsert(const SourceAccount &account, bool enabled, QStr
         return false;
     }
 
-    const QString group = groupFor(account.sourceId, account.accountId);
+    const QString matchingGroup = matchingGroupFor(account.sourceId, account.accountId);
+    const QString group = matchingGroup.isEmpty() ? groupFor(account.sourceId, account.accountId)
+                                                   : matchingGroup;
     const QVariantMap previousValues = recordValues(group);
     const QString previousReference = previousValues.value(QStringLiteral("secretReference")).toString();
     const QString newReference = freshSecretReference();
@@ -162,7 +164,8 @@ bool SourceAccountStore::remove(const QString &sourceId, const QString &accountI
         return false;
     }
 
-    const QString group = groupFor(sourceId, accountId);
+    const QString matchingGroup = matchingGroupFor(sourceId, accountId);
+    const QString group = matchingGroup.isEmpty() ? groupFor(sourceId, accountId) : matchingGroup;
     const QVariantMap previousValues = recordValues(group);
     const QString reference = previousValues.value(QStringLiteral("secretReference")).toString();
 
@@ -192,17 +195,8 @@ std::optional<StoredSourceAccount> SourceAccountStore::storedAccount(const QStri
         return std::nullopt;
     }
 
-    const QStringList groups{
-        groupFor(sourceId, accountId),
-        legacyEncodedGroupFor(sourceId, accountId),
-        legacyRawGroupFor(sourceId, accountId)};
-    for (const QString &group : groups) {
-        const std::optional<StoredSourceAccount> account = storedAccountForGroup(group);
-        if (account.has_value() && account->sourceId == sourceId && account->accountId == accountId) {
-            return account;
-        }
-    }
-    return std::nullopt;
+    const QString group = matchingGroupFor(sourceId, accountId);
+    return group.isEmpty() ? std::nullopt : storedAccountForGroup(group);
 }
 
 QList<StoredSourceAccount> SourceAccountStore::accounts() const
@@ -325,6 +319,21 @@ QString SourceAccountStore::legacyEncodedGroupFor(const QString &sourceId,
 QString SourceAccountStore::legacyRawGroupFor(const QString &sourceId, const QString &accountId) const
 {
     return kSourcesGroup + QLatin1Char('/') + sourceId + QLatin1Char('/') + accountId;
+}
+
+QString SourceAccountStore::matchingGroupFor(const QString &sourceId, const QString &accountId) const
+{
+    const QStringList groups{
+        groupFor(sourceId, accountId),
+        legacyEncodedGroupFor(sourceId, accountId),
+        legacyRawGroupFor(sourceId, accountId)};
+    for (const QString &group : groups) {
+        const std::optional<StoredSourceAccount> account = storedAccountForGroup(group);
+        if (account.has_value() && account->sourceId == sourceId && account->accountId == accountId) {
+            return group;
+        }
+    }
+    return {};
 }
 
 QVariantMap SourceAccountStore::recordValues(const QString &group) const

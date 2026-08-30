@@ -83,6 +83,39 @@ SourceAccount accountWithSecret()
             QByteArrayLiteral("unit-test-password")};
 }
 
+struct LegacyRawAccountFixture {
+    QString sourceId = QStringLiteral("navidrome");
+    QString accountId = QStringLiteral("home%2Foffice");
+    QString reference = QStringLiteral("legacy-percent-reference");
+    QByteArray secret = QByteArrayLiteral("legacy-percent-secret");
+
+    QString group() const
+    {
+        return QStringLiteral("sources/navidrome/home%2Foffice");
+    }
+};
+
+bool seedLegacyRawPercentEscapedAccount(const LegacyRawAccountFixture &fixture, QSettings *settings,
+                                        MemorySecretStore *secretStore)
+{
+    if (!secretStore->write(fixture.reference, fixture.secret, nullptr)) {
+        return false;
+    }
+    const QString group = fixture.group();
+    settings->setValue(group + QStringLiteral("/version"), 1);
+    settings->setValue(group + QStringLiteral("/sourceId"), fixture.sourceId);
+    settings->setValue(group + QStringLiteral("/accountId"), fixture.accountId);
+    settings->setValue(group + QStringLiteral("/displayName"), QStringLiteral("Legacy account"));
+    settings->setValue(group + QStringLiteral("/enabled"), true);
+    settings->setValue(group + QStringLiteral("/parameters/serverUrl"),
+                       QStringLiteral("https://legacy.example.invalid"));
+    settings->setValue(group + QStringLiteral("/parameters/username"),
+                       QStringLiteral("legacy-user"));
+    settings->setValue(group + QStringLiteral("/secretReference"), fixture.reference);
+    settings->sync();
+    return settings->status() == QSettings::NoError;
+}
+
 }
 
 class SourceAccountStoreTest : public QObject {
@@ -99,6 +132,8 @@ private slots:
     void rejectsUntrustedParameterNames();
     void keepsSlashContainingAccountIdentitiesDistinct();
     void readsLegacyRawPercentEscapedAccountId();
+    void updatesLegacyRawPercentEscapedAccountInPlace();
+    void removesLegacyRawPercentEscapedAccount();
     void preservesPreviousAccountWhenOldSecretCleanupFails();
     void unavailableSecretStoreNeverPersistsSecrets();
 };
@@ -173,7 +208,7 @@ void SourceAccountStoreTest::removesMetadataAndSecret()
     const QString reference = store.secretReference(account.sourceId, account.accountId);
 
     QVERIFY(store.remove(account.sourceId, account.accountId));
-    QVERIFY(!settings.contains(QStringLiteral("sources/navidrome/home/secretReference")));
+    QVERIFY(!settings.contains(QStringLiteral("sourceAccountsV2/navidrome/home/secretReference")));
     QVERIFY(!store.storedAccount(account.sourceId, account.accountId).has_value());
     QCOMPARE(secretStore.value(reference), QByteArray());
 }
@@ -327,33 +362,65 @@ void SourceAccountStoreTest::readsLegacyRawPercentEscapedAccountId()
                        QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    const QString sourceId = QStringLiteral("navidrome");
-    const QString accountId = QStringLiteral("home%2Foffice");
-    const QString reference = QStringLiteral("legacy-percent-reference");
-    const QByteArray secret = QByteArrayLiteral("legacy-percent-secret");
-
-    QVERIFY(secretStore.write(reference, secret, nullptr));
-    const QString legacyGroup = QStringLiteral("sources/navidrome/home%2Foffice");
-    settings.setValue(legacyGroup + QStringLiteral("/version"), 1);
-    settings.setValue(legacyGroup + QStringLiteral("/sourceId"), sourceId);
-    settings.setValue(legacyGroup + QStringLiteral("/accountId"), accountId);
-    settings.setValue(legacyGroup + QStringLiteral("/displayName"), QStringLiteral("Legacy account"));
-    settings.setValue(legacyGroup + QStringLiteral("/enabled"), true);
-    settings.setValue(legacyGroup + QStringLiteral("/parameters/serverUrl"),
-                      QStringLiteral("https://legacy.example.invalid"));
-    settings.setValue(legacyGroup + QStringLiteral("/parameters/username"),
-                      QStringLiteral("legacy-user"));
-    settings.setValue(legacyGroup + QStringLiteral("/secretReference"), reference);
-    settings.sync();
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
     QCOMPARE(settings.status(), QSettings::NoError);
 
-    const std::optional<SourceAccount> restored = store.sourceAccount(sourceId, accountId);
+    const std::optional<SourceAccount> restored =
+        store.sourceAccount(fixture.sourceId, fixture.accountId);
     QVERIFY(restored.has_value());
-    QCOMPARE(restored->secret, secret);
+    QCOMPARE(restored->secret, fixture.secret);
     const QList<StoredSourceAccount> accounts = store.accounts();
     QCOMPARE(accounts.size(), 1);
-    QCOMPARE(accounts.constFirst().sourceId, sourceId);
-    QCOMPARE(accounts.constFirst().accountId, accountId);
+    QCOMPARE(accounts.constFirst().sourceId, fixture.sourceId);
+    QCOMPARE(accounts.constFirst().accountId, fixture.accountId);
+}
+
+void SourceAccountStoreTest::updatesLegacyRawPercentEscapedAccountInPlace()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
+
+    SourceAccount updated{fixture.sourceId,
+                          fixture.accountId,
+                          QStringLiteral("Updated legacy account"),
+                          {{QStringLiteral("serverUrl"), QStringLiteral("https://updated.example.invalid")},
+                           {QStringLiteral("username"), QStringLiteral("updated-user")}},
+                          QByteArrayLiteral("updated-legacy-secret")};
+    QVERIFY(store.upsert(updated));
+
+    const QString updatedReference = store.secretReference(fixture.sourceId, fixture.accountId);
+    QVERIFY(!updatedReference.isEmpty());
+    QVERIFY(updatedReference != fixture.reference);
+    QCOMPARE(settings.value(fixture.group() + QStringLiteral("/secretReference")).toString(),
+             updatedReference);
+    QVERIFY(!settings.contains(
+        QStringLiteral("sourceAccountsV2/navidrome/home%252Foffice/secretReference")));
+    QCOMPARE(secretStore.value(fixture.reference), QByteArray());
+    QCOMPARE(secretStore.value(updatedReference), updated.secret);
+}
+
+void SourceAccountStoreTest::removesLegacyRawPercentEscapedAccount()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
+
+    QVERIFY(store.remove(fixture.sourceId, fixture.accountId));
+    QVERIFY(!settings.contains(fixture.group() + QStringLiteral("/secretReference")));
+    QVERIFY(!store.sourceAccount(fixture.sourceId, fixture.accountId).has_value());
+    QCOMPARE(secretStore.value(fixture.reference), QByteArray());
 }
 
 void SourceAccountStoreTest::preservesPreviousAccountWhenOldSecretCleanupFails()
