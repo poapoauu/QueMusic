@@ -130,6 +130,21 @@ if(APPLE)
     target_link_libraries(quemusic_source_account_store PRIVATE "-framework Security")
 endif()
 
+add_library(quemusic_source_session_registry STATIC
+    core/media/SourceSessionRegistry.cpp
+    core/media/SourceSessionRegistry.h
+)
+target_compile_features(quemusic_source_session_registry PUBLIC cxx_std_17)
+target_link_libraries(quemusic_source_session_registry PUBLIC
+    quemusic_media_core
+    quemusic_source_account_store
+    quemusic_source_manager
+    Qt6::Core
+)
+target_include_directories(quemusic_source_session_registry PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/media
+)
+
 if(BUILD_TESTING)
     enable_testing()
 endif()
@@ -199,6 +214,20 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_account_store_test COMMAND quemusic_source_account_store_test)
+
+    qt_add_executable(quemusic_source_session_registry_test
+        tests/tst_SourceSessionRegistry.cpp
+    )
+    target_compile_features(quemusic_source_session_registry_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_source_session_registry_test PRIVATE
+        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
+    )
+    target_link_libraries(quemusic_source_session_registry_test PRIVATE
+        quemusic_source_session_registry
+        Qt6::Test
+    )
+    add_dependencies(quemusic_source_session_registry_test quemusic_test_source)
+    add_test(NAME quemusic_source_session_registry_test COMMAND quemusic_source_session_registry_test)
 
     qt_add_executable(quemusic_source_plugin_contract_test
         tests/tst_SourcePluginContract.cpp
