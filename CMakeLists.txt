@@ -514,6 +514,18 @@ if(BUILD_TESTING)
     )
     add_dependencies(quemusic_media_bridge_test quemusic_test_source)
     add_test(NAME quemusic_media_bridge_test COMMAND quemusic_media_bridge_test)
+
+    qt_add_executable(quemusic_media_bridge_playback_test
+        tests/tst_MediaBridgePlayback.cpp
+    )
+    target_compile_features(quemusic_media_bridge_playback_test PRIVATE cxx_std_17)
+    target_link_libraries(quemusic_media_bridge_playback_test PRIVATE
+        quemusic_media_bridge
+        Qt6::Network
+        Qt6::Test
+    )
+    add_dependencies(quemusic_media_bridge_playback_test quemusic_navidrome_source)
+    add_test(NAME quemusic_media_bridge_playback_test COMMAND quemusic_media_bridge_playback_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}

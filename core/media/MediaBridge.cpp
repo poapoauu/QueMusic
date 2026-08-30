@@ -39,6 +39,11 @@ MediaBridge::MediaBridge(SourceSessionRegistry *registry, QObject *parent)
     }
 }
 
+MediaBridge::~MediaBridge()
+{
+    cancel();
+}
+
 MediaListModel *MediaBridge::searchResults() const
 {
     return m_searchResults;
@@ -136,6 +141,31 @@ void MediaBridge::cancel()
 {
     cancelOperation(OperationType::Search);
     cancelOperation(OperationType::Browse);
+    cancelActions();
+}
+
+void MediaBridge::loadArtwork(const QVariantMap &item)
+{
+    dispatchAction(ActionType::Artwork, item);
+}
+
+void MediaBridge::loadLyrics(const QVariantMap &item)
+{
+    dispatchAction(ActionType::Lyrics, item);
+}
+
+void MediaBridge::play(const QVariantMap &item)
+{
+    dispatchAction(ActionType::Playback, item);
+}
+
+void MediaBridge::enqueue(const QVariantMap &item)
+{
+    const MediaId id = mediaIdFromVariantMap(item);
+    if (!hasValidMediaId(id)) {
+        return;
+    }
+    emit enqueueReady(queueEntryFromItem(item, id));
 }
 
 std::optional<MediaId> MediaBridge::mediaIdForScope(const QString &sourceScope)
@@ -235,6 +265,46 @@ MediaItem MediaBridge::mediaItemFromNormalized(const QJsonObject &item, const Me
     return mapped;
 }
 
+QString MediaBridge::actionName(ActionType type)
+{
+    switch (type) {
+    case ActionType::Artwork:
+        return QStringLiteral("loadArtwork");
+    case ActionType::Lyrics:
+        return QStringLiteral("loadLyrics");
+    case ActionType::Playback:
+        return QStringLiteral("play");
+    }
+    return {};
+}
+
+QVariantMap MediaBridge::actionErrorMap(ActionType type, const MediaId &id, const MediaError &error)
+{
+    return {{QStringLiteral("action"), actionName(type)},
+            {QStringLiteral("mediaId"), mediaIdToVariantMap(id)},
+            {QStringLiteral("kind"), static_cast<int>(error.kind)},
+            {QStringLiteral("message"), error.message},
+            {QStringLiteral("retryable"), error.retryable}};
+}
+
+QVariantMap MediaBridge::queueEntryFromItem(const QVariantMap &item, const MediaId &id)
+{
+    const QStringList artists = item.value(QStringLiteral("artists")).toStringList();
+    const QString artist = !artists.isEmpty() ? artists.join(QStringLiteral(", "))
+                                              : item.value(QStringLiteral("subtitle")).toString();
+    return {{QStringLiteral("mediaId"), mediaIdToVariantMap(id)},
+            {QStringLiteral("title"), item.value(QStringLiteral("title")).toString()},
+            {QStringLiteral("artist"), artist},
+            {QStringLiteral("albumTitle"), item.value(QStringLiteral("albumTitle")).toString()},
+            {QStringLiteral("artworkUrl"), item.value(QStringLiteral("artworkUrl")).toUrl().toString()},
+            {QStringLiteral("durationMs"), item.value(QStringLiteral("durationMs")).toLongLong()}};
+}
+
+bool MediaBridge::hasValidMediaId(const MediaId &id)
+{
+    return !id.sourceId.isEmpty() && !id.accountId.isEmpty() && !id.nativeId.isEmpty();
+}
+
 MediaListModel *MediaBridge::modelFor(OperationType type) const
 {
     return type == OperationType::Search ? m_searchResults : m_browseResults;
@@ -283,6 +353,52 @@ void MediaBridge::dispatch(const Intent &intent)
     m_registry->trackRequest(intent.target, providerRequestId);
 }
 
+void MediaBridge::dispatchAction(ActionType type, const QVariantMap &item)
+{
+    const MediaId id = mediaIdFromVariantMap(item);
+    if (!hasValidMediaId(id)) {
+        failAction(type, id,
+                   {MediaErrorKind::InvalidRequest, QStringLiteral("A complete media identity is required"),
+                    false});
+        return;
+    }
+    if (m_registry == nullptr) {
+        failAction(type, id,
+                   {MediaErrorKind::Unavailable, QStringLiteral("Source registry is unavailable"), true});
+        return;
+    }
+
+    IMusicSourceSession *session = m_registry->sessionFor(id);
+    if (session == nullptr) {
+        failAction(type, id,
+                   {MediaErrorKind::Unavailable, QStringLiteral("Source account is unavailable"), true});
+        return;
+    }
+    connectSession(session);
+
+    const TrackRef track{id.sourceId, id.nativeId};
+    QUuid requestId;
+    switch (type) {
+    case ActionType::Artwork:
+        requestId = m_registry->requestArtwork(id, track);
+        break;
+    case ActionType::Lyrics:
+        requestId = session->fetchLyrics(track);
+        break;
+    case ActionType::Playback:
+        requestId = session->resolveStream(track);
+        break;
+    }
+    if (requestId.isNull()) {
+        failAction(type, id,
+                   {MediaErrorKind::Unavailable, QStringLiteral("Source did not start the request"), true});
+        return;
+    }
+
+    m_pendingActions.insert(requestId, {type, id, item, session});
+    m_registry->trackRequest(id, requestId);
+}
+
 void MediaBridge::connectSession(IMusicSourceSession *session)
 {
     if (session == nullptr || m_connectedSessions.contains(session)) {
@@ -316,6 +432,20 @@ void MediaBridge::cancelOperation(OperationType type)
     }
 }
 
+void MediaBridge::cancelActions()
+{
+    const QList<QUuid> requestIds = m_pendingActions.keys();
+    for (const QUuid &requestId : requestIds) {
+        const PendingAction pending = m_pendingActions.take(requestId);
+        if (pending.session != nullptr) {
+            pending.session->cancel(requestId);
+        }
+        if (m_registry != nullptr) {
+            m_registry->completeRequest(pending.id, requestId);
+        }
+    }
+}
+
 void MediaBridge::invalidate(const QString &sourceId, const QString &accountId)
 {
     QList<QUuid> requestIds;
@@ -332,11 +462,25 @@ void MediaBridge::invalidate(const QString &sourceId, const QString &accountId)
     for (OperationType type : affected) {
         modelFor(type)->clear();
     }
+
+    QList<QUuid> actionIds;
+    for (auto action = m_pendingActions.cbegin(); action != m_pendingActions.cend(); ++action) {
+        if (action->id.sourceId == sourceId && action->id.accountId == accountId) {
+            actionIds.append(action.key());
+        }
+    }
+    for (const QUuid &requestId : actionIds) {
+        m_pendingActions.remove(requestId);
+    }
 }
 
 void MediaBridge::handleSucceeded(const QUuid &requestId, const QString &operation,
                                   const QJsonValue &result)
 {
+    if (m_pendingActions.contains(requestId)) {
+        handleActionSucceeded(requestId, operation, result);
+        return;
+    }
     const auto pending = m_pendingRequests.find(requestId);
     if (pending == m_pendingRequests.end()) {
         return;
@@ -378,6 +522,10 @@ void MediaBridge::handleSucceeded(const QUuid &requestId, const QString &operati
 
 void MediaBridge::handleFailed(const QUuid &requestId, const SourceError &error)
 {
+    if (m_pendingActions.contains(requestId)) {
+        handleActionFailed(requestId, error);
+        return;
+    }
     const auto pending = m_pendingRequests.find(requestId);
     if (pending == m_pendingRequests.end()) {
         return;
@@ -390,6 +538,102 @@ void MediaBridge::handleFailed(const QUuid &requestId, const SourceError &error)
     if (request.model != nullptr) {
         request.model->setFailure(mediaErrorFromSourceError(error));
     }
+}
+
+void MediaBridge::handleActionSucceeded(const QUuid &requestId, const QString &operation,
+                                        const QJsonValue &result)
+{
+    const auto pending = m_pendingActions.find(requestId);
+    if (pending == m_pendingActions.end()) {
+        return;
+    }
+    const PendingAction action = pending.value();
+    m_pendingActions.erase(pending);
+    if (m_registry != nullptr) {
+        m_registry->completeRequest(action.id, requestId);
+    }
+
+    const QString expectedOperation = action.type == ActionType::Artwork
+        ? QStringLiteral("fetchArtwork")
+        : action.type == ActionType::Lyrics ? QStringLiteral("fetchLyrics")
+                                            : QStringLiteral("resolveStream");
+    if (operation != expectedOperation || !result.isObject()) {
+        failAction(action.type, action.id,
+                   {MediaErrorKind::InvalidRequest, QStringLiteral("Source returned an invalid response"),
+                    false});
+        return;
+    }
+
+    const QJsonObject object = result.toObject();
+    const QJsonObject track = object.value(QStringLiteral("track")).toObject();
+    if ((!track.isEmpty() && (track.value(QStringLiteral("sourceId")).toString() != action.id.sourceId
+                              || track.value(QStringLiteral("nativeId")).toString()
+                                  != action.id.nativeId))) {
+        failAction(action.type, action.id,
+                   {MediaErrorKind::InvalidRequest, QStringLiteral("Source returned a different media item"),
+                    false});
+        return;
+    }
+
+    if (action.type == ActionType::Artwork) {
+        const QString url = object.value(QStringLiteral("url")).toString();
+        if (url.isEmpty()) {
+            failAction(action.type, action.id,
+                       {MediaErrorKind::InvalidRequest, QStringLiteral("Source artwork URL is missing"), false});
+            return;
+        }
+        emit artworkReady({{QStringLiteral("mediaId"), mediaIdToVariantMap(action.id)},
+                           {QStringLiteral("artworkUrl"), url}});
+        return;
+    }
+
+    if (action.type == ActionType::Lyrics) {
+        if (!object.value(QStringLiteral("lyrics")).isString()) {
+            failAction(action.type, action.id,
+                       {MediaErrorKind::InvalidRequest, QStringLiteral("Source lyrics are missing"), false});
+            return;
+        }
+        emit lyricsReady({{QStringLiteral("mediaId"), mediaIdToVariantMap(action.id)},
+                          {QStringLiteral("lyrics"), object.value(QStringLiteral("lyrics")).toString()},
+                          {QStringLiteral("synced"), object.value(QStringLiteral("synced")).toBool()}});
+        return;
+    }
+
+    const QString url = object.value(QStringLiteral("url")).toString();
+    if (url.isEmpty()) {
+        failAction(action.type, action.id,
+                   {MediaErrorKind::InvalidRequest, QStringLiteral("Source stream URL is missing"), false});
+        return;
+    }
+    if (!object.value(QStringLiteral("headers")).toObject().isEmpty()) {
+        failAction(action.type, action.id,
+                   {MediaErrorKind::Unsupported,
+                    QStringLiteral("Playback entries requiring HTTP headers are unsupported"), false});
+        return;
+    }
+
+    QVariantMap entry = queueEntryFromItem(action.item, action.id);
+    entry.insert(QStringLiteral("url"), url);
+    emit playbackReady(entry);
+}
+
+void MediaBridge::handleActionFailed(const QUuid &requestId, const SourceError &error)
+{
+    const auto pending = m_pendingActions.find(requestId);
+    if (pending == m_pendingActions.end()) {
+        return;
+    }
+    const PendingAction action = pending.value();
+    m_pendingActions.erase(pending);
+    if (m_registry != nullptr) {
+        m_registry->completeRequest(action.id, requestId);
+    }
+    failAction(action.type, action.id, mediaErrorFromSourceError(error));
+}
+
+void MediaBridge::failAction(ActionType type, const MediaId &id, const MediaError &error)
+{
+    emit mediaActionFailed(actionErrorMap(type, id, error));
 }
 
 void MediaBridge::emitRequestStateChangedFor(OperationType type)

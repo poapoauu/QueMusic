@@ -20,6 +20,7 @@ public:
     ~SourceSessionRegistry() override;
 
     IMusicSourceSession *sessionFor(const MediaId &id);
+    QUuid requestArtwork(const MediaId &id, const TrackRef &track);
     void trackRequest(const MediaId &id, const QUuid &requestId);
     void completeRequest(const MediaId &id, const QUuid &requestId);
     void disable(const QString &sourceId, const QString &accountId);

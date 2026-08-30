@@ -87,6 +87,18 @@ IMusicSourceSession *SourceSessionRegistry::sessionFor(const MediaId &id)
     return session;
 }
 
+QUuid SourceSessionRegistry::requestArtwork(const MediaId &id, const TrackRef &track)
+{
+    if (id.sourceId.isEmpty() || id.accountId.isEmpty() || id.nativeId.isEmpty()
+        || track.sourceId != id.sourceId || track.nativeId != id.nativeId || m_sourceManager == nullptr) {
+        return {};
+    }
+
+    IMusicSourceSession *session = sessionFor(id);
+    return session == nullptr ? QUuid{}
+                              : m_sourceManager->requestArtwork(id.sourceId, session, track);
+}
+
 void SourceSessionRegistry::trackRequest(const MediaId &id, const QUuid &requestId)
 {
     if (requestId.isNull()) {
