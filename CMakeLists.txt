@@ -98,6 +98,18 @@ target_include_directories(quemusic_source_startup PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+add_library(quemusic_media_core STATIC
+    core/media/MediaTypes.cpp
+    core/media/MediaTypes.h
+    core/media/MediaListModel.cpp
+    core/media/MediaListModel.h
+)
+target_compile_features(quemusic_media_core PUBLIC cxx_std_17)
+target_link_libraries(quemusic_media_core PUBLIC Qt6::Core)
+target_include_directories(quemusic_media_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/media
+)
+
 if(BUILD_TESTING)
     enable_testing()
 endif()
@@ -392,6 +404,24 @@ if(BUILD_TESTING)
     )
     add_dependencies(quemusic_plugin_manager_test quemusic_test_source)
     add_test(NAME quemusic_plugin_manager_test COMMAND quemusic_plugin_manager_test)
+
+    qt_add_executable(quemusic_media_types_test
+        tests/tst_MediaTypes.cpp
+    )
+    target_link_libraries(quemusic_media_types_test PRIVATE
+        quemusic_media_core
+        Qt6::Test
+    )
+    add_test(NAME quemusic_media_types_test COMMAND quemusic_media_types_test)
+
+    qt_add_executable(quemusic_media_list_model_test
+        tests/tst_MediaListModel.cpp
+    )
+    target_link_libraries(quemusic_media_list_model_test PRIVATE
+        quemusic_media_core
+        Qt6::Test
+    )
+    add_test(NAME quemusic_media_list_model_test COMMAND quemusic_media_list_model_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}
