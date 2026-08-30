@@ -418,7 +418,10 @@ void SourceAccountStoreTest::removesLegacyRawPercentEscapedAccount()
     QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
 
     QVERIFY(store.remove(fixture.sourceId, fixture.accountId));
-    QVERIFY(!settings.contains(fixture.group() + QStringLiteral("/secretReference")));
+    settings.beginGroup(fixture.group());
+    const QStringList remainingMetadataKeys = settings.allKeys();
+    settings.endGroup();
+    QVERIFY(remainingMetadataKeys.isEmpty());
     QVERIFY(!store.sourceAccount(fixture.sourceId, fixture.accountId).has_value());
     QCOMPARE(secretStore.value(fixture.reference), QByteArray());
 }
