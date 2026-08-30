@@ -96,10 +96,16 @@ ControllableSession *installControllableSession(SourceSessionRegistry *registry,
     return session;
 }
 
-void assertCancellationPrecedesDestruction(const QStringList &events, const QUuid &requestId)
+void assertCancellationsPrecedeDestruction(const QStringList &events,
+                                           const QList<QUuid> &requestIds)
 {
-    const QString cancellation = QStringLiteral("cancel:%1").arg(requestId.toString());
-    QCOMPARE(events, QStringList({cancellation, QStringLiteral("destroyed")}));
+    QCOMPARE(events.size(), requestIds.size() + 1);
+    QCOMPARE(events.constLast(), QStringLiteral("destroyed"));
+    for (const QUuid &requestId : requestIds) {
+        const QString cancellation = QStringLiteral("cancel:%1").arg(requestId.toString());
+        QCOMPARE(events.count(cancellation), 1);
+        QVERIFY(events.indexOf(cancellation) < events.indexOf(QStringLiteral("destroyed")));
+    }
 }
 
 class RegistryHarness {
@@ -177,14 +183,17 @@ void SourceSessionRegistryTest::disableCancelsTrackedRequestBeforeDestroyingSess
     auto *session = installControllableSession(&registry, id, &events);
     QPointer<IMusicSourceSession> guardedSession(session);
     QSignalSpy destroyed(session, &QObject::destroyed);
-    const QUuid requestId = QUuid::createUuid();
+    const QList<QUuid> requestIds{QUuid::createUuid(), QUuid::createUuid()};
+    QVERIFY(requestIds.constFirst() != requestIds.constLast());
 
-    registry.trackRequest(id, requestId);
+    for (const QUuid &requestId : requestIds) {
+        registry.trackRequest(id, requestId);
+    }
     registry.disable(id.sourceId, id.accountId);
 
     QCOMPARE(destroyed.count(), 1);
     QVERIFY(guardedSession.isNull());
-    assertCancellationPrecedesDestruction(events, requestId);
+    assertCancellationsPrecedeDestruction(events, requestIds);
     QVERIFY(registry.sessionFor(id) == nullptr);
 }
 
@@ -219,14 +228,17 @@ void SourceSessionRegistryTest::removeReleasesSessionBeforeSourcePackageUnload()
     auto *session = installControllableSession(&harness.registry, id, &events);
     QPointer<IMusicSourceSession> guardedSession(session);
     QSignalSpy destroyed(session, &QObject::destroyed);
-    const QUuid requestId = QUuid::createUuid();
+    const QList<QUuid> requestIds{QUuid::createUuid(), QUuid::createUuid()};
+    QVERIFY(requestIds.constFirst() != requestIds.constLast());
 
-    harness.registry.trackRequest(id, requestId);
+    for (const QUuid &requestId : requestIds) {
+        harness.registry.trackRequest(id, requestId);
+    }
     harness.registry.remove(id.sourceId, id.accountId);
 
     QCOMPARE(destroyed.count(), 1);
     QVERIFY(guardedSession.isNull());
-    assertCancellationPrecedesDestruction(events, requestId);
+    assertCancellationsPrecedeDestruction(events, requestIds);
     QCOMPARE(harness.pluginManager.unload(QStringLiteral("org.quemusic.source.fixture")),
              PluginOperationResult::Success);
     QCOMPARE(harness.sourceManager.sourceIds(), QStringList());
@@ -243,14 +255,17 @@ void SourceSessionRegistryTest::destructionCancelsTrackedRequestBeforeDestroying
     auto *session = installControllableSession(registry, id, &events);
     QPointer<IMusicSourceSession> guardedSession(session);
     QSignalSpy destroyed(session, &QObject::destroyed);
-    const QUuid requestId = QUuid::createUuid();
+    const QList<QUuid> requestIds{QUuid::createUuid(), QUuid::createUuid()};
+    QVERIFY(requestIds.constFirst() != requestIds.constLast());
 
-    registry->trackRequest(id, requestId);
+    for (const QUuid &requestId : requestIds) {
+        registry->trackRequest(id, requestId);
+    }
     delete registry;
 
     QCOMPARE(destroyed.count(), 1);
     QVERIFY(guardedSession.isNull());
-    assertCancellationPrecedesDestruction(events, requestId);
+    assertCancellationsPrecedeDestruction(events, requestIds);
 }
 
 QTEST_MAIN(SourceSessionRegistryTest)
