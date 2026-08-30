@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QTimeZone>
 #include <QtMath>
 
 namespace {
@@ -376,6 +377,10 @@ void MediaBridge::dispatchAction(ActionType type, const QVariantMap &item)
     }
     connectSession(session);
 
+    if (type == ActionType::Playback) {
+        cancelActions(ActionType::Playback);
+    }
+
     const TrackRef track{id.sourceId, id.nativeId};
     QUuid requestId;
     switch (type) {
@@ -435,6 +440,25 @@ void MediaBridge::cancelOperation(OperationType type)
 void MediaBridge::cancelActions()
 {
     const QList<QUuid> requestIds = m_pendingActions.keys();
+    for (const QUuid &requestId : requestIds) {
+        const PendingAction pending = m_pendingActions.take(requestId);
+        if (pending.session != nullptr) {
+            pending.session->cancel(requestId);
+        }
+        if (m_registry != nullptr) {
+            m_registry->completeRequest(pending.id, requestId);
+        }
+    }
+}
+
+void MediaBridge::cancelActions(ActionType type)
+{
+    QList<QUuid> requestIds;
+    for (auto action = m_pendingActions.cbegin(); action != m_pendingActions.cend(); ++action) {
+        if (action->type == type) {
+            requestIds.append(action.key());
+        }
+    }
     for (const QUuid &requestId : requestIds) {
         const PendingAction pending = m_pendingActions.take(requestId);
         if (pending.session != nullptr) {
@@ -599,21 +623,51 @@ void MediaBridge::handleActionSucceeded(const QUuid &requestId, const QString &o
         return;
     }
 
-    const QString url = object.value(QStringLiteral("url")).toString();
-    if (url.isEmpty()) {
-        failAction(action.type, action.id,
-                   {MediaErrorKind::InvalidRequest, QStringLiteral("Source stream URL is missing"), false});
-        return;
-    }
-    if (!object.value(QStringLiteral("headers")).toObject().isEmpty()) {
+    const QJsonValue headers = object.value(QStringLiteral("headers"));
+    if (!headers.isUndefined() && (!headers.isObject() || !headers.toObject().isEmpty())) {
         failAction(action.type, action.id,
                    {MediaErrorKind::Unsupported,
                     QStringLiteral("Playback entries requiring HTTP headers are unsupported"), false});
         return;
     }
 
+    QDateTime expiresAt;
+    const QJsonValue expiration = object.value(QStringLiteral("expiresAt"));
+    if (!expiration.isUndefined()) {
+        if (expiration.isString()) {
+            expiresAt = QDateTime::fromString(expiration.toString(), Qt::ISODateWithMs);
+            if (!expiresAt.isValid()) {
+                expiresAt = QDateTime::fromString(expiration.toString(), Qt::ISODate);
+            }
+        } else if (expiration.isDouble()) {
+            expiresAt = QDateTime::fromMSecsSinceEpoch(qRound64(expiration.toDouble()), QTimeZone::UTC);
+        }
+        if (!expiresAt.isValid()) {
+            failAction(action.type, action.id,
+                       {MediaErrorKind::InvalidRequest, QStringLiteral("Source stream expiry is invalid"),
+                        false});
+            return;
+        }
+        expiresAt = expiresAt.toUTC();
+        if (expiresAt <= QDateTime::currentDateTimeUtc()) {
+            failAction(action.type, action.id,
+                       {MediaErrorKind::Unavailable, QStringLiteral("Source stream has expired"), true});
+            return;
+        }
+    }
+
+    const QString url = object.value(QStringLiteral("url")).toString();
+    if (url.isEmpty()) {
+        failAction(action.type, action.id,
+                   {MediaErrorKind::InvalidRequest, QStringLiteral("Source stream URL is missing"), false});
+        return;
+    }
+
     QVariantMap entry = queueEntryFromItem(action.item, action.id);
     entry.insert(QStringLiteral("url"), url);
+    if (expiresAt.isValid()) {
+        entry.insert(QStringLiteral("expiresAt"), expiresAt);
+    }
     emit playbackReady(entry);
 }
 

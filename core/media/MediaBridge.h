@@ -99,6 +99,7 @@ private:
     void connectSession(IMusicSourceSession *session);
     void cancelOperation(OperationType type);
     void cancelActions();
+    void cancelActions(ActionType type);
     void invalidate(const QString &sourceId, const QString &accountId);
     void handleSucceeded(const QUuid &requestId, const QString &operation, const QJsonValue &result);
     void handleFailed(const QUuid &requestId, const SourceError &error);

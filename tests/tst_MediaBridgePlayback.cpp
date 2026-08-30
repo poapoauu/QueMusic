@@ -8,8 +8,10 @@
 #undef private
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QSettings>
@@ -64,11 +66,11 @@ SourceAccount navidromeAccount(quint16 port)
             QByteArrayLiteral("test-password")};
 }
 
-QVariantMap trackItem()
+QVariantMap trackItem(const QString &nativeId = QStringLiteral("song-1"))
 {
     return {{QStringLiteral("sourceId"), QStringLiteral("navidrome")},
             {QStringLiteral("accountId"), QStringLiteral("home")},
-            {QStringLiteral("nativeId"), QStringLiteral("song-1")},
+            {QStringLiteral("nativeId"), nativeId},
             {QStringLiteral("kind"), static_cast<int>(MediaKind::Track)},
             {QStringLiteral("title"), QStringLiteral("Song")},
             {QStringLiteral("artists"), QStringList{QStringLiteral("Artist")}},
@@ -150,20 +152,25 @@ public:
 
     void succeed(const QJsonObject &result)
     {
-        emit requestSucceeded(requestId, operation, result);
+        succeed(requestId, result);
+    }
+
+    void succeed(const QUuid &completedRequestId, const QJsonObject &result)
+    {
+        emit requestSucceeded(completedRequestId, operations.value(completedRequestId), result);
     }
 
     QUuid requestId;
-    QString operation;
+    QHash<QUuid, QString> operations;
     QList<QUuid> cancelled;
     int resolveStreamCalls = 0;
 
 private:
     QUuid start(const QString &nextOperation)
     {
-        operation = nextOperation;
         requestId = QUuid::createUuid();
-        if (operation == QStringLiteral("resolveStream")) {
+        operations.insert(requestId, nextOperation);
+        if (nextOperation == QStringLiteral("resolveStream")) {
             ++resolveStreamCalls;
         }
         return requestId;
@@ -187,6 +194,9 @@ private slots:
     void loadArtworkUsesRegistryManagerForwarder();
     void loadLyricsEmitsNormalizedPayload();
     void playRejectsHeaderAuthenticatedStreams();
+    void playSupersedesOlderPendingPlayback();
+    void playPropagatesFutureExpiration();
+    void playRejectsAlreadyExpiredStream();
     void enqueueDoesNotResolveStream();
     void cancellationAndInvalidationSuppressActionSignals();
 };
@@ -268,10 +278,87 @@ void MediaBridgePlaybackTest::playRejectsHeaderAuthenticatedStreams()
                       {QStringLiteral("headers"), QJsonObject{{QStringLiteral("Authorization"),
                                                                QStringLiteral("Bearer token")}}}});
 
+    bridge.play(trackItem());
+    session->succeed({{QStringLiteral("headers"), QJsonObject{{QStringLiteral("Authorization"),
+                                                               QStringLiteral("Bearer token")}}}});
+
+    bridge.play(trackItem());
+    session->succeed({{QStringLiteral("url"), QStringLiteral("https://stream.example/song-1")},
+                      {QStringLiteral("headers"), QJsonArray{QStringLiteral("malformed")}}});
+
+    QCOMPARE(failed.count(), 3);
+    for (const QList<QVariant> &arguments : failed) {
+        const QVariantMap error = arguments.at(0).toMap();
+        QCOMPARE(error.value(QStringLiteral("action")).toString(), QStringLiteral("play"));
+        QCOMPARE(error.value(QStringLiteral("kind")).toInt(),
+                 static_cast<int>(MediaErrorKind::Unsupported));
+    }
+}
+
+void MediaBridgePlaybackTest::playSupersedesOlderPendingPlayback()
+{
+    SourceSessionRegistry registry(nullptr, nullptr);
+    const MediaId id{QStringLiteral("navidrome"), QStringLiteral("home"), QStringLiteral("song-1"),
+                     MediaKind::Track};
+    DeferredSession *session = installSession(&registry, id);
+    MediaBridge bridge(&registry);
+    QSignalSpy ready(&bridge, &MediaBridge::playbackReady);
+
+    bridge.play(trackItem(QStringLiteral("song-a")));
+    const QUuid firstRequestId = session->requestId;
+    bridge.play(trackItem(QStringLiteral("song-b")));
+    const QUuid secondRequestId = session->requestId;
+
+    QVERIFY(firstRequestId != secondRequestId);
+    QCOMPARE(session->cancelled, QList<QUuid>{firstRequestId});
+    session->succeed(firstRequestId,
+                     {{QStringLiteral("url"), QStringLiteral("https://stream.example/song-a")}});
+    QCOMPARE(ready.count(), 0);
+    session->succeed(secondRequestId,
+                     {{QStringLiteral("url"), QStringLiteral("https://stream.example/song-b")}});
+    QCOMPARE(ready.count(), 1);
+    QCOMPARE(ready.constFirst().at(0).toMap().value(QStringLiteral("mediaId")).toMap()
+                 .value(QStringLiteral("nativeId")).toString(),
+             QStringLiteral("song-b"));
+}
+
+void MediaBridgePlaybackTest::playPropagatesFutureExpiration()
+{
+    SourceSessionRegistry registry(nullptr, nullptr);
+    const MediaId id{QStringLiteral("navidrome"), QStringLiteral("home"), QStringLiteral("song-1"),
+                     MediaKind::Track};
+    DeferredSession *session = installSession(&registry, id);
+    MediaBridge bridge(&registry);
+    QSignalSpy ready(&bridge, &MediaBridge::playbackReady);
+    const QDateTime expiresAt = QDateTime::currentDateTimeUtc().addSecs(60);
+
+    bridge.play(trackItem());
+    session->succeed({{QStringLiteral("url"), QStringLiteral("https://stream.example/song-1")},
+                      {QStringLiteral("expiresAt"), expiresAt.toString(Qt::ISODateWithMs)}});
+
+    QCOMPARE(ready.count(), 1);
+    QCOMPARE(ready.constFirst().at(0).toMap().value(QStringLiteral("expiresAt")).toDateTime(), expiresAt);
+}
+
+void MediaBridgePlaybackTest::playRejectsAlreadyExpiredStream()
+{
+    SourceSessionRegistry registry(nullptr, nullptr);
+    const MediaId id{QStringLiteral("navidrome"), QStringLiteral("home"), QStringLiteral("song-1"),
+                     MediaKind::Track};
+    DeferredSession *session = installSession(&registry, id);
+    MediaBridge bridge(&registry);
+    QSignalSpy ready(&bridge, &MediaBridge::playbackReady);
+    QSignalSpy failed(&bridge, &MediaBridge::mediaActionFailed);
+
+    bridge.play(trackItem());
+    session->succeed({{QStringLiteral("url"), QStringLiteral("https://stream.example/song-1")},
+                      {QStringLiteral("expiresAt"),
+                       QDateTime::currentDateTimeUtc().addSecs(-60).toString(Qt::ISODateWithMs)}});
+
+    QCOMPARE(ready.count(), 0);
     QCOMPARE(failed.count(), 1);
-    const QVariantMap error = failed.constFirst().at(0).toMap();
-    QCOMPARE(error.value(QStringLiteral("action")).toString(), QStringLiteral("play"));
-    QCOMPARE(error.value(QStringLiteral("kind")).toInt(), static_cast<int>(MediaErrorKind::Unsupported));
+    QCOMPARE(failed.constFirst().at(0).toMap().value(QStringLiteral("kind")).toInt(),
+             static_cast<int>(MediaErrorKind::Unavailable));
 }
 
 void MediaBridgePlaybackTest::enqueueDoesNotResolveStream()
