@@ -195,6 +195,7 @@ private slots:
     void loadLyricsEmitsNormalizedPayload();
     void playRejectsHeaderAuthenticatedStreams();
     void playSupersedesOlderPendingPlayback();
+    void invalidPlaybackSupersedesPendingPlayback();
     void playPropagatesFutureExpiration();
     void playRejectsAlreadyExpiredStream();
     void enqueueDoesNotResolveStream();
@@ -320,6 +321,25 @@ void MediaBridgePlaybackTest::playSupersedesOlderPendingPlayback()
     QCOMPARE(ready.constFirst().at(0).toMap().value(QStringLiteral("mediaId")).toMap()
                  .value(QStringLiteral("nativeId")).toString(),
              QStringLiteral("song-b"));
+}
+
+void MediaBridgePlaybackTest::invalidPlaybackSupersedesPendingPlayback()
+{
+    SourceSessionRegistry registry(nullptr, nullptr);
+    const MediaId id{QStringLiteral("navidrome"), QStringLiteral("home"), QStringLiteral("song-1"),
+                     MediaKind::Track};
+    DeferredSession *session = installSession(&registry, id);
+    MediaBridge bridge(&registry);
+    QSignalSpy ready(&bridge, &MediaBridge::playbackReady);
+
+    bridge.play(trackItem(QStringLiteral("song-a")));
+    const QUuid firstRequestId = session->requestId;
+    bridge.play({});
+
+    QCOMPARE(session->cancelled, QList<QUuid>{firstRequestId});
+    session->succeed(firstRequestId,
+                     {{QStringLiteral("url"), QStringLiteral("https://stream.example/song-a")}});
+    QCOMPARE(ready.count(), 0);
 }
 
 void MediaBridgePlaybackTest::playPropagatesFutureExpiration()

@@ -157,6 +157,7 @@ void MediaBridge::loadLyrics(const QVariantMap &item)
 
 void MediaBridge::play(const QVariantMap &item)
 {
+    cancelActions(ActionType::Playback);
     dispatchAction(ActionType::Playback, item);
 }
 
@@ -376,10 +377,6 @@ void MediaBridge::dispatchAction(ActionType type, const QVariantMap &item)
         return;
     }
     connectSession(session);
-
-    if (type == ActionType::Playback) {
-        cancelActions(ActionType::Playback);
-    }
 
     const TrackRef track{id.sourceId, id.nativeId};
     QUuid requestId;
