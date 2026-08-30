@@ -1,9 +1,9 @@
 #include "SourceAccountStore.h"
 
+#include <QMetaType>
 #include <QSettings>
+#include <QUrl>
 #include <QUuid>
-
-#include <algorithm>
 
 namespace {
 
@@ -28,26 +28,22 @@ bool hasAccountIdentity(const QString &sourceId, const QString &accountId, QStri
     return false;
 }
 
-bool hasSensitiveParameterName(const QVariantMap &parameters, QString *error)
+bool sanitizedParameters(const QVariantMap &parameters, QVariantMap *sanitized, QString *error)
 {
-    static const QStringList sensitiveNames{
-        QStringLiteral("password"), QStringLiteral("secret"), QStringLiteral("token"),
-        QStringLiteral("credential"), QStringLiteral("apikey"),
-        QStringLiteral("authorization"), QStringLiteral("cookie")};
+    static const QStringList trustedNames{
+        QStringLiteral("serverUrl"), QStringLiteral("username")};
     for (auto parameter = parameters.cbegin(); parameter != parameters.cend(); ++parameter) {
-        QString normalized = parameter.key().toCaseFolded();
-        normalized.remove(QLatin1Char('-'));
-        normalized.remove(QLatin1Char('_'));
-        normalized.remove(QLatin1Char('.'));
-        if (std::any_of(sensitiveNames.cbegin(), sensitiveNames.cend(),
-                        [&normalized](const QString &name) { return normalized.contains(name); })) {
+        if (!trustedNames.contains(parameter.key())
+            || parameter.value().metaType().id() != QMetaType::QString) {
             if (error) {
-                *error = QStringLiteral("Secret parameters must be supplied through SourceAccount::secret");
+                *error = QStringLiteral("Only trusted non-sensitive account metadata may be persisted; "
+                                        "use SourceAccount::secret for credentials");
             }
-            return true;
+            return false;
         }
+        sanitized->insert(parameter.key(), parameter.value().toString());
     }
-    return false;
+    return true;
 }
 
 QString freshSecretReference()
@@ -97,7 +93,8 @@ bool SourceAccountStore::upsert(const SourceAccount &account, bool enabled, QStr
     if (!hasAccountIdentity(account.sourceId, account.accountId, error)) {
         return false;
     }
-    if (hasSensitiveParameterName(account.parameters, error)) {
+    QVariantMap parameters;
+    if (!sanitizedParameters(account.parameters, &parameters, error)) {
         return false;
     }
 
@@ -109,19 +106,40 @@ bool SourceAccountStore::upsert(const SourceAccount &account, bool enabled, QStr
         return false;
     }
 
-    if (writeRecord(group, account, enabled, newReference)
+    if (writeRecord(group, account, parameters, enabled, newReference)
         && m_settings->status() == QSettings::NoError) {
         if (!previousReference.isEmpty()) {
-            m_secretStore->remove(previousReference);
+            QString oldSecretCleanupError;
+            if (!m_secretStore->remove(previousReference, &oldSecretCleanupError)) {
+                const bool metadataRestored = restoreRecord(group, previousValues);
+                QString newSecretCleanupError;
+                if (metadataRestored) {
+                    m_secretStore->remove(newReference, &newSecretCleanupError);
+                }
+                if (error) {
+                    *error = QStringLiteral("Unable to remove the previous source account secret");
+                    if (!metadataRestored) {
+                        *error += QStringLiteral("; unable to restore previous metadata");
+                    }
+                    if (!newSecretCleanupError.isEmpty()) {
+                        *error += QStringLiteral("; unable to remove newly written secret: %1")
+                                      .arg(newSecretCleanupError);
+                    }
+                }
+                return false;
+            }
         }
         return true;
     }
 
-    restoreRecord(group, previousValues);
+    const bool metadataRestored = restoreRecord(group, previousValues);
     QString secretCleanupError;
     m_secretStore->remove(newReference, &secretCleanupError);
     if (error) {
         *error = QStringLiteral("Unable to persist source account metadata");
+        if (!metadataRestored) {
+            *error += QStringLiteral("; unable to restore previous metadata");
+        }
         if (!secretCleanupError.isEmpty()) {
             *error += QStringLiteral("; unable to remove newly written secret: %1")
                           .arg(secretCleanupError);
@@ -145,21 +163,24 @@ bool SourceAccountStore::remove(const QString &sourceId, const QString &accountI
     const QString group = groupFor(sourceId, accountId);
     const QVariantMap previousValues = recordValues(group);
     const QString reference = previousValues.value(QStringLiteral("secretReference")).toString();
-    if (!reference.isEmpty() && !m_secretStore->remove(reference, error)) {
-        return false;
-    }
 
     m_settings->remove(group);
     m_settings->sync();
-    if (m_settings->status() == QSettings::NoError) {
-        return true;
+    if (m_settings->status() != QSettings::NoError) {
+        restoreRecord(group, previousValues);
+        if (error) {
+            *error = QStringLiteral("Unable to remove source account metadata");
+        }
+        return false;
     }
-
-    restoreRecord(group, previousValues);
-    if (error) {
-        *error = QStringLiteral("Unable to remove source account metadata");
+    if (!reference.isEmpty() && !m_secretStore->remove(reference, error)) {
+        const bool metadataRestored = restoreRecord(group, previousValues);
+        if (error && !metadataRestored) {
+            *error += QStringLiteral("; unable to restore source account metadata");
+        }
+        return false;
     }
-    return false;
+    return true;
 }
 
 std::optional<StoredSourceAccount> SourceAccountStore::storedAccount(const QString &sourceId,
@@ -205,12 +226,14 @@ QList<StoredSourceAccount> SourceAccountStore::accounts() const
     const QStringList sourceGroups = m_settings->childGroups();
     m_settings->endGroup();
     for (const QString &sourceGroup : sourceGroups) {
+        const QString sourceId = QUrl::fromPercentEncoding(sourceGroup.toLatin1());
         m_settings->beginGroup(kSourcesGroup + QLatin1Char('/') + sourceGroup);
         const QStringList accountGroups = m_settings->childGroups();
         m_settings->endGroup();
         for (const QString &accountGroup : accountGroups) {
+            const QString accountId = QUrl::fromPercentEncoding(accountGroup.toLatin1());
             const std::optional<StoredSourceAccount> account =
-                storedAccount(sourceGroup, accountGroup);
+                storedAccount(sourceId, accountId);
             if (account.has_value()) {
                 storedAccounts.append(*account);
             }
@@ -253,7 +276,9 @@ QString SourceAccountStore::secretReference(const QString &sourceId, const QStri
 
 QString SourceAccountStore::groupFor(const QString &sourceId, const QString &accountId) const
 {
-    return kSourcesGroup + QLatin1Char('/') + sourceId + QLatin1Char('/') + accountId;
+    const QString encodedSourceId = QString::fromLatin1(QUrl::toPercentEncoding(sourceId));
+    const QString encodedAccountId = QString::fromLatin1(QUrl::toPercentEncoding(accountId));
+    return kSourcesGroup + QLatin1Char('/') + encodedSourceId + QLatin1Char('/') + encodedAccountId;
 }
 
 QVariantMap SourceAccountStore::recordValues(const QString &group) const
@@ -268,16 +293,18 @@ QVariantMap SourceAccountStore::recordValues(const QString &group) const
     return values;
 }
 
-void SourceAccountStore::restoreRecord(const QString &group, const QVariantMap &values)
+bool SourceAccountStore::restoreRecord(const QString &group, const QVariantMap &values)
 {
     m_settings->remove(group);
     for (auto value = values.cbegin(); value != values.cend(); ++value) {
         m_settings->setValue(group + QLatin1Char('/') + value.key(), value.value());
     }
     m_settings->sync();
+    return m_settings->status() == QSettings::NoError;
 }
 
-bool SourceAccountStore::writeRecord(const QString &group, const SourceAccount &account, bool enabled,
+bool SourceAccountStore::writeRecord(const QString &group, const SourceAccount &account,
+                                     const QVariantMap &parameters, bool enabled,
                                      const QString &secretReference)
 {
     m_settings->remove(group);
@@ -287,7 +314,7 @@ bool SourceAccountStore::writeRecord(const QString &group, const SourceAccount &
     m_settings->setValue(group + QStringLiteral("/displayName"), account.displayName);
     m_settings->setValue(group + QStringLiteral("/enabled"), enabled);
     m_settings->setValue(group + QStringLiteral("/secretReference"), secretReference);
-    for (auto parameter = account.parameters.cbegin(); parameter != account.parameters.cend(); ++parameter) {
+    for (auto parameter = parameters.cbegin(); parameter != parameters.cend(); ++parameter) {
         m_settings->setValue(group + QStringLiteral("/parameters/") + parameter.key(),
                              parameter.value());
     }

@@ -56,8 +56,9 @@ public:
 private:
     QString groupFor(const QString &sourceId, const QString &accountId) const;
     QVariantMap recordValues(const QString &group) const;
-    void restoreRecord(const QString &group, const QVariantMap &values);
-    bool writeRecord(const QString &group, const SourceAccount &account, bool enabled,
+    bool restoreRecord(const QString &group, const QVariantMap &values);
+    bool writeRecord(const QString &group, const SourceAccount &account,
+                     const QVariantMap &parameters, bool enabled,
                      const QString &secretReference);
 
     QSettings *m_settings = nullptr;

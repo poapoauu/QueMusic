@@ -1,8 +1,10 @@
 #include "SourceAccountStore.h"
 
+#include <QDir>
 #include <QFile>
 #include <QHash>
 #include <QSettings>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -36,7 +38,12 @@ public:
 
     bool remove(const QString &reference, QString *error) override
     {
-        Q_UNUSED(error)
+        if (m_removeFailures.contains(reference)) {
+            if (error) {
+                *error = QStringLiteral("Secret removal failed");
+            }
+            return false;
+        }
         m_values.remove(reference);
         return true;
     }
@@ -51,8 +58,19 @@ public:
         return m_values.isEmpty();
     }
 
+    int size() const
+    {
+        return m_values.size();
+    }
+
+    void failRemovalFor(const QString &reference)
+    {
+        m_removeFailures.insert(reference);
+    }
+
 private:
     QHash<QString, QByteArray> m_values;
+    QSet<QString> m_removeFailures;
 };
 
 SourceAccount accountWithSecret()
@@ -74,8 +92,13 @@ private slots:
     void persistsOnlyMetadataAndReconstructsAccount();
     void removesMetadataAndSecret();
     void removesFreshSecretWhenMetadataWriteFails();
+    void keepsAccountRecoverableWhenMetadataRemovalFails();
     void refusesToReconstructAccountWhenSecretIsMissing();
     void rejectsSensitiveParameterNames();
+    void rejectsUntrustedParameterNames_data();
+    void rejectsUntrustedParameterNames();
+    void keepsSlashContainingAccountIdentitiesDistinct();
+    void preservesPreviousAccountWhenOldSecretCleanupFails();
     void unavailableSecretStoreNeverPersistsSecrets();
 };
 
@@ -169,6 +192,31 @@ void SourceAccountStoreTest::removesFreshSecretWhenMetadataWriteFails()
     QVERIFY(secretStore.isEmpty());
 }
 
+void SourceAccountStoreTest::keepsAccountRecoverableWhenMetadataRemovalFails()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    const QString settingsPath = temporaryDirectory.filePath(QStringLiteral("accounts.ini"));
+    QSettings settings(settingsPath, QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const SourceAccount account = accountWithSecret();
+
+    QVERIFY(store.upsert(account));
+    const QString reference = store.secretReference(account.sourceId, account.accountId);
+    QVERIFY(QFile::remove(settingsPath));
+    QVERIFY(QDir().mkdir(settingsPath));
+
+    QString error;
+    QVERIFY(!store.remove(account.sourceId, account.accountId, &error));
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(secretStore.value(reference), account.secret);
+    const std::optional<SourceAccount> restored =
+        store.sourceAccount(account.sourceId, account.accountId);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->secret, account.secret);
+}
+
 void SourceAccountStoreTest::refusesToReconstructAccountWhenSecretIsMissing()
 {
     QTemporaryDir temporaryDirectory;
@@ -203,6 +251,96 @@ void SourceAccountStoreTest::rejectsSensitiveParameterNames()
     QVERIFY(error.contains(QStringLiteral("secret"), Qt::CaseInsensitive));
     QVERIFY(secretStore.isEmpty());
     QVERIFY(!settings.contains(QStringLiteral("sources/navidrome/home/secretReference")));
+}
+
+void SourceAccountStoreTest::rejectsUntrustedParameterNames_data()
+{
+    QTest::addColumn<QVariantMap>("parameters");
+    QTest::newRow("auth") << QVariantMap{{QStringLiteral("auth"), QStringLiteral("opaque")}};
+    QTest::newRow("access-key")
+        << QVariantMap{{QStringLiteral("accessKey"), QStringLiteral("opaque")}};
+    QTest::newRow("nested-authorization")
+        << QVariantMap{{QStringLiteral("headers"),
+                        QVariantMap{{QStringLiteral("Authorization"), QStringLiteral("Bearer opaque")}}}};
+}
+
+void SourceAccountStoreTest::rejectsUntrustedParameterNames()
+{
+    QFETCH(QVariantMap, parameters);
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    SourceAccount account = accountWithSecret();
+    for (auto parameter = parameters.cbegin(); parameter != parameters.cend(); ++parameter) {
+        account.parameters.insert(parameter.key(), parameter.value());
+    }
+
+    QString error;
+    QVERIFY(!store.upsert(account, true, &error));
+    QVERIFY(error.contains(QStringLiteral("metadata"), Qt::CaseInsensitive));
+    QVERIFY(secretStore.isEmpty());
+    QVERIFY(!settings.contains(QStringLiteral("sources/navidrome/home/secretReference")));
+}
+
+void SourceAccountStoreTest::keepsSlashContainingAccountIdentitiesDistinct()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    SourceAccount first = accountWithSecret();
+    first.sourceId = QStringLiteral("source/one");
+    first.accountId = QStringLiteral("two");
+    first.secret = QByteArrayLiteral("first-secret");
+    SourceAccount second = accountWithSecret();
+    second.sourceId = QStringLiteral("source");
+    second.accountId = QStringLiteral("one/two");
+    second.secret = QByteArrayLiteral("second-secret");
+
+    QVERIFY(store.upsert(first));
+    QVERIFY(store.upsert(second));
+
+    const std::optional<SourceAccount> restoredFirst =
+        store.sourceAccount(first.sourceId, first.accountId);
+    const std::optional<SourceAccount> restoredSecond =
+        store.sourceAccount(second.sourceId, second.accountId);
+    QVERIFY(restoredFirst.has_value());
+    QVERIFY(restoredSecond.has_value());
+    QCOMPARE(restoredFirst->secret, QByteArrayLiteral("first-secret"));
+    QCOMPARE(restoredSecond->secret, QByteArrayLiteral("second-secret"));
+    QCOMPARE(store.accounts().size(), 2);
+}
+
+void SourceAccountStoreTest::preservesPreviousAccountWhenOldSecretCleanupFails()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const SourceAccount original = accountWithSecret();
+    QVERIFY(store.upsert(original));
+    const QString originalReference = store.secretReference(original.sourceId, original.accountId);
+    secretStore.failRemovalFor(originalReference);
+    SourceAccount updated = original;
+    updated.secret = QByteArrayLiteral("replacement-secret");
+
+    QString error;
+    QVERIFY(!store.upsert(updated, true, &error));
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(store.secretReference(original.sourceId, original.accountId), originalReference);
+    QCOMPARE(secretStore.value(originalReference), original.secret);
+    const std::optional<SourceAccount> restored =
+        store.sourceAccount(original.sourceId, original.accountId);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->secret, original.secret);
+    QCOMPARE(secretStore.size(), 1);
 }
 
 void SourceAccountStoreTest::unavailableSecretStoreNeverPersistsSecrets()
