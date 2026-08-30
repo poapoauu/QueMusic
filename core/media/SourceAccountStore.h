@@ -55,7 +55,11 @@ public:
 
 private:
     QString groupFor(const QString &sourceId, const QString &accountId) const;
+    QString legacyEncodedGroupFor(const QString &sourceId, const QString &accountId) const;
+    QString legacyRawGroupFor(const QString &sourceId, const QString &accountId) const;
     QVariantMap recordValues(const QString &group) const;
+    std::optional<StoredSourceAccount> storedAccountForGroup(const QString &group) const;
+    QList<StoredSourceAccount> accountsForRoot(const QString &root) const;
     bool restoreRecord(const QString &group, const QVariantMap &values);
     bool writeRecord(const QString &group, const SourceAccount &account,
                      const QVariantMap &parameters, bool enabled,

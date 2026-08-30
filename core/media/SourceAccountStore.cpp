@@ -2,6 +2,7 @@
 
 #include <QMetaType>
 #include <QSettings>
+#include <QSet>
 #include <QUrl>
 #include <QUuid>
 
@@ -9,6 +10,7 @@ namespace {
 
 constexpr int kRecordVersion = 1;
 const QString kSourcesGroup = QStringLiteral("sources");
+const QString kEncodedSourcesGroup = QStringLiteral("sourceAccountsV2");
 
 void setUnavailableError(QString *error)
 {
@@ -190,7 +192,38 @@ std::optional<StoredSourceAccount> SourceAccountStore::storedAccount(const QStri
         return std::nullopt;
     }
 
-    const QString group = groupFor(sourceId, accountId);
+    const QStringList groups{
+        groupFor(sourceId, accountId),
+        legacyEncodedGroupFor(sourceId, accountId),
+        legacyRawGroupFor(sourceId, accountId)};
+    for (const QString &group : groups) {
+        const std::optional<StoredSourceAccount> account = storedAccountForGroup(group);
+        if (account.has_value() && account->sourceId == sourceId && account->accountId == accountId) {
+            return account;
+        }
+    }
+    return std::nullopt;
+}
+
+QList<StoredSourceAccount> SourceAccountStore::accounts() const
+{
+    QList<StoredSourceAccount> storedAccounts;
+    QSet<QString> identities;
+    for (const QString &root : {kEncodedSourcesGroup, kSourcesGroup}) {
+        for (const StoredSourceAccount &account : accountsForRoot(root)) {
+            const QString identity = QString::number(account.sourceId.size()) + QLatin1Char(':') +
+                                     account.sourceId + account.accountId;
+            if (!identities.contains(identity)) {
+                identities.insert(identity);
+                storedAccounts.append(account);
+            }
+        }
+    }
+    return storedAccounts;
+}
+
+std::optional<StoredSourceAccount> SourceAccountStore::storedAccountForGroup(const QString &group) const
+{
     const QVariantMap values = recordValues(group);
     if (values.value(QStringLiteral("version")).toInt() != kRecordVersion) {
         return std::nullopt;
@@ -208,35 +241,34 @@ std::optional<StoredSourceAccount> SourceAccountStore::storedAccount(const QStri
             account.parameters.insert(parameter.key().mid(prefix.size()), parameter.value());
         }
     }
-    if (account.sourceId != sourceId || account.accountId != accountId
-        || account.secretReference.isEmpty()) {
+    if (account.sourceId.isEmpty() || account.accountId.isEmpty() || account.secretReference.isEmpty()) {
         return std::nullopt;
     }
     return account;
 }
 
-QList<StoredSourceAccount> SourceAccountStore::accounts() const
+QList<StoredSourceAccount> SourceAccountStore::accountsForRoot(const QString &root) const
 {
     QList<StoredSourceAccount> storedAccounts;
     if (!m_settings) {
         return storedAccounts;
     }
 
-    m_settings->beginGroup(kSourcesGroup);
-    const QStringList sourceGroups = m_settings->childGroups();
+    m_settings->beginGroup(root);
+    const QStringList keys = m_settings->allKeys();
     m_settings->endGroup();
-    for (const QString &sourceGroup : sourceGroups) {
-        const QString sourceId = QUrl::fromPercentEncoding(sourceGroup.toLatin1());
-        m_settings->beginGroup(kSourcesGroup + QLatin1Char('/') + sourceGroup);
-        const QStringList accountGroups = m_settings->childGroups();
-        m_settings->endGroup();
-        for (const QString &accountGroup : accountGroups) {
-            const QString accountId = QUrl::fromPercentEncoding(accountGroup.toLatin1());
-            const std::optional<StoredSourceAccount> account =
-                storedAccount(sourceId, accountId);
-            if (account.has_value()) {
-                storedAccounts.append(*account);
-            }
+    QSet<QString> groups;
+    for (const QString &key : keys) {
+        if (key == QStringLiteral("version")) {
+            groups.insert(root);
+        } else if (key.endsWith(QStringLiteral("/version"))) {
+            groups.insert(root + QLatin1Char('/') + key.left(key.size() - 8));
+        }
+    }
+    for (const QString &group : groups) {
+        const std::optional<StoredSourceAccount> account = storedAccountForGroup(group);
+        if (account.has_value()) {
+            storedAccounts.append(*account);
         }
     }
     return storedAccounts;
@@ -278,7 +310,21 @@ QString SourceAccountStore::groupFor(const QString &sourceId, const QString &acc
 {
     const QString encodedSourceId = QString::fromLatin1(QUrl::toPercentEncoding(sourceId));
     const QString encodedAccountId = QString::fromLatin1(QUrl::toPercentEncoding(accountId));
+    return kEncodedSourcesGroup + QLatin1Char('/') + encodedSourceId + QLatin1Char('/') +
+           encodedAccountId;
+}
+
+QString SourceAccountStore::legacyEncodedGroupFor(const QString &sourceId,
+                                                   const QString &accountId) const
+{
+    const QString encodedSourceId = QString::fromLatin1(QUrl::toPercentEncoding(sourceId));
+    const QString encodedAccountId = QString::fromLatin1(QUrl::toPercentEncoding(accountId));
     return kSourcesGroup + QLatin1Char('/') + encodedSourceId + QLatin1Char('/') + encodedAccountId;
+}
+
+QString SourceAccountStore::legacyRawGroupFor(const QString &sourceId, const QString &accountId) const
+{
+    return kSourcesGroup + QLatin1Char('/') + sourceId + QLatin1Char('/') + accountId;
 }
 
 QVariantMap SourceAccountStore::recordValues(const QString &group) const

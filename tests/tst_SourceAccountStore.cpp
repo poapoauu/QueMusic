@@ -98,6 +98,7 @@ private slots:
     void rejectsUntrustedParameterNames_data();
     void rejectsUntrustedParameterNames();
     void keepsSlashContainingAccountIdentitiesDistinct();
+    void readsLegacyRawPercentEscapedAccountId();
     void preservesPreviousAccountWhenOldSecretCleanupFails();
     void unavailableSecretStoreNeverPersistsSecrets();
 };
@@ -117,17 +118,19 @@ void SourceAccountStoreTest::persistsOnlyMetadataAndReconstructsAccount()
     const QString reference = store.secretReference(account.sourceId, account.accountId);
     QVERIFY(!reference.isEmpty());
     QCOMPARE(secretStore.value(reference), QByteArrayLiteral("unit-test-password"));
-    QCOMPARE(settings.value(QStringLiteral("sources/navidrome/home/version")).toInt(), 1);
-    QCOMPARE(settings.value(QStringLiteral("sources/navidrome/home/sourceId")).toString(),
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/version")).toInt(), 1);
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/sourceId")).toString(),
              QStringLiteral("navidrome"));
-    QCOMPARE(settings.value(QStringLiteral("sources/navidrome/home/accountId")).toString(),
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/accountId")).toString(),
              QStringLiteral("home"));
-    QCOMPARE(settings.value(QStringLiteral("sources/navidrome/home/displayName")).toString(),
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/displayName")).toString(),
              QStringLiteral("Home server"));
-    QCOMPARE(settings.value(QStringLiteral("sources/navidrome/home/enabled")).toBool(), false);
-    QCOMPARE(settings.value(QStringLiteral("sources/navidrome/home/parameters/serverUrl")).toString(),
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/enabled")).toBool(), false);
+    QCOMPARE(settings.value(
+                 QStringLiteral("sourceAccountsV2/navidrome/home/parameters/serverUrl")).toString(),
              QStringLiteral("https://music.example.invalid"));
-    QCOMPARE(settings.value(QStringLiteral("sources/navidrome/home/secretReference")).toString(), reference);
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/secretReference")).toString(),
+             reference);
 
     QFile settingsFile(settingsPath);
     QVERIFY(settingsFile.open(QIODevice::ReadOnly));
@@ -314,6 +317,43 @@ void SourceAccountStoreTest::keepsSlashContainingAccountIdentitiesDistinct()
     QCOMPARE(restoredFirst->secret, QByteArrayLiteral("first-secret"));
     QCOMPARE(restoredSecond->secret, QByteArrayLiteral("second-secret"));
     QCOMPARE(store.accounts().size(), 2);
+}
+
+void SourceAccountStoreTest::readsLegacyRawPercentEscapedAccountId()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const QString sourceId = QStringLiteral("navidrome");
+    const QString accountId = QStringLiteral("home%2Foffice");
+    const QString reference = QStringLiteral("legacy-percent-reference");
+    const QByteArray secret = QByteArrayLiteral("legacy-percent-secret");
+
+    QVERIFY(secretStore.write(reference, secret, nullptr));
+    const QString legacyGroup = QStringLiteral("sources/navidrome/home%2Foffice");
+    settings.setValue(legacyGroup + QStringLiteral("/version"), 1);
+    settings.setValue(legacyGroup + QStringLiteral("/sourceId"), sourceId);
+    settings.setValue(legacyGroup + QStringLiteral("/accountId"), accountId);
+    settings.setValue(legacyGroup + QStringLiteral("/displayName"), QStringLiteral("Legacy account"));
+    settings.setValue(legacyGroup + QStringLiteral("/enabled"), true);
+    settings.setValue(legacyGroup + QStringLiteral("/parameters/serverUrl"),
+                      QStringLiteral("https://legacy.example.invalid"));
+    settings.setValue(legacyGroup + QStringLiteral("/parameters/username"),
+                      QStringLiteral("legacy-user"));
+    settings.setValue(legacyGroup + QStringLiteral("/secretReference"), reference);
+    settings.sync();
+    QCOMPARE(settings.status(), QSettings::NoError);
+
+    const std::optional<SourceAccount> restored = store.sourceAccount(sourceId, accountId);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->secret, secret);
+    const QList<StoredSourceAccount> accounts = store.accounts();
+    QCOMPARE(accounts.size(), 1);
+    QCOMPARE(accounts.constFirst().sourceId, sourceId);
+    QCOMPARE(accounts.constFirst().accountId, accountId);
 }
 
 void SourceAccountStoreTest::preservesPreviousAccountWhenOldSecretCleanupFails()
