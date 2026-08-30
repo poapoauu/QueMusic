@@ -1,0 +1,400 @@
+#include "MediaBridge.h"
+
+#include "IMusicSourceSession.h"
+#include "SourceSessionRegistry.h"
+#include "SourceTypes.h"
+
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QtMath>
+
+namespace {
+
+int sanitizedLimit(int limit)
+{
+    return qMax(0, limit);
+}
+
+bool isContainer(MediaKind kind)
+{
+    return kind != MediaKind::Track;
+}
+
+} // namespace
+
+MediaBridge::MediaBridge(SourceSessionRegistry *registry, QObject *parent)
+    : QObject(parent)
+    , m_registry(registry)
+    , m_searchResults(new MediaListModel(this))
+    , m_browseResults(new MediaListModel(this))
+{
+    connect(m_searchResults, &MediaListModel::requestStateChanged, this,
+            [this] { emitRequestStateChangedFor(OperationType::Search); });
+    connect(m_browseResults, &MediaListModel::requestStateChanged, this,
+            [this] { emitRequestStateChangedFor(OperationType::Browse); });
+    if (m_registry != nullptr) {
+        connect(m_registry, &SourceSessionRegistry::sessionInvalidated, this,
+                &MediaBridge::invalidate);
+    }
+}
+
+MediaListModel *MediaBridge::searchResults() const
+{
+    return m_searchResults;
+}
+
+MediaListModel *MediaBridge::browseResults() const
+{
+    return m_browseResults;
+}
+
+MediaRequestState MediaBridge::requestState() const
+{
+    return m_lastOperation.has_value() ? modelFor(*m_lastOperation)->requestState()
+                                       : MediaRequestState::Idle;
+}
+
+void MediaBridge::search(const QString &sourceScope, const QString &keyword, int limit)
+{
+    cancelOperation(OperationType::Search);
+    m_lastOperation = OperationType::Search;
+    const std::optional<MediaId> target = mediaIdForScope(sourceScope);
+    if (!target.has_value()) {
+        m_searchIntent.reset();
+        m_searchResults->beginRequest(QUuid::createUuid());
+        m_searchResults->setFailure(
+            {MediaErrorKind::InvalidRequest, QStringLiteral("A source/account scope is required"), false});
+        return;
+    }
+
+    Intent intent{OperationType::Search, *target, keyword, sanitizedLimit(limit)};
+    m_searchIntent = intent;
+    dispatch(intent);
+}
+
+void MediaBridge::browse(const QString &sourceId, const QString &accountId, const QString &nativeId,
+                         int kind, int limit)
+{
+    cancelOperation(OperationType::Browse);
+    m_lastOperation = OperationType::Browse;
+    if (sourceId.isEmpty() || accountId.isEmpty()) {
+        m_browseIntent.reset();
+        m_browseResults->beginRequest(QUuid::createUuid());
+        m_browseResults->setFailure(
+            {MediaErrorKind::InvalidRequest, QStringLiteral("A source and account are required"), false});
+        return;
+    }
+
+    Intent intent{OperationType::Browse,
+                  {sourceId, accountId, nativeId, static_cast<MediaKind>(kind)},
+                  {},
+                  sanitizedLimit(limit)};
+    m_browseIntent = intent;
+    dispatch(intent);
+}
+
+void MediaBridge::open(const QVariantMap &item)
+{
+    const MediaId id = mediaIdFromVariantMap(item);
+    if (id.sourceId.isEmpty() || id.accountId.isEmpty() || id.nativeId.isEmpty()) {
+        return;
+    }
+    if (item.value(QStringLiteral("container")).toBool() || isContainer(id.kind)) {
+        browse(id.sourceId, id.accountId, id.nativeId, static_cast<int>(id.kind), 50);
+    }
+}
+
+void MediaBridge::loadMore()
+{
+    if (!m_lastOperation.has_value()) {
+        return;
+    }
+    const std::optional<Intent> *intent = intentFor(*m_lastOperation);
+    MediaListModel *model = modelFor(*m_lastOperation);
+    if (!intent->has_value() || !model->hasMore()) {
+        return;
+    }
+    Intent next = **intent;
+    next.append = true;
+    dispatch(next);
+}
+
+void MediaBridge::retry()
+{
+    if (!m_lastOperation.has_value()) {
+        return;
+    }
+    const std::optional<Intent> *intent = intentFor(*m_lastOperation);
+    if (!intent->has_value() || !modelFor(*m_lastOperation)->canRetry()) {
+        return;
+    }
+    dispatch(**intent);
+}
+
+void MediaBridge::cancel()
+{
+    cancelOperation(OperationType::Search);
+    cancelOperation(OperationType::Browse);
+}
+
+std::optional<MediaId> MediaBridge::mediaIdForScope(const QString &sourceScope)
+{
+    const int separator = sourceScope.indexOf(QLatin1Char('/'));
+    if (separator <= 0 || separator == sourceScope.size() - 1) {
+        return std::nullopt;
+    }
+    const QString sourceId = sourceScope.left(separator);
+    const QString accountId = sourceScope.mid(separator + 1);
+    if (sourceId.isEmpty() || accountId.isEmpty()) {
+        return std::nullopt;
+    }
+    return MediaId{sourceId, accountId};
+}
+
+std::optional<MediaKind> MediaBridge::mediaKindFromNormalized(const QString &kind)
+{
+    if (kind == QStringLiteral("track")) {
+        return MediaKind::Track;
+    }
+    if (kind == QStringLiteral("album")) {
+        return MediaKind::Album;
+    }
+    if (kind == QStringLiteral("artist")) {
+        return MediaKind::Artist;
+    }
+    if (kind == QStringLiteral("playlist")) {
+        return MediaKind::Playlist;
+    }
+    if (kind == QStringLiteral("directory")) {
+        return MediaKind::Directory;
+    }
+    return std::nullopt;
+}
+
+MediaError MediaBridge::mediaErrorFromSourceError(const SourceError &error)
+{
+    MediaErrorKind kind = MediaErrorKind::Unknown;
+    switch (error.kind) {
+    case SourceErrorKind::Network:
+        kind = MediaErrorKind::Network;
+        break;
+    case SourceErrorKind::Authentication:
+        kind = MediaErrorKind::Authentication;
+        break;
+    case SourceErrorKind::Authorization:
+        kind = MediaErrorKind::Authorization;
+        break;
+    case SourceErrorKind::NotFound:
+        kind = MediaErrorKind::NotFound;
+        break;
+    case SourceErrorKind::RateLimited:
+        kind = MediaErrorKind::RateLimited;
+        break;
+    case SourceErrorKind::InvalidRequest:
+        kind = MediaErrorKind::InvalidRequest;
+        break;
+    case SourceErrorKind::Unavailable:
+        kind = MediaErrorKind::Unavailable;
+        break;
+    case SourceErrorKind::Unsupported:
+        kind = MediaErrorKind::Unsupported;
+        break;
+    case SourceErrorKind::Unknown:
+        break;
+    }
+    const bool retryable = kind == MediaErrorKind::Unknown || kind == MediaErrorKind::Network
+        || kind == MediaErrorKind::RateLimited || kind == MediaErrorKind::Unavailable;
+    return {kind, error.message, retryable};
+}
+
+MediaItem MediaBridge::mediaItemFromNormalized(const QJsonObject &item, const MediaId &provider)
+{
+    const std::optional<MediaKind> kind = mediaKindFromNormalized(
+        item.value(QStringLiteral("kind")).toString());
+    if (!kind.has_value() || item.value(QStringLiteral("id")).toString().isEmpty()) {
+        return {};
+    }
+
+    MediaItem mapped;
+    mapped.id = {provider.sourceId, provider.accountId, item.value(QStringLiteral("id")).toString(), *kind};
+    mapped.title = item.value(QStringLiteral("title")).toString();
+    const QString artist = item.value(QStringLiteral("artist")).toString();
+    if (!artist.isEmpty()) {
+        mapped.artists = {artist};
+        mapped.subtitle = artist;
+    }
+    mapped.albumTitle = item.value(QStringLiteral("album")).toString();
+    mapped.durationMs = qRound64(item.value(QStringLiteral("duration")).toDouble() * 1000.0);
+    const QString coverArtId = item.value(QStringLiteral("coverArtId")).toString();
+    if (!coverArtId.isEmpty()) {
+        mapped.extra.insert(QStringLiteral("coverArtId"), coverArtId);
+    }
+    mapped.playable = *kind == MediaKind::Track;
+    mapped.container = isContainer(*kind);
+    return mapped;
+}
+
+MediaListModel *MediaBridge::modelFor(OperationType type) const
+{
+    return type == OperationType::Search ? m_searchResults : m_browseResults;
+}
+
+std::optional<MediaBridge::Intent> *MediaBridge::intentFor(OperationType type)
+{
+    return type == OperationType::Search ? &m_searchIntent : &m_browseIntent;
+}
+
+const std::optional<MediaBridge::Intent> *MediaBridge::intentFor(OperationType type) const
+{
+    return type == OperationType::Search ? &m_searchIntent : &m_browseIntent;
+}
+
+void MediaBridge::dispatch(const Intent &intent)
+{
+    MediaListModel *model = modelFor(intent.type);
+    m_lastOperation = intent.type;
+    const QUuid localRequestId = QUuid::createUuid();
+    model->beginRequest(localRequestId);
+    if (m_registry == nullptr) {
+        model->setFailure({MediaErrorKind::Unavailable, QStringLiteral("Source registry is unavailable"), true});
+        return;
+    }
+
+    IMusicSourceSession *session = m_registry->sessionFor(intent.target);
+    if (session == nullptr) {
+        model->setFailure(
+            {MediaErrorKind::Unavailable, QStringLiteral("Source account is unavailable"), true});
+        return;
+    }
+    connectSession(session);
+
+    const QUuid providerRequestId = intent.type == OperationType::Search
+        ? session->search({intent.keyword, intent.limit})
+        : session->browse({intent.target.nativeId, {}, intent.limit});
+    if (providerRequestId.isNull()) {
+        model->setFailure(
+            {MediaErrorKind::Unavailable, QStringLiteral("Source did not start the request"), true});
+        return;
+    }
+
+    model->beginRequest(providerRequestId);
+    m_pendingRequests.insert(providerRequestId, {intent, model, session});
+    m_registry->trackRequest(intent.target, providerRequestId);
+}
+
+void MediaBridge::connectSession(IMusicSourceSession *session)
+{
+    if (session == nullptr || m_connectedSessions.contains(session)) {
+        return;
+    }
+    m_connectedSessions.insert(session);
+    connect(session, &IMusicSourceSession::requestSucceeded, this, &MediaBridge::handleSucceeded);
+    connect(session, &IMusicSourceSession::requestFailed, this, &MediaBridge::handleFailed);
+    connect(session, &QObject::destroyed, this, [this, session] { m_connectedSessions.remove(session); });
+}
+
+void MediaBridge::cancelOperation(OperationType type)
+{
+    QList<QUuid> requestIds;
+    for (auto request = m_pendingRequests.cbegin(); request != m_pendingRequests.cend(); ++request) {
+        if (request->intent.type == type) {
+            requestIds.append(request.key());
+        }
+    }
+    for (const QUuid &requestId : requestIds) {
+        const PendingRequest pending = m_pendingRequests.take(requestId);
+        if (pending.session != nullptr) {
+            pending.session->cancel(requestId);
+        }
+        if (m_registry != nullptr) {
+            m_registry->completeRequest(pending.intent.target, requestId);
+        }
+    }
+    if (!requestIds.isEmpty()) {
+        modelFor(type)->clear();
+    }
+}
+
+void MediaBridge::invalidate(const QString &sourceId, const QString &accountId)
+{
+    QList<QUuid> requestIds;
+    for (auto request = m_pendingRequests.cbegin(); request != m_pendingRequests.cend(); ++request) {
+        if (request->intent.target.sourceId == sourceId && request->intent.target.accountId == accountId) {
+            requestIds.append(request.key());
+        }
+    }
+    QSet<OperationType> affected;
+    for (const QUuid &requestId : requestIds) {
+        const PendingRequest pending = m_pendingRequests.take(requestId);
+        affected.insert(pending.intent.type);
+    }
+    for (OperationType type : affected) {
+        modelFor(type)->clear();
+    }
+}
+
+void MediaBridge::handleSucceeded(const QUuid &requestId, const QString &operation,
+                                  const QJsonValue &result)
+{
+    const auto pending = m_pendingRequests.find(requestId);
+    if (pending == m_pendingRequests.end()) {
+        return;
+    }
+    const PendingRequest request = pending.value();
+    m_pendingRequests.erase(pending);
+    if (m_registry != nullptr) {
+        m_registry->completeRequest(request.intent.target, requestId);
+    }
+    const QString expectedOperation = request.intent.type == OperationType::Search
+        ? QStringLiteral("search")
+        : QStringLiteral("browse");
+    if (operation != expectedOperation || request.model == nullptr || !result.isObject()) {
+        return;
+    }
+
+    MediaPage page;
+    const QJsonArray normalizedItems = result.toObject().value(QStringLiteral("items")).toArray();
+    for (const QJsonValue &value : normalizedItems) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject normalized = value.toObject();
+        const QString sourceId = normalized.value(QStringLiteral("sourceId")).toString();
+        if (!sourceId.isEmpty() && sourceId != request.intent.target.sourceId) {
+            continue;
+        }
+        MediaItem item = mediaItemFromNormalized(normalized, request.intent.target);
+        if (!item.id.nativeId.isEmpty()) {
+            page.items.append(item);
+        }
+    }
+    if (request.intent.append) {
+        request.model->appendPage(page);
+    } else {
+        request.model->replacePage(page);
+    }
+}
+
+void MediaBridge::handleFailed(const QUuid &requestId, const SourceError &error)
+{
+    const auto pending = m_pendingRequests.find(requestId);
+    if (pending == m_pendingRequests.end()) {
+        return;
+    }
+    const PendingRequest request = pending.value();
+    m_pendingRequests.erase(pending);
+    if (m_registry != nullptr) {
+        m_registry->completeRequest(request.intent.target, requestId);
+    }
+    if (request.model != nullptr) {
+        request.model->setFailure(mediaErrorFromSourceError(error));
+    }
+}
+
+void MediaBridge::emitRequestStateChangedFor(OperationType type)
+{
+    if (m_lastOperation.has_value() && *m_lastOperation == type) {
+        emit requestStateChanged();
+    }
+}

@@ -145,6 +145,20 @@ target_include_directories(quemusic_source_session_registry PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/media
 )
 
+add_library(quemusic_media_bridge STATIC
+    core/media/MediaBridge.cpp
+    core/media/MediaBridge.h
+)
+target_compile_features(quemusic_media_bridge PUBLIC cxx_std_17)
+target_link_libraries(quemusic_media_bridge PUBLIC
+    quemusic_media_core
+    quemusic_source_session_registry
+    Qt6::Core
+)
+target_include_directories(quemusic_media_bridge PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/media
+)
+
 if(BUILD_TESTING)
     enable_testing()
 endif()
@@ -480,6 +494,26 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_media_list_model_test COMMAND quemusic_media_list_model_test)
+
+    qt_add_executable(quemusic_media_bridge_test
+        tests/tst_MediaBridge.cpp
+        plugins/navidrome-source/NavidromeSourceSession.cpp
+        plugins/navidrome-source/NavidromeSourceSession.h
+    )
+    target_compile_features(quemusic_media_bridge_test PRIVATE cxx_std_17)
+    target_include_directories(quemusic_media_bridge_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/plugins/navidrome-source
+    )
+    target_compile_definitions(quemusic_media_bridge_test PRIVATE
+        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
+    )
+    target_link_libraries(quemusic_media_bridge_test PRIVATE
+        quemusic_media_bridge
+        Qt6::Network
+        Qt6::Test
+    )
+    add_dependencies(quemusic_media_bridge_test quemusic_test_source)
+    add_test(NAME quemusic_media_bridge_test COMMAND quemusic_media_bridge_test)
 endif()
 
 qt_add_executable(${PROJECT_NAME}

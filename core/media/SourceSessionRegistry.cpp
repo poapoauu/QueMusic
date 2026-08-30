@@ -36,8 +36,7 @@ SourceSessionRegistry::~SourceSessionRegistry()
 IMusicSourceSession *SourceSessionRegistry::sessionFor(const MediaId &id)
 {
     const SessionKey key = keyFor(id);
-    if (key.sourceId.isEmpty() || key.accountId.isEmpty() || m_sourceManager == nullptr
-        || m_accountStore == nullptr || m_disabledAccounts.contains(key)) {
+    if (key.sourceId.isEmpty() || key.accountId.isEmpty() || m_disabledAccounts.contains(key)) {
         return nullptr;
     }
 
@@ -47,6 +46,10 @@ IMusicSourceSession *SourceSessionRegistry::sessionFor(const MediaId &id)
             return existing->session;
         }
         m_sessions.erase(existing);
+    }
+
+    if (m_sourceManager == nullptr || m_accountStore == nullptr) {
+        return nullptr;
     }
 
     const std::optional<StoredSourceAccount> stored =

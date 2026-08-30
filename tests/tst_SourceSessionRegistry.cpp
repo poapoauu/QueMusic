@@ -140,6 +140,7 @@ class SourceSessionRegistryTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void returnsCachedSessionWithoutCreationDependencies();
     void reusesSessionForEnabledAccount();
     void enabledAccountsExcludesDisabledStoredAccounts();
     void disableCancelsTrackedRequestBeforeDestroyingSession();
@@ -147,6 +148,16 @@ private slots:
     void removeReleasesSessionBeforeSourcePackageUnload();
     void destructionCancelsTrackedRequestBeforeDestroyingSession();
 };
+
+void SourceSessionRegistryTest::returnsCachedSessionWithoutCreationDependencies()
+{
+    SourceSessionRegistry registry(nullptr, nullptr);
+    const MediaId id{QStringLiteral("test-source"), QStringLiteral("home")};
+    QStringList events;
+    IMusicSourceSession *const session = installControllableSession(&registry, id, &events);
+
+    QCOMPARE(registry.sessionFor(id), session);
+}
 
 void SourceSessionRegistryTest::reusesSessionForEnabledAccount()
 {
