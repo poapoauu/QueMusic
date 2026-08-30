@@ -1,6 +1,5 @@
 #include "SourceAccountStore.h"
 #include "SourceManager.h"
-#include "SourceSessionRegistry.h"
 
 #include "PluginManager.h"
 
@@ -8,8 +7,14 @@
 #include <QPointer>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QSet>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QTest>
+
+#define private public
+#include "SourceSessionRegistry.h"
+#undef private
 
 namespace {
 
@@ -53,6 +58,48 @@ SourceAccount testAccount(const QString &accountId = QStringLiteral("home"))
             {{QStringLiteral("serverUrl"), QStringLiteral("https://music.example.invalid")},
              {QStringLiteral("username"), QStringLiteral("test-user")}},
             QByteArrayLiteral("test-secret")};
+}
+
+class ControllableSession final : public IMusicSourceSession {
+public:
+    ControllableSession(QStringList *events, QObject *parent)
+        : IMusicSourceSession(parent)
+        , m_events(events)
+    {
+    }
+
+    ~ControllableSession() override
+    {
+        m_events->append(QStringLiteral("destroyed"));
+    }
+
+    QUuid search(const SearchQuery &) override { return {}; }
+    QUuid browse(const BrowseQuery &) override { return {}; }
+    QUuid resolveStream(const TrackRef &) override { return {}; }
+    QUuid fetchArtwork(const TrackRef &) override { return {}; }
+    QUuid fetchLyrics(const TrackRef &) override { return {}; }
+
+    void cancel(const QUuid &requestId) override
+    {
+        m_events->append(QStringLiteral("cancel:%1").arg(requestId.toString()));
+    }
+
+private:
+    QStringList *m_events = nullptr;
+};
+
+ControllableSession *installControllableSession(SourceSessionRegistry *registry, const MediaId &id,
+                                                QStringList *events)
+{
+    auto *session = new ControllableSession(events, registry);
+    registry->m_sessions.insert(registry->keyFor(id), {session, {}});
+    return session;
+}
+
+void assertCancellationPrecedesDestruction(const QStringList &events, const QUuid &requestId)
+{
+    const QString cancellation = QStringLiteral("cancel:%1").arg(requestId.toString());
+    QCOMPARE(events, QStringList({cancellation, QStringLiteral("destroyed")}));
 }
 
 class RegistryHarness {
@@ -124,29 +171,21 @@ void SourceSessionRegistryTest::enabledAccountsExcludesDisabledStoredAccounts()
 
 void SourceSessionRegistryTest::disableCancelsTrackedRequestBeforeDestroyingSession()
 {
-    RegistryHarness harness;
-    QVERIFY(harness.initialize());
-    IMusicSourceSession *session = harness.registry.sessionFor(
-        {QStringLiteral("test-source"), QStringLiteral("home")});
-    QVERIFY(session != nullptr);
+    SourceSessionRegistry registry(nullptr, nullptr);
+    const MediaId id{QStringLiteral("test-source"), QStringLiteral("home")};
+    QStringList events;
+    auto *session = installControllableSession(&registry, id, &events);
     QPointer<IMusicSourceSession> guardedSession(session);
     QSignalSpy destroyed(session, &QObject::destroyed);
-    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
-    QSignalSpy invalidated(&harness.registry, &SourceSessionRegistry::sessionInvalidated);
+    const QUuid requestId = QUuid::createUuid();
 
-    const QUuid requestId = session->search({QStringLiteral("anything"), 1});
-    harness.registry.trackRequest({QStringLiteral("test-source"), QStringLiteral("home")}, requestId);
-    harness.registry.disable(QStringLiteral("test-source"), QStringLiteral("home"));
+    registry.trackRequest(id, requestId);
+    registry.disable(id.sourceId, id.accountId);
 
     QCOMPARE(destroyed.count(), 1);
     QVERIFY(guardedSession.isNull());
-    QCOMPARE(invalidated.count(), 1);
-    QCOMPARE(invalidated.constFirst().at(0).toString(), QStringLiteral("test-source"));
-    QCOMPARE(invalidated.constFirst().at(1).toString(), QStringLiteral("home"));
-    QTest::qWait(50);
-    QCOMPARE(succeeded.count(), 0);
-    QVERIFY(harness.registry.sessionFor({QStringLiteral("test-source"),
-                                         QStringLiteral("home")}) == nullptr);
+    assertCancellationPrecedesDestruction(events, requestId);
+    QVERIFY(registry.sessionFor(id) == nullptr);
 }
 
 void SourceSessionRegistryTest::removeDoesNotReenableDisabledAccount()
@@ -167,20 +206,27 @@ void SourceSessionRegistryTest::removeReleasesSessionBeforeSourcePackageUnload()
 {
     RegistryHarness harness;
     QVERIFY(harness.initialize());
-    IMusicSourceSession *session = harness.registry.sessionFor(
-        {QStringLiteral("test-source"), QStringLiteral("home")});
-    QVERIFY(session != nullptr);
+    QVERIFY(harness.accountStore.upsert(testAccount(QStringLiteral("lease"))));
+    IMusicSourceSession *leasedSession = harness.registry.sessionFor(
+        {QStringLiteral("test-source"), QStringLiteral("lease")});
+    QVERIFY(leasedSession != nullptr);
+    QPointer<IMusicSourceSession> guardedLeasedSession(leasedSession);
+    harness.registry.remove(QStringLiteral("test-source"), QStringLiteral("lease"));
+    QVERIFY(guardedLeasedSession.isNull());
+
+    const MediaId id{QStringLiteral("test-source"), QStringLiteral("home")};
+    QStringList events;
+    auto *session = installControllableSession(&harness.registry, id, &events);
     QPointer<IMusicSourceSession> guardedSession(session);
     QSignalSpy destroyed(session, &QObject::destroyed);
-    QSignalSpy invalidated(&harness.registry, &SourceSessionRegistry::sessionInvalidated);
+    const QUuid requestId = QUuid::createUuid();
 
-    const QUuid requestId = session->search({QStringLiteral("anything"), 1});
-    harness.registry.trackRequest({QStringLiteral("test-source"), QStringLiteral("home")}, requestId);
-    harness.registry.remove(QStringLiteral("test-source"), QStringLiteral("home"));
+    harness.registry.trackRequest(id, requestId);
+    harness.registry.remove(id.sourceId, id.accountId);
 
     QCOMPARE(destroyed.count(), 1);
     QVERIFY(guardedSession.isNull());
-    QCOMPARE(invalidated.count(), 1);
+    assertCancellationPrecedesDestruction(events, requestId);
     QCOMPARE(harness.pluginManager.unload(QStringLiteral("org.quemusic.source.fixture")),
              PluginOperationResult::Success);
     QCOMPARE(harness.sourceManager.sourceIds(), QStringList());
@@ -191,24 +237,20 @@ void SourceSessionRegistryTest::removeReleasesSessionBeforeSourcePackageUnload()
 
 void SourceSessionRegistryTest::destructionCancelsTrackedRequestBeforeDestroyingSession()
 {
-    RegistryHarness harness;
-    QVERIFY(harness.initialize());
-    auto *registry = new SourceSessionRegistry(&harness.sourceManager, &harness.accountStore);
-    IMusicSourceSession *session = registry->sessionFor(
-        {QStringLiteral("test-source"), QStringLiteral("home")});
-    QVERIFY(session != nullptr);
+    auto *registry = new SourceSessionRegistry(nullptr, nullptr);
+    const MediaId id{QStringLiteral("test-source"), QStringLiteral("home")};
+    QStringList events;
+    auto *session = installControllableSession(registry, id, &events);
     QPointer<IMusicSourceSession> guardedSession(session);
     QSignalSpy destroyed(session, &QObject::destroyed);
-    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
+    const QUuid requestId = QUuid::createUuid();
 
-    const QUuid requestId = session->search({QStringLiteral("anything"), 1});
-    registry->trackRequest({QStringLiteral("test-source"), QStringLiteral("home")}, requestId);
+    registry->trackRequest(id, requestId);
     delete registry;
 
     QCOMPARE(destroyed.count(), 1);
     QVERIFY(guardedSession.isNull());
-    QTest::qWait(50);
-    QCOMPARE(succeeded.count(), 0);
+    assertCancellationPrecedesDestruction(events, requestId);
 }
 
 QTEST_MAIN(SourceSessionRegistryTest)
