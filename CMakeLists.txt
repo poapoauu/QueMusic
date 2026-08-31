@@ -533,6 +533,9 @@ if(BUILD_TESTING)
         tests/tst_MediaBridgeQml.cpp
     )
     target_compile_features(quemusic_media_bridge_qml_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_media_bridge_qml_test PRIVATE
+        QUEMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     target_link_libraries(quemusic_media_bridge_qml_test PRIVATE
         quemusic_media_bridge
         quemusic_source_startup

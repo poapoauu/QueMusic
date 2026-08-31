@@ -389,7 +389,10 @@ void MediaBridge::dispatchAction(ActionType type, const QVariantMap &item)
     }
     connectSession(session);
 
-    const TrackRef track{id.sourceId, id.nativeId};
+    const QVariantMap extra = item.value(QStringLiteral("extra")).toMap();
+    const QString artworkId = extra.value(QStringLiteral("coverArtId")).toString();
+    const TrackRef track{id.sourceId,
+                         type == ActionType::Artwork && !artworkId.isEmpty() ? artworkId : id.nativeId};
     QUuid requestId;
     switch (type) {
     case ActionType::Artwork:
@@ -598,9 +601,14 @@ void MediaBridge::handleActionSucceeded(const QUuid &requestId, const QString &o
 
     const QJsonObject object = result.toObject();
     const QJsonObject track = object.value(QStringLiteral("track")).toObject();
+    const QVariantMap extra = action.item.value(QStringLiteral("extra")).toMap();
+    const QString expectedTrackId = action.type == ActionType::Artwork
+            && !extra.value(QStringLiteral("coverArtId")).toString().isEmpty()
+        ? extra.value(QStringLiteral("coverArtId")).toString()
+        : action.id.nativeId;
     if ((!track.isEmpty() && (track.value(QStringLiteral("sourceId")).toString() != action.id.sourceId
                               || track.value(QStringLiteral("nativeId")).toString()
-                                  != action.id.nativeId))) {
+                                  != expectedTrackId))) {
         failAction(action.type, action.id,
                    {MediaErrorKind::InvalidRequest, QStringLiteral("Source returned a different media item"),
                     false});

@@ -51,13 +51,10 @@ Popup {
             onClicked: {
                 globalDialog.openSimpleDialog("删除", "这将移除播放列表其他歌曲，是否继续？",
                     function() {
-                        var title = playListModel.get(playListModel.playListIndex).name;
-                        var hash = playListModel.get(playListModel.playListIndex).path;
-                        var artist = playListModel.get(playListModel.playListIndex).songer;
-                        var source = playListModel.get(playListModel.playListIndex).source;
+                        var currentEntry = window.copyQueueEntry(
+                            playListModel.get(playListModel.playListIndex));
                         playListModel.remove( 0, playListModel.count );
-                        //playListModel.append(indexData);
-                        playListModel.append({ name: title, path: hash, songer: artist, source: source });
+                        playListModel.append(currentEntry);
                         playListModel.playListIndex = 0;
                         Style.warned("已清空播放列表",1);
                     }
@@ -202,14 +199,8 @@ Popup {
                     onEntered: listHover.opacity = 1
                     onExited: listHover.opacity = 0
                     onClicked: {
-                        if(model.source == -1) {
-                            playListModel.playListIndex = index;
-                            window.playLocalSong(model.path, model.name);
-                        } else {
-                            mainMedia.urlLocal = false;
-                            playListModel.playListIndex = index;
-                            MusicApi.getMusicInfo(model.path,0,model.source);
-                        }
+                        playListModel.playListIndex = index;
+                        window.playQueueEntry(index);
                         console.log("name:",model.name," path:",model.path," source:",model.source," artist:",model.songer)
                     }
                     Rectangle {

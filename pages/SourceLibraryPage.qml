@@ -15,13 +15,32 @@ Item {
     property int artworkRevision: 0
     readonly property var currentResults: browsing ? mediaBridge.browseResults : mediaBridge.searchResults
 
+    function enabledAccounts() {
+        var allAccounts = accountController ? accountController.accounts : []
+        return allAccounts.filter(function(account) { return account.enabled === true })
+    }
+
     function chooseAccount(index) {
-        var list = accountController ? accountController.accounts : []
-        if (index >= 0 && index < list.length) {
-            selectedAccount = list[index]
-        } else {
-            selectedAccount = null
+        var list = enabledAccounts()
+        selectedAccount = index >= 0 && index < list.length && list[index].enabled === true
+            ? list[index] : null
+    }
+
+    function ensureSelectedAccount() {
+        var list = enabledAccounts()
+        var selectedIndex = -1
+        if (selectedAccount) {
+            for (var i = 0; i < list.length; ++i) {
+                if (list[i].accountId === selectedAccount.accountId) {
+                    selectedIndex = i
+                    break
+                }
+            }
         }
+        if (selectedIndex < 0 && list.length > 0)
+            selectedIndex = 0
+        sourceSelector.currentIndex = selectedIndex
+        chooseAccount(selectedIndex)
     }
 
     function searchLibrary() {
@@ -42,8 +61,7 @@ Item {
     Connections {
         target: accountController
         function onAccountsChanged() {
-            sourceSelector.currentIndex = 0
-            sourceLibrary.chooseAccount(0)
+            sourceLibrary.ensureSelectedAccount()
         }
     }
 
@@ -87,11 +105,20 @@ Item {
                 width: 220
                 height: 38
                 anchors.verticalCenter: parent.verticalCenter
-                model: accountController ? accountController.accounts : []
+                model: sourceLibrary.enabledAccounts()
                 textRole: "displayName"
                 enabled: model.length > 0
                 onCurrentIndexChanged: sourceLibrary.chooseAccount(currentIndex)
-                Component.onCompleted: sourceLibrary.chooseAccount(currentIndex)
+                Component.onCompleted: sourceLibrary.ensureSelectedAccount()
+            }
+
+            Text {
+                visible: accountController && accountController.accounts.length > sourceLibrary.enabledAccounts().length
+                height: parent.height
+                text: "已禁用账户无法使用"
+                verticalAlignment: Text.AlignVCenter
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.textTip
             }
 
             Button {

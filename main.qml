@@ -141,6 +141,20 @@ Window {
         return mediaId.sourceId + "/" + mediaId.accountId + "/" + mediaId.nativeId + "/" + mediaId.kind;
     }
 
+    function copyQueueEntry(entry) {
+        return {
+            name: entry.name,
+            path: entry.path,
+            songer: entry.songer,
+            source: entry.source,
+            bridge: entry.bridge === true,
+            mediaId: entry.mediaId,
+            albumTitle: entry.albumTitle,
+            artworkUrl: entry.artworkUrl,
+            durationMs: entry.durationMs
+        };
+    }
+
     function playQueueEntry(index) {
         if (index < 0 || index >= playListModel.count)
             return;

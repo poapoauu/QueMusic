@@ -192,6 +192,7 @@ class MediaBridgePlaybackTest : public QObject {
 private slots:
     void playEmitsUrlAuthenticatedPlaybackEntry();
     void loadArtworkUsesRegistryManagerForwarder();
+    void loadArtworkUsesNormalizedCoverArtIdentifier();
     void loadLyricsEmitsNormalizedPayload();
     void playRejectsHeaderAuthenticatedStreams();
     void playSupersedesOlderPendingPlayback();
@@ -241,6 +242,26 @@ void MediaBridgePlaybackTest::loadArtworkUsesRegistryManagerForwarder()
              QStringLiteral("song-1"));
     QVERIFY(artwork.value(QStringLiteral("artworkUrl")).toString().contains(
         QStringLiteral("/rest/getCoverArt.view")));
+}
+
+void MediaBridgePlaybackTest::loadArtworkUsesNormalizedCoverArtIdentifier()
+{
+    NavidromeRegistryHarness harness;
+    QVERIFY(harness.initialize(8533));
+    MediaBridge bridge(&harness.registry);
+    QSignalSpy ready(&bridge, &MediaBridge::artworkReady);
+    QVariantMap item = trackItem();
+    item.insert(QStringLiteral("extra"),
+                QVariantMap{{QStringLiteral("coverArtId"), QStringLiteral("cover-42")}});
+
+    bridge.loadArtwork(item);
+
+    QVERIFY(ready.wait(1000));
+    const QVariantMap artwork = ready.constFirst().at(0).toMap();
+    QCOMPARE(artwork.value(QStringLiteral("mediaId")).toMap().value(QStringLiteral("nativeId")).toString(),
+             QStringLiteral("song-1"));
+    const QUrl artworkUrl(artwork.value(QStringLiteral("artworkUrl")).toString());
+    QCOMPARE(QUrlQuery(artworkUrl).queryItemValue(QStringLiteral("id")), QStringLiteral("cover-42"));
 }
 
 void MediaBridgePlaybackTest::loadLyricsEmitsNormalizedPayload()

@@ -90,7 +90,7 @@ IMusicSourceSession *SourceSessionRegistry::sessionFor(const MediaId &id)
 QUuid SourceSessionRegistry::requestArtwork(const MediaId &id, const TrackRef &track)
 {
     if (id.sourceId.isEmpty() || id.accountId.isEmpty() || id.nativeId.isEmpty()
-        || track.sourceId != id.sourceId || track.nativeId != id.nativeId || m_sourceManager == nullptr) {
+        || track.sourceId != id.sourceId || track.nativeId.isEmpty() || m_sourceManager == nullptr) {
         return {};
     }
 

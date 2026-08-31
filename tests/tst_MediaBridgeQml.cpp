@@ -6,6 +6,7 @@
 #include "SourceStartup.h"
 
 #include <QDir>
+#include <QFile>
 #include <QHash>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -56,6 +57,7 @@ class MediaBridgeQmlTest : public QObject {
 private slots:
     void exposesOnlyBridgeAndAcceptsNormalizedQueueEntry();
     void accountControllerHidesSecretsAndManagesAccountLifecycle();
+    void qmlNavigationQueueAndAccountSelectionContracts();
 };
 
 void MediaBridgeQmlTest::exposesOnlyBridgeAndAcceptsNormalizedQueueEntry()
@@ -159,6 +161,41 @@ void MediaBridgeQmlTest::accountControllerHidesSecretsAndManagesAccountLifecycle
     QVERIFY(accountController.setAccountEnabled(accountId, true));
     QVERIFY(accountController.removeAccount(accountId));
     QVERIFY(accountController.accounts().isEmpty());
+}
+
+void MediaBridgeQmlTest::qmlNavigationQueueAndAccountSelectionContracts()
+{
+    const auto source = [](const QString &relativePath) {
+        QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR) + QLatin1Char('/') + relativePath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return QString{};
+        }
+        return QString::fromUtf8(file.readAll());
+    };
+
+    const QString sidebar = source(QStringLiteral("layout/LeftSideBar.qml"));
+    QVERIFY(sidebar.contains(QStringLiteral("function contentIndexForNav(choice)")));
+    QVERIFY(sidebar.contains(QStringLiteral("return choice >= 6 ? choice + 1 : choice;")));
+    QVERIFY(sidebar.contains(QStringLiteral("mainContent.contentIndexed(sidebar.contentIndexForNav(index));")));
+
+    const QString playlist = source(QStringLiteral("components/PlayList.qml"));
+    QVERIFY(playlist.contains(QStringLiteral("window.copyQueueEntry(")));
+    QVERIFY(playlist.contains(QStringLiteral("playListModel.append(currentEntry);")));
+    QVERIFY(playlist.contains(QStringLiteral("window.playQueueEntry(index);")));
+
+    const QString mainQml = source(QStringLiteral("main.qml"));
+    QVERIFY(mainQml.contains(QStringLiteral("function copyQueueEntry(entry)")));
+    QVERIFY(mainQml.contains(QStringLiteral("bridge: entry.bridge === true")));
+    QVERIFY(mainQml.contains(QStringLiteral("mediaId: entry.mediaId")));
+
+    const QString settings = source(QStringLiteral("SettingsView.qml"));
+    QVERIFY(settings.contains(QStringLiteral("sourceAccounts.availableSources")));
+    QVERIFY(settings.contains(QStringLiteral("（已禁用）")));
+
+    const QString library = source(QStringLiteral("pages/SourceLibraryPage.qml"));
+    QVERIFY(library.contains(QStringLiteral("function enabledAccounts()")));
+    QVERIFY(library.contains(QStringLiteral("account.enabled === true")));
+    QVERIFY(library.contains(QStringLiteral("ensureSelectedAccount")));
 }
 
 QTEST_MAIN(MediaBridgeQmlTest)

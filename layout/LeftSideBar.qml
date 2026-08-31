@@ -57,6 +57,10 @@ Rectangle {
         }
     }
 
+    function contentIndexForNav(choice) {
+        return choice >= 6 ? choice + 1 : choice;
+    }
+
     Connections {
         target: window
         function onExit() {
@@ -279,7 +283,7 @@ Rectangle {
                     onCanceled: navDelegate.scale = 1.0
                     onClicked: {
                         sidebar.indexed(index);
-                        mainContent.contentIndexed(index);
+                        mainContent.contentIndexed(sidebar.contentIndexForNav(index));
                         forceActiveFocus();
                     }
                 }

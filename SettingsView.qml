@@ -836,6 +836,28 @@ Item {
                             color: Style.themes.textColor
                             font.pixelSize: Style.settings.text
                         }
+                        Text {
+                            width: parent.width
+                            text: "已加载来源"
+                            color: Style.themes.fontColor
+                            font.pixelSize: Style.settings.textmain
+                        }
+                        Repeater {
+                            model: sourceAccounts ? sourceAccounts.availableSources : []
+                            delegate: Text {
+                                required property var modelData
+                                width: parent.width
+                                text: modelData.name + " · " + modelData.id + " · v" + modelData.version
+                                color: Style.themes.textColor
+                                font.pixelSize: Style.settings.textTip
+                            }
+                        }
+                        Text {
+                            visible: sourceAccounts && sourceAccounts.availableSources.length === 0
+                            text: "尚未加载可用来源。"
+                            color: Style.themes.textColor
+                            font.pixelSize: Style.settings.textTip
+                        }
                         Repeater {
                             model: sourceAccounts ? sourceAccounts.accounts : []
                             delegate: Rectangle {
@@ -854,6 +876,7 @@ Item {
                                         Text {
                                             width: parent.width
                                             text: modelData.displayName + " · " + modelData.sourceId
+                                                + (modelData.enabled ? "" : "（已禁用）")
                                             color: Style.themes.fontColor
                                             elide: Text.ElideRight
                                         }
