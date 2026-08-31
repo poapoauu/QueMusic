@@ -207,6 +207,7 @@ private slots:
     void productionPlayListExposesClearOtherSongs();
     void productionSourceLibraryRejectsDisabledAccounts();
     void productionSourceLibraryOffersConfigurationWhenNoAccountExists();
+    void productionPluginPanelReceivesInjectedManager();
     void productionPluginPanelSeparatesContentAndOffersNavidromeSetup();
 };
 
@@ -479,6 +480,47 @@ void MediaBridgeQmlTest::productionSourceLibraryOffersConfigurationWhenNoAccount
     delete page;
 }
 
+void MediaBridgeQmlTest::productionPluginPanelReceivesInjectedManager()
+{
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    NamedObject iconFont(QStringLiteral("Arial"));
+    engine.rootContext()->setContextProperty("iconFont", &iconFont);
+
+    PluginManagerDouble pluginManager;
+    pluginManager.setPlugins({
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("navidrome")},
+                    {QStringLiteral("name"), QStringLiteral("Navidrome")},
+                    {QStringLiteral("version"), QStringLiteral("1.0.0")},
+                    {QStringLiteral("state"), QStringLiteral("loaded")},
+                    {QStringLiteral("loadable"), false},
+                    {QStringLiteral("unloadable"), true},
+                    {QStringLiteral("reloadable"), true},
+                    {QStringLiteral("activeLeases"), 0}}
+    });
+    engine.rootContext()->setContextProperty("pluginManager", &pluginManager);
+
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QueMusic 1.0
+        PluginSettingsPanel {
+            width: 1000
+            height: 700
+            selectedTab: 2
+            manager: pluginManager
+        }
+    )", QUrl());
+    QObject *panel = component.create();
+    QVERIFY2(panel != nullptr, qPrintable(component.errorString()));
+    QCOMPARE(panel->property("plugins").toList().size(), 1);
+    QCOMPARE(panel->property("plugins").toList().constFirst().toMap()
+                 .value(QStringLiteral("id")).toString(),
+             QStringLiteral("navidrome"));
+
+    delete panel;
+}
+
 void MediaBridgeQmlTest::productionPluginPanelSeparatesContentAndOffersNavidromeSetup()
 {
     QQmlApplicationEngine engine;
@@ -513,13 +555,13 @@ void MediaBridgeQmlTest::productionPluginPanelSeparatesContentAndOffersNavidrome
         {QStringLiteral("height"), 760},
         {QStringLiteral("containX"), 72},
         {QStringLiteral("standWidth"), 900},
-        {QStringLiteral("pluginManager"), QVariant::fromValue(static_cast<QObject *>(&pluginManager))},
+        {QStringLiteral("manager"), QVariant::fromValue(static_cast<QObject *>(&pluginManager))},
         {QStringLiteral("selectedTab"), 2}
     });
     QVERIFY2(panel != nullptr, qPrintable(component.errorString()));
     QCoreApplication::processEvents();
     QCOMPARE(panel->property("selectedTab").toInt(), 2);
-    QCOMPARE(panel->property("pluginManager").value<QObject *>(),
+    QCOMPARE(panel->property("manager").value<QObject *>(),
              static_cast<QObject *>(&pluginManager));
     QCOMPARE(panel->property("plugins").toList().size(), 2);
 

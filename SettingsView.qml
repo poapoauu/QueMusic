@@ -1948,7 +1948,7 @@ Item {
             visible: false
             containX: settingStack.containX
             standWidth: settingStack.standWidth
-            pluginManager: pluginManager
+            manager: pluginManager
             onConfigureNavidromeRequested: settingsView.editNavidromeAccount(null)
         }
 

@@ -8,11 +8,11 @@ import QueMusic 1.0
 QScrollView {
     id: root
 
-    property var pluginManager: null
+    property var manager: null
     property real containX: 0
     property real standWidth: width - 48
     property int selectedTab: 0
-    readonly property var plugins: pluginManager ? pluginManager.plugins : []
+    readonly property var plugins: manager ? manager.plugins : []
     signal configureNavidromeRequested()
 
     clip: true
@@ -126,8 +126,8 @@ QScrollView {
                         Button {
                             text: "发现插件"
                             onClicked: {
-                                if (root.pluginManager)
-                                    root.pluginManager.discoverPlugins()
+                                if (root.manager)
+                                    root.manager.discoverPlugins()
                             }
                         }
                         Text {
@@ -139,7 +139,7 @@ QScrollView {
                     }
 
                     Text {
-                        visible: !root.pluginManager || root.pluginManager.plugins.length === 0
+                        visible: !root.manager || root.manager.plugins.length === 0
                         width: parent.width
                         text: "未发现音源插件"
                         color: Style.themes.textColor
@@ -209,18 +209,18 @@ QScrollView {
                                     Button {
                                         text: "加载"
                                         visible: modelData.loadable
-                                        onClicked: root.pluginManager.loadPlugin(modelData.id)
+                                        onClicked: root.manager.loadPlugin(modelData.id)
                                     }
                                     Button {
                                         text: modelData.state === "failed" ? "重试卸载" : "卸载"
                                         visible: modelData.state === "loaded" || modelData.unloadable
                                         enabled: modelData.unloadable
-                                        onClicked: root.pluginManager.unloadPlugin(modelData.id)
+                                        onClicked: root.manager.unloadPlugin(modelData.id)
                                     }
                                     Button {
                                         text: "重载"
                                         enabled: modelData.reloadable
-                                        onClicked: root.pluginManager.reloadPlugin(modelData.id)
+                                        onClicked: root.manager.reloadPlugin(modelData.id)
                                     }
                                 }
                             }
