@@ -1160,7 +1160,7 @@ Window {
         // 列表增删后同步 SMTC 上一首/下一首按钮可用性
         onCountChanged: updateSmtcControls()
     }
-    QueueBridgeController {
+    QueueWiring {
         id: queueBridgeController
         queueModel: playListModel
         bridge: mediaBridge

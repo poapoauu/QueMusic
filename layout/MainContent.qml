@@ -10,6 +10,7 @@ Rectangle {
     id: mainContent
     color: Style.themes.secondaryColor //Style.themes.blurOverlayColor
     readonly property int pageHeight: height - 60
+    property bool pageLoadingEnabled: true
 
     // 页面数组，便于管理
     property var pages: [
@@ -70,7 +71,7 @@ Rectangle {
         width: mainContent.width
         height: mainContent.pageHeight
         visible: true
-        active: true
+        active: mainContent.pageLoadingEnabled
         sourceComponent: HomePage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(0) }
     }
@@ -85,7 +86,7 @@ Rectangle {
         width: mainContent.width
         height: mainContent.pageHeight
         visible: false
-        active: false
+        active: mainContent.pageLoadingEnabled && false
         sourceComponent: PlaylistPage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(1) }
     }
@@ -100,7 +101,7 @@ Rectangle {
         width: mainContent.width
         height: mainContent.pageHeight
         visible: false
-        active: false
+        active: mainContent.pageLoadingEnabled && false
         sourceComponent: FavouritePage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(3) }
     }
@@ -116,7 +117,7 @@ Rectangle {
         width: mainContent.width
         height: mainContent.pageHeight
         visible: false
-        active: false
+        active: mainContent.pageLoadingEnabled && false
         sourceComponent: FilePage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(4) }
     }
@@ -131,7 +132,7 @@ Rectangle {
         width: mainContent.width
         height: mainContent.pageHeight
         visible: false
-        active: false
+        active: mainContent.pageLoadingEnabled && false
         sourceComponent: DownloadPage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(5) }
     }
@@ -146,7 +147,7 @@ Rectangle {
         width: mainContent.width
         height: mainContent.pageHeight
         visible: false
-        active: false
+        active: mainContent.pageLoadingEnabled && false
         sourceComponent: SearchPage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(6) }
     }
@@ -159,7 +160,7 @@ Rectangle {
         width: mainContent.width
         height: mainContent.pageHeight
         visible: false
-        active: false
+        active: mainContent.pageLoadingEnabled && false
         sourceComponent: SourceLibraryPage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(7) }
     }

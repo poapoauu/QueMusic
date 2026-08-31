@@ -161,6 +161,8 @@ target_include_directories(quemusic_media_bridge PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/media
 )
 
+file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS "components/*.qml")
+
 if(BUILD_TESTING)
     enable_testing()
 endif()
@@ -540,13 +542,15 @@ if(BUILD_TESTING)
         PREFIX "/QueMusic"
         FILES
             layout/LeftSideBar.qml
+            layout/MainContent.qml
+            pages/HomePage.qml
+            pages/PlaylistPage.qml
+            pages/FavouritePage.qml
+            pages/FilePage.qml
+            pages/DownloadPage.qml
+            pages/SearchPage.qml
             pages/SourceLibraryPage.qml
-            components/PlayList.qml
-            components/QueueBridgeController.qml
-            components/SButton.qml
-            components/QBlurCard.qml
-            components/Options.qml
-            components/Style.qml
+            ${QML_COMPONENTS}
     )
     target_link_libraries(quemusic_media_bridge_qml_test PRIVATE
         quemusic_media_bridge
@@ -637,9 +641,6 @@ set_source_files_properties(
     components/Style.qml
     components/Options.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-
-file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS "components/*.qml")
-
 
 qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
     URI QueMusic

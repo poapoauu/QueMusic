@@ -12,6 +12,9 @@ Popup {
     property alias model: playListView.model
 
     function clearOtherSongs() {
+        if (playListModel.count === 0 || playListModel.playListIndex < 0
+                || playListModel.playListIndex >= playListModel.count)
+            return;
         var currentEntry = window.copyQueueEntry(playListModel.get(playListModel.playListIndex));
         playListModel.remove(0, playListModel.count);
         playListModel.append(currentEntry);

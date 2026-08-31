@@ -61,31 +61,6 @@ private:
     QString m_name;
 };
 
-class NavigationRecorder final : public QObject {
-    Q_OBJECT
-    Q_PROPERTY(int pageIndex READ pageIndex NOTIFY pageIndexChanged)
-
-public:
-    int pageIndex() const { return m_pageIndex; }
-    const QList<int> &calls() const { return m_calls; }
-
-    Q_INVOKABLE void contentIndexed(int index)
-    {
-        m_calls.append(index);
-        if (m_pageIndex != index) {
-            m_pageIndex = index;
-            emit pageIndexChanged();
-        }
-    }
-
-signals:
-    void pageIndexChanged();
-
-private:
-    int m_pageIndex = 0;
-    QList<int> m_calls;
-};
-
 class WindowDouble final : public QObject {
     Q_OBJECT
     Q_PROPERTY(int exitIndex MEMBER exitIndex)
@@ -298,31 +273,36 @@ void MediaBridgeQmlTest::productionLeftSideBarDispatchesSourceLibrary()
 {
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    qmlRegisterType<QObject>("QueMusic", 1, 0, "DownloadedMusicModel");
 
-    NavigationRecorder mainContent;
     WindowDouble window;
     MusicApiDouble musicApi;
     QQuickItem mainLayout;
     NamedObject iconFont(QStringLiteral("Arial"));
     NamedObject textFont(QStringLiteral("Arial"));
-    engine.rootContext()->setContextProperty("mainContent", &mainContent);
     engine.rootContext()->setContextProperty("window", &window);
     engine.rootContext()->setContextProperty("MusicApi", &musicApi);
     engine.rootContext()->setContextProperty("mainLayout", &mainLayout);
     engine.rootContext()->setContextProperty("iconFont", &iconFont);
     engine.rootContext()->setContextProperty("textFont", &textFont);
 
+    QQmlComponent mainContentComponent(&engine, QUrl(QStringLiteral("qrc:/QueMusic/layout/MainContent.qml")));
+    QObject *mainContent = mainContentComponent.createWithInitialProperties(
+        {{QStringLiteral("pageLoadingEnabled"), false}});
+    QVERIFY2(mainContent != nullptr, qPrintable(mainContentComponent.errorString()));
+    engine.rootContext()->setContextProperty("mainContent", mainContent);
+
     QQmlComponent sidebarComponent(&engine, QUrl(QStringLiteral("qrc:/QueMusic/layout/LeftSideBar.qml")));
     QObject *sidebar = sidebarComponent.create();
     QVERIFY2(sidebar != nullptr, qPrintable(sidebarComponent.errorString()));
 
     QVERIFY(QMetaObject::invokeMethod(sidebar, "navigate", Q_ARG(QVariant, 6)));
-    QCOMPARE(mainContent.calls(), QList<int>{7});
-    mainContent.contentIndexed(6);
-    const QList<int> expectedContentCalls{7, 6};
-    QCOMPARE(mainContent.calls(), expectedContentCalls);
+    QCOMPARE(mainContent->property("pageIndex").toInt(), 7);
+    QVERIFY(QMetaObject::invokeMethod(mainContent, "contentIndexed", Q_ARG(QVariant, 6)));
+    QCOMPARE(mainContent->property("pageIndex").toInt(), 6);
 
     delete sidebar;
+    delete mainContent;
 }
 
 void MediaBridgeQmlTest::productionPlayListExposesClearOtherSongs()
@@ -337,6 +317,7 @@ void MediaBridgeQmlTest::productionPlayListExposesClearOtherSongs()
         Item {
             property alias queueModel: queue
             function appendQueueEntry(entry) { queue.append(entry) }
+            function clearQueue() { queue.clear() }
             ListModel { id: queue; property int playListIndex: 0 }
         }
     )", QUrl());
@@ -362,7 +343,7 @@ void MediaBridgeQmlTest::productionPlayListExposesClearOtherSongs()
     engine.rootContext()->setContextProperty("iconFont", &iconFont);
 
     QQmlComponent controllerComponent(&engine,
-                                      QUrl(QStringLiteral("qrc:/QueMusic/components/QueueBridgeController.qml")));
+                                      QUrl(QStringLiteral("qrc:/QueMusic/components/QueueWiring.qml")));
     QObject *queueController = controllerComponent.create();
     QVERIFY2(queueController != nullptr, qPrintable(controllerComponent.errorString()));
     queueController->setProperty("queueModel", QVariant::fromValue(queueModel));
@@ -387,6 +368,11 @@ void MediaBridgeQmlTest::productionPlayListExposesClearOtherSongs()
     QCOMPARE(mediaBridge.playCalls().size(), 1);
     QCOMPARE(mediaBridge.playCalls().constFirst().toMap().value(QStringLiteral("nativeId")).toString(),
              QStringLiteral("song-1"));
+
+    QVERIFY(QMetaObject::invokeMethod(modelOwner, "clearQueue"));
+    queueModel->setProperty("playListIndex", -1);
+    QVERIFY(QMetaObject::invokeMethod(playList, "clearOtherSongs"));
+    QCOMPARE(queueModel->property("count").toInt(), 0);
 
     delete host;
     delete queueController;
