@@ -35,12 +35,11 @@ its one loader and exposes an unload retry; it cannot load a second instance.
 Reloading after a successful unload creates a fresh native instance and
 re-registers the source.
 
-`PluginManager` is the only plugin object exposed to QML, as the
-`pluginManager` context property. It exposes a read-only package list and
-Discover/Load/Unload/Reload invokables. `SourceManager`, raw plugin instances,
-and sessions remain C++-only. The Settings 音源 page uses the manager to show
-state, errors, and active session counts; unload and reload controls are
-disabled while a package has active leases.
+`PluginManager`, `SourceManager`, raw plugin instances, session registry, and
+sessions remain C++-only. The unified source-library UI receives only
+`mediaBridge`; its nested account controller returns sanitized metadata, never
+credentials or secret references. Native package management therefore has no
+raw-plugin QObject path through QML.
 
 ## Plugin roots
 
@@ -72,3 +71,41 @@ JavaScript plugins are intentionally deferred. Their QuickJS-style isolated VM,
 permissions, package integrity, and hot-reload design is recorded in
 `docs/superpowers/specs/2026-08-29-js-plugin-runtime-design.md`; no JavaScript
 runtime is linked or loaded today.
+
+## Unified Media Bridge
+
+`MediaBridge` is the normalized boundary between plugin sessions and QML. It
+owns `MediaListModel` request state and routes source work through
+`SourceSessionRegistry`; plugins return source DTOs, while the bridge maps them
+to fixed roles: `sourceId`, `accountId`, `nativeId`, `kind`, `title`,
+`subtitle`, `artists`, `albumTitle`, `durationMs`, `artworkUrl`, `playable`,
+`container`, and non-sensitive `extra`. Raw provider JSON does not cross this
+boundary. A malformed terminal success callback is converted to a bridge
+`InvalidRequest` failure so a model cannot remain loading indefinitely.
+
+```text
+native source session -> SourceSessionRegistry -> MediaBridge -> QML model
+                                              \
+                                               -> QueueWiring -> MediaBridge::play()
+```
+
+`QueueWiring` only copies an allowlisted presentation subset plus the bridge
+flag and serialized `MediaId`. For a bridge entry it calls `MediaBridge::play`
+to resolve a fresh stream; it never transports a provider response, stream
+header, authenticated URL, plugin/session object, or credential. The existing
+QML media backend supports URL-authenticated streams only. Non-empty playback
+headers fail closed as `Unsupported` until a native header-capable backend is
+introduced.
+
+Source-account settings follow the same boundary: on macOS, secrets are held
+in the system Keychain via Security.framework while QSettings keeps only
+allowlisted metadata and a reference. Unsupported platforms report secure
+secret storage unavailable rather than persisting plaintext.
+
+## Legacy migration boundary
+
+The bridge currently serves plugin-backed Navidrome. NetEase, Kugou, QQ, and
+local files retain their existing `MusicApiService` paths until each source has
+a complete adapter or native plugin that implements the normalized bridge,
+account/session lifecycle, artwork, lyrics, stream resolution, and queue
+re-resolution. There is no bulk provider migration in this milestone.

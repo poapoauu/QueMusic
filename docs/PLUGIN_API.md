@@ -113,12 +113,13 @@ directory is intended for user-installed plugins on the local machine.
 `PluginManager::discover()` reads manifests without executing plugin code.
 `load()` creates a compatible Qt plugin instance, and `SourceManager` then
 validates its descriptor, initializes it, and adds its source ID to the source
-registry. The Settings “音源” page exposes `pluginManager` to list package
-metadata and offers Discover, Load, Unload, and Reload actions.
+registry. Package discovery and lifecycle remain C++-only implementation
+details for the unified media bridge.
 
-The QML `plugins` list contains `id`, `sourceId`, `name`, `version`,
-`category`, `state`, `error`, `path`, `activeLeases`, `loadable`, `unloadable`,
-and `reloadable`. States are `discovered`, `loaded`, `failed`, and `unloaded`.
+The manager's internal package records contain `id`, `sourceId`, `name`,
+`version`, `category`, `state`, `error`, `path`, `activeLeases`, `loadable`,
+`unloadable`, and `reloadable`. They are not exposed as raw QML plugin objects.
+States are `discovered`, `loaded`, `failed`, and `unloaded`.
 
 Each source session owns a package lease. Unload and reload return Busy while
 any session from that package remains alive, and the Settings controls are
@@ -129,6 +130,35 @@ instance, and exposes an enabled unload retry when no lease is active.
 Reloading creates a new plugin instance and reinitializes the source entry.
 This is a trusted-native-code lifecycle only; there is no sandbox, signature,
 permission, or cross-version ABI isolation.
+
+## Unified Media Bridge and QML boundary
+
+`MediaBridge` is the only QML-facing boundary for plugin-backed media. QML
+must never receive `PluginManager`, `SourceManager`, `SourceSessionRegistry`,
+`IMusicSourceSession`, raw plugin `QObject`s, raw provider JSON, credentials,
+or secret references. It receives fixed-role `MediaListModel` rows only:
+`sourceId`, `accountId`, `nativeId`, `kind`, `title`, `subtitle`, `artists`,
+`albumTitle`, `durationMs`, `artworkUrl`, `playable`, `container`, and the
+non-sensitive `extra` map. These roles are a host contract; source-specific
+payload fields must be normalized before crossing it.
+
+`mediaBridge.accountController` is the narrow account-management facade. It
+may expose the source/account identifiers, display name, enabled state,
+server URL, username, and loaded-source descriptors needed by the UI. It must
+not return a password, token, secret, secret reference, authenticated URL, or
+provider response.
+
+Bridge playback is routed through `QueueWiring`. The component allowlists the
+normalized queue fields and preserves the bridge flag plus serialized
+`MediaId`; it then calls `MediaBridge::play()` so each bridge item resolves a
+fresh stream before playback. `QueueWiring` must not pass provider payloads,
+stream URLs, request headers, or source/session objects through QML.
+
+The current QML `MediaPlayer` path supports URL-authenticated streams only.
+If a resolved stream contains any request headers, `MediaBridge` fails that
+playback action with `Unsupported`; it does not silently discard headers or
+attempt unauthenticated playback. A source that requires headers needs a
+native playback backend before it can be played.
 
 ## Deferred JavaScript runtime
 
@@ -147,7 +177,7 @@ API. Construct its `SourceAccount` with these plugin-defined fields:
 | `sourceId` | `navidrome` |
 | `parameters[serverUrl]` | Absolute `http` or `https` server URL; a trailing `/rest` is accepted and normalized. |
 | `parameters[username]` | Subsonic username. |
-| `secret` | UTF-8 password bytes, kept only in process memory. |
+| `secret` | UTF-8 password bytes supplied to the session in process memory. Persisted account secrets are stored only in the platform keychain. |
 
 The plugin advertises `Search`, `Browse`, `StreamAudio`, `Artwork`, and
 `Lyrics`. Root browse is Navidrome's simulated tag-based view (`getIndexes`),
@@ -169,6 +199,21 @@ then set `QUEMUSIC_NAVIDROME_URL`, `QUEMUSIC_NAVIDROME_USER`, and
 is opt-in and is not part of CTest. It prints only operation, outcome, error
 kind, and elapsed time; see
 [`navidrome-smoke-test.md`](superpowers/runbooks/navidrome-smoke-test.md).
+
+On macOS, `SourceAccountStore` writes only allowlisted non-sensitive metadata
+and a keychain reference to QSettings; the secret itself is stored through
+Security.framework. On unsupported platforms secret persistence explicitly
+reports unavailable and must never fall back to plaintext settings storage.
+
+## Legacy provider migration boundary
+
+Navidrome is the first provider using the native source-plugin and
+`MediaBridge` path. Existing NetEase, Kugou, QQ, and local-file behavior stays
+behind `MusicApiService` until that individual provider has a complete bridge
+adapter or native source plugin: normalized search/browse results, account and
+session lifecycle, artwork/lyrics/stream handling, queue re-resolution, and
+regression coverage. This milestone does not remove or bulk-migrate legacy
+providers.
 
 ## Capability Rules
 

@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed on 2026-08-30. This design requires user review before implementation.
+Accepted on 2026-08-31 after the documented build, full CTest, smoke
+precondition, and non-blocking GUI-launch checks were recorded without
+sensitive data in the Task 7 verification report.
 
 ## Goal
 
@@ -27,7 +29,7 @@ source plugin; they are not converted in this milestone.
 ```text
 QML pages and playback queue
         |
-        | MediaItem / MediaListModel / request state
+        | fixed MediaItem roles / request state
         v
 MediaBridge
   |- SourceSessionRegistry
@@ -43,9 +45,10 @@ Source plugin session or legacy source adapter
 ```
 
 Only `MediaBridge` is exposed to QML for plugin-backed media. QML does not
-receive `SourceManager`, a plugin object, `IMusicSourceSession`, or a raw
-provider response. The playback engine receives a `PlaybackEntry`, not a
-provider-specific URL or identifier.
+receive `SourceManager`, `PluginManager`, `SourceSessionRegistry`, a plugin
+object, `IMusicSourceSession`, or a raw provider response. The playback engine
+receives a bridge-created `PlaybackEntry`, not a provider-specific URL or
+identifier.
 
 ### Components
 
@@ -71,6 +74,13 @@ It owns a request state (`Idle`, `Loading`, `Ready`, `Empty`, or `Failed`), an
 error category, retry metadata, and paging state. `MediaPage` contains a
 normalized item list plus an opaque bridge-owned `nextCursor` and `hasMore`.
 Source-specific page numbers or tokens never appear in QML.
+
+The fixed roles are `sourceId`, `accountId`, `nativeId`, `kind`, `title`,
+`subtitle`, `artists`, `albumTitle`, `durationMs`, `artworkUrl`, `playable`,
+`container`, and a non-sensitive `extra` map. They cannot be replaced with a
+dynamic provider model. An unexpected operation name or malformed terminal
+success payload is represented as `InvalidRequest` and transitions the active
+model to `Failed`.
 
 #### `SourceSessionRegistry`
 
@@ -99,6 +109,13 @@ retry(requestId)
 enabled sources. Results retain their origin in `MediaId`, so a mixed-source
 search remains safe to enqueue and play.
 
+`QueueWiring` is the QML-side bridge boundary for the existing queue. It
+allowlists presentational fields and preserves only the bridge marker and a
+serialized `MediaId` for bridge playback. It calls `MediaBridge::play()` for
+re-resolution and must not move a provider DTO, source/session object,
+authenticated stream URL, request header, credential, or secret reference into
+the QML queue.
+
 #### `PlaybackEntry`
 
 Before playback, `MediaBridge` asks the owning session to resolve a stream and
@@ -107,12 +124,20 @@ request headers, expiration time, artwork reference, and lyrics reference.
 The bridge never writes temporary authenticated URLs or request headers to
 persistent storage.
 
+The current QML media backend can use URL-authenticated streams only. If a
+source returns request headers, the bridge fails the playback action with
+`Unsupported`; it must not discard headers or try the URL without them. A
+native header-capable playback backend is required before such a source can
+play.
+
 ## Account and Secret Handling
 
 An account record contains source ID, account ID, display name, enabled state,
 and non-sensitive parameters such as a Navidrome server URL. Passwords, tokens,
 and equivalent credentials are stored only through the system keychain. The
 settings file contains a keychain reference, never the secret itself.
+On macOS this uses Security.framework; on unsupported platforms account-secret
+persistence reports unavailable instead of writing plaintext.
 
 ## Lifecycle and Errors
 
@@ -140,6 +165,9 @@ as a retryable source state rather than a dangling QML object.
 
 The legacy online pages remain functional until their matching adapter is
 complete. No mass rewrite or removal occurs in the bridge foundation milestone.
+Each provider migration is individually gated on normalized bridge results,
+account/session lifecycle, artwork, lyrics, stream resolution, queue
+re-resolution, and regression coverage.
 
 ## Acceptance Criteria
 
