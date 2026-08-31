@@ -10,6 +10,14 @@ Popup {
     id: playList
     // 列表中： source：-1：本地 0.酷狗 1.网易云 2.qq音乐
     property alias model: playListView.model
+
+    function clearOtherSongs() {
+        var currentEntry = window.copyQueueEntry(playListModel.get(playListModel.playListIndex));
+        playListModel.remove(0, playListModel.count);
+        playListModel.append(currentEntry);
+        playListModel.playListIndex = 0;
+        Style.warned("已清空播放列表", 1);
+    }
     padding: 0
     margins: -1
     parent: Overlay.overlay
@@ -51,12 +59,7 @@ Popup {
             onClicked: {
                 globalDialog.openSimpleDialog("删除", "这将移除播放列表其他歌曲，是否继续？",
                     function() {
-                        var currentEntry = window.copyQueueEntry(
-                            playListModel.get(playListModel.playListIndex));
-                        playListModel.remove( 0, playListModel.count );
-                        playListModel.append(currentEntry);
-                        playListModel.playListIndex = 0;
-                        Style.warned("已清空播放列表",1);
+                        playList.clearOtherSongs();
                     }
                 );
             }

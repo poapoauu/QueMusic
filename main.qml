@@ -142,39 +142,11 @@ Window {
     }
 
     function copyQueueEntry(entry) {
-        return {
-            name: entry.name,
-            path: entry.path,
-            songer: entry.songer,
-            source: entry.source,
-            bridge: entry.bridge === true,
-            mediaId: entry.mediaId,
-            albumTitle: entry.albumTitle,
-            artworkUrl: entry.artworkUrl,
-            durationMs: entry.durationMs
-        };
+        return queueBridgeController.copyQueueEntry(entry);
     }
 
     function playQueueEntry(index) {
-        if (index < 0 || index >= playListModel.count)
-            return;
-        var entry = playListModel.get(index);
-        if (entry.bridge === true && entry.mediaId) {
-            mediaBridge.play({
-                sourceId: entry.mediaId.sourceId,
-                accountId: entry.mediaId.accountId,
-                nativeId: entry.mediaId.nativeId,
-                kind: entry.mediaId.kind,
-                title: entry.name,
-                subtitle: entry.songer,
-                artists: entry.songer ? [entry.songer] : [],
-                albumTitle: entry.albumTitle || "",
-                artworkUrl: entry.artworkUrl || "",
-                durationMs: entry.durationMs || 0
-            });
-            return;
-        }
-        musicControlMin.refreshLegacyMusicPlay();
+        queueBridgeController.playQueueEntry(index);
     }
 
     function applyBridgePlayback(entry) {
@@ -1187,6 +1159,12 @@ Window {
         property int playListIndex: -1
         // 列表增删后同步 SMTC 上一首/下一首按钮可用性
         onCountChanged: updateSmtcControls()
+    }
+    QueueBridgeController {
+        id: queueBridgeController
+        queueModel: playListModel
+        bridge: mediaBridge
+        legacyPlayer: musicControlMin
     }
     SearchCard {
         id: searchCard

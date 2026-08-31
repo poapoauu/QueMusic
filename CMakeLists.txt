@@ -534,7 +534,19 @@ if(BUILD_TESTING)
     )
     target_compile_features(quemusic_media_bridge_qml_test PRIVATE cxx_std_17)
     target_compile_definitions(quemusic_media_bridge_qml_test PRIVATE
-        QUEMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    qt_add_resources(quemusic_media_bridge_qml_test "quemusic_media_bridge_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES
+            layout/LeftSideBar.qml
+            pages/SourceLibraryPage.qml
+            components/PlayList.qml
+            components/QueueBridgeController.qml
+            components/SButton.qml
+            components/QBlurCard.qml
+            components/Options.qml
+            components/Style.qml
     )
     target_link_libraries(quemusic_media_bridge_qml_test PRIVATE
         quemusic_media_bridge

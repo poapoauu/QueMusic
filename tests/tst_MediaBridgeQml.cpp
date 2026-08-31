@@ -7,6 +7,7 @@
 
 #include <QDir>
 #include <QHash>
+#include <QQuickItem>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
@@ -48,6 +49,135 @@ private:
     QHash<QString, QByteArray> values;
 };
 
+class NamedObject final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QString name READ name CONSTANT)
+
+public:
+    explicit NamedObject(QString name) : m_name(std::move(name)) {}
+    QString name() const { return m_name; }
+
+private:
+    QString m_name;
+};
+
+class NavigationRecorder final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(int pageIndex READ pageIndex NOTIFY pageIndexChanged)
+
+public:
+    int pageIndex() const { return m_pageIndex; }
+    const QList<int> &calls() const { return m_calls; }
+
+    Q_INVOKABLE void contentIndexed(int index)
+    {
+        m_calls.append(index);
+        if (m_pageIndex != index) {
+            m_pageIndex = index;
+            emit pageIndexChanged();
+        }
+    }
+
+signals:
+    void pageIndexChanged();
+
+private:
+    int m_pageIndex = 0;
+    QList<int> m_calls;
+};
+
+class WindowDouble final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(int exitIndex MEMBER exitIndex)
+
+public:
+    int exitIndex = 0;
+
+signals:
+    void exit();
+};
+
+class MusicApiDouble final : public QObject {
+    Q_OBJECT
+
+public:
+    Q_INVOKABLE void getRecommendSongs(int, int) {}
+};
+
+class PlaybackBridgeDouble final : public QObject {
+    Q_OBJECT
+
+public:
+    const QVariantList &playCalls() const { return m_playCalls; }
+    Q_INVOKABLE void play(const QVariant &entry) { m_playCalls.append(entry); }
+
+private:
+    QVariantList m_playCalls;
+};
+
+class AccountControllerDouble final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList accounts READ accounts NOTIFY accountsChanged)
+    Q_PROPERTY(QString lastError READ lastError CONSTANT)
+
+public:
+    QVariantList accounts() const { return m_accounts; }
+    QString lastError() const { return {}; }
+    void setAccounts(QVariantList accounts)
+    {
+        m_accounts = std::move(accounts);
+        emit accountsChanged();
+    }
+
+signals:
+    void accountsChanged();
+
+private:
+    QVariantList m_accounts;
+};
+
+class ResultModelDouble final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(int requestState READ requestState CONSTANT)
+    Q_PROPERTY(QString errorMessage READ errorMessage CONSTANT)
+    Q_PROPERTY(bool canRetry READ canRetry CONSTANT)
+    Q_PROPERTY(int count READ count CONSTANT)
+    Q_PROPERTY(bool hasMore READ hasMore CONSTANT)
+
+public:
+    int requestState() const { return 0; }
+    QString errorMessage() const { return {}; }
+    bool canRetry() const { return false; }
+    int count() const { return 0; }
+    bool hasMore() const { return false; }
+    Q_INVOKABLE QVariant get(int) const { return {}; }
+};
+
+class MediaBridgeDouble final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QObject *accountController READ accountController CONSTANT)
+    Q_PROPERTY(QObject *searchResults READ searchResults CONSTANT)
+    Q_PROPERTY(QObject *browseResults READ browseResults CONSTANT)
+
+public:
+    MediaBridgeDouble(QObject *accountController, QObject *results)
+        : m_accountController(accountController), m_results(results)
+    {
+    }
+
+    QObject *accountController() const { return m_accountController; }
+    QObject *searchResults() const { return m_results; }
+    QObject *browseResults() const { return m_results; }
+
+signals:
+    void artworkReady(const QVariant &artwork);
+    void mediaActionFailed(const QVariant &error);
+
+private:
+    QObject *m_accountController;
+    QObject *m_results;
+};
+
 } // namespace
 
 class MediaBridgeQmlTest : public QObject {
@@ -56,7 +186,9 @@ class MediaBridgeQmlTest : public QObject {
 private slots:
     void exposesOnlyBridgeAndAcceptsNormalizedQueueEntry();
     void accountControllerHidesSecretsAndManagesAccountLifecycle();
-    void qmlNavigationQueueAndAccountSelectionContracts();
+    void productionLeftSideBarDispatchesSourceLibrary();
+    void productionPlayListExposesClearOtherSongs();
+    void productionSourceLibraryRejectsDisabledAccounts();
 };
 
 void MediaBridgeQmlTest::exposesOnlyBridgeAndAcceptsNormalizedQueueEntry()
@@ -162,172 +294,133 @@ void MediaBridgeQmlTest::accountControllerHidesSecretsAndManagesAccountLifecycle
     QVERIFY(accountController.accounts().isEmpty());
 }
 
-void MediaBridgeQmlTest::qmlNavigationQueueAndAccountSelectionContracts()
+void MediaBridgeQmlTest::productionLeftSideBarDispatchesSourceLibrary()
 {
     QQmlApplicationEngine engine;
-    QQmlComponent component(&engine);
-    component.setData(R"(
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+
+    NavigationRecorder mainContent;
+    WindowDouble window;
+    MusicApiDouble musicApi;
+    QQuickItem mainLayout;
+    NamedObject iconFont(QStringLiteral("Arial"));
+    NamedObject textFont(QStringLiteral("Arial"));
+    engine.rootContext()->setContextProperty("mainContent", &mainContent);
+    engine.rootContext()->setContextProperty("window", &window);
+    engine.rootContext()->setContextProperty("MusicApi", &musicApi);
+    engine.rootContext()->setContextProperty("mainLayout", &mainLayout);
+    engine.rootContext()->setContextProperty("iconFont", &iconFont);
+    engine.rootContext()->setContextProperty("textFont", &textFont);
+
+    QQmlComponent sidebarComponent(&engine, QUrl(QStringLiteral("qrc:/QueMusic/layout/LeftSideBar.qml")));
+    QObject *sidebar = sidebarComponent.create();
+    QVERIFY2(sidebar != nullptr, qPrintable(sidebarComponent.errorString()));
+
+    QVERIFY(QMetaObject::invokeMethod(sidebar, "navigate", Q_ARG(QVariant, 6)));
+    QCOMPARE(mainContent.calls(), QList<int>{7});
+    mainContent.contentIndexed(6);
+    const QList<int> expectedContentCalls{7, 6};
+    QCOMPARE(mainContent.calls(), expectedContentCalls);
+
+    delete sidebar;
+}
+
+void MediaBridgeQmlTest::productionPlayListExposesClearOtherSongs()
+{
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+
+    QQmlComponent modelComponent(&engine);
+    modelComponent.setData(R"(
         import QtQuick
         import QtQml.Models
-
         Item {
-            property int sourceLibraryPage: 7
-            property int searchPage: 6
-            property var contentCalls: []
-            property var bridgePlayCalls: []
-            property int legacyPlayCalls: 0
-            property int queueIndex: -1
-            property var accounts: []
-            property var selectedAccount: null
-            property string selectedAccountId: selectedAccount ? selectedAccount.accountId : ""
-            property int selectorIndex: -1
-
-            ListModel { id: queueModel }
-
-            function contentIndexed(index) {
-                contentCalls = contentCalls.concat([index])
-            }
-
-            function navigateFromSidebar(choice) {
-                contentIndexed(choice >= 6 ? choice + 1 : choice)
-            }
-
-            function openSearch() {
-                contentIndexed(searchPage)
-            }
-
-            function appendQueueEntry(entry) {
-                queueModel.append(entry)
-                queueIndex = queueModel.count - 1
-            }
-
-            function copyQueueEntry(entry) {
-                return {
-                    name: entry.name,
-                    path: entry.path,
-                    songer: entry.songer,
-                    source: entry.source,
-                    bridge: entry.bridge === true,
-                    mediaId: entry.mediaId,
-                    albumTitle: entry.albumTitle,
-                    artworkUrl: entry.artworkUrl,
-                    durationMs: entry.durationMs
-                }
-            }
-
-            function clearOtherSongs() {
-                var currentEntry = copyQueueEntry(queueModel.get(queueIndex))
-                queueModel.clear()
-                queueModel.append(currentEntry)
-                queueIndex = 0
-            }
-
-            function playQueueEntry(index) {
-                var entry = queueModel.get(index)
-                if (entry.bridge === true && entry.mediaId) {
-                    bridgePlayCalls = bridgePlayCalls.concat([{
-                        sourceId: entry.mediaId.sourceId,
-                        accountId: entry.mediaId.accountId,
-                        nativeId: entry.mediaId.nativeId,
-                        kind: entry.mediaId.kind,
-                        title: entry.name,
-                        subtitle: entry.songer,
-                        albumTitle: entry.albumTitle,
-                        artworkUrl: entry.artworkUrl,
-                        durationMs: entry.durationMs
-                    }])
-                    return
-                }
-                legacyPlayCalls += 1
-            }
-
-            function enabledAccounts() {
-                var enabled = []
-                for (var i = 0; i < accounts.length; ++i) {
-                    if (accounts[i].enabled === true)
-                        enabled.push(accounts[i])
-                }
-                return enabled
-            }
-
-            function chooseAccount(index) {
-                var enabled = enabledAccounts()
-                selectedAccount = index >= 0 && index < enabled.length && enabled[index].enabled === true
-                    ? enabled[index] : null
-            }
-
-            function ensureSelectedAccount() {
-                var enabled = enabledAccounts()
-                var selectedIndex = -1
-                if (selectedAccount) {
-                    for (var i = 0; i < enabled.length; ++i) {
-                        if (enabled[i].accountId === selectedAccount.accountId) {
-                            selectedIndex = i
-                            break
-                        }
-                    }
-                }
-                if (selectedIndex < 0 && enabled.length > 0)
-                    selectedIndex = 0
-                selectorIndex = selectedIndex
-                chooseAccount(selectedIndex)
-            }
-
+            property alias queueModel: queue
+            function appendQueueEntry(entry) { queue.append(entry) }
+            ListModel { id: queue; property int playListIndex: 0 }
         }
     )", QUrl());
-    QObject *harness = component.create();
-    QVERIFY2(harness != nullptr, qPrintable(component.errorString()));
-
-    QVERIFY(QMetaObject::invokeMethod(harness, "navigateFromSidebar", Q_ARG(QVariant, 6)));
-    QVERIFY(QMetaObject::invokeMethod(harness, "openSearch"));
-    const QVariantList contentCalls = harness->property("contentCalls").toList();
-    const QVariantList expectedContentCalls{7, 6};
-    QCOMPARE(contentCalls, expectedContentCalls);
-    QCOMPARE(harness->property("sourceLibraryPage").toInt(), 7);
-    QCOMPARE(harness->property("searchPage").toInt(), 6);
-
+    QObject *modelOwner = modelComponent.create();
+    QVERIFY2(modelOwner != nullptr, qPrintable(modelComponent.errorString()));
+    QObject *queueModel = modelOwner->property("queueModel").value<QObject *>();
+    QVERIFY(queueModel != nullptr);
     const QVariantMap mediaId{{QStringLiteral("sourceId"), QStringLiteral("navidrome")},
                               {QStringLiteral("accountId"), QStringLiteral("home")},
                               {QStringLiteral("nativeId"), QStringLiteral("song-1")},
                               {QStringLiteral("kind"), 0}};
-    const QVariantMap bridgeEntry{{QStringLiteral("name"), QStringLiteral("Bridge Song")},
-                                  {QStringLiteral("path"), QStringLiteral("bridge:navidrome/home/song-1/0")},
-                                  {QStringLiteral("songer"), QStringLiteral("Bridge Artist")},
-                                  {QStringLiteral("source"), -2},
-                                  {QStringLiteral("bridge"), true},
-                                  {QStringLiteral("mediaId"), mediaId},
-                                  {QStringLiteral("albumTitle"), QStringLiteral("Bridge Album")},
-                                  {QStringLiteral("artworkUrl"), QStringLiteral("image://bridge/song-1")},
-                                  {QStringLiteral("durationMs"), 1234}};
-    QVERIFY(QMetaObject::invokeMethod(harness, "appendQueueEntry", Q_ARG(QVariant, bridgeEntry)));
-    QVERIFY(QMetaObject::invokeMethod(harness, "clearOtherSongs"));
-    QVERIFY(QMetaObject::invokeMethod(harness, "playQueueEntry", Q_ARG(QVariant, 0)));
+    const QVariantMap entry{{QStringLiteral("name"), QStringLiteral("Bridge Song")},
+                            {QStringLiteral("songer"), QStringLiteral("Bridge Artist")},
+                            {QStringLiteral("bridge"), true},
+                            {QStringLiteral("mediaId"), mediaId}};
+    QVERIFY(QMetaObject::invokeMethod(modelOwner, "appendQueueEntry", Q_ARG(QVariant, entry)));
 
-    const QVariantList bridgePlayCalls = harness->property("bridgePlayCalls").toList();
-    QCOMPARE(bridgePlayCalls.size(), 1);
-    const QVariantMap resolvedBridgeEntry = bridgePlayCalls.constFirst().toMap();
-    QCOMPARE(resolvedBridgeEntry.value(QStringLiteral("sourceId")).toString(), QStringLiteral("navidrome"));
-    QCOMPARE(resolvedBridgeEntry.value(QStringLiteral("accountId")).toString(), QStringLiteral("home"));
-    QCOMPARE(resolvedBridgeEntry.value(QStringLiteral("nativeId")).toString(),
+    PlaybackBridgeDouble mediaBridge;
+    QQuickItem mainLayout;
+    NamedObject iconFont(QStringLiteral("Arial"));
+    engine.rootContext()->setContextProperty("playListModel", queueModel);
+    engine.rootContext()->setContextProperty("mainLayout", &mainLayout);
+    engine.rootContext()->setContextProperty("iconFont", &iconFont);
+
+    QQmlComponent controllerComponent(&engine,
+                                      QUrl(QStringLiteral("qrc:/QueMusic/components/QueueBridgeController.qml")));
+    QObject *queueController = controllerComponent.create();
+    QVERIFY2(queueController != nullptr, qPrintable(controllerComponent.errorString()));
+    queueController->setProperty("queueModel", QVariant::fromValue(queueModel));
+    queueController->setProperty("bridge", QVariant::fromValue(static_cast<QObject *>(&mediaBridge)));
+    engine.rootContext()->setContextProperty("window", queueController);
+
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QueMusic 1.0
+        ApplicationWindow { width: 400; height: 300; PlayList { objectName: "productionPlayList" } }
+    )", QUrl());
+    QObject *host = component.create();
+    QVERIFY2(host != nullptr, qPrintable(component.errorString()));
+    QObject *playList = host->findChild<QObject *>(QStringLiteral("productionPlayList"));
+    QVERIFY(playList != nullptr);
+
+    QVERIFY(QMetaObject::invokeMethod(playList, "clearOtherSongs"));
+    QCOMPARE(queueModel->property("count").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(queueController, "playQueueEntry", Q_ARG(QVariant, 0)));
+    QCOMPARE(mediaBridge.playCalls().size(), 1);
+    QCOMPARE(mediaBridge.playCalls().constFirst().toMap().value(QStringLiteral("nativeId")).toString(),
              QStringLiteral("song-1"));
-    QCOMPARE(harness->property("legacyPlayCalls").toInt(), 0);
 
-    const QVariantMap disabledAccount{{QStringLiteral("accountId"), QStringLiteral("offline")},
-                                      {QStringLiteral("enabled"), false}};
-    const QVariantMap enabledAccount{{QStringLiteral("accountId"), QStringLiteral("home")},
-                                     {QStringLiteral("enabled"), true}};
-    harness->setProperty("accounts", QVariantList{disabledAccount, enabledAccount});
-    harness->setProperty("selectedAccount", disabledAccount);
-    QVERIFY(QMetaObject::invokeMethod(harness, "ensureSelectedAccount"));
-    QCOMPARE(harness->property("selectorIndex").toInt(), 0);
-    QCOMPARE(harness->property("selectedAccountId").toString(), QStringLiteral("home"));
+    delete host;
+    delete queueController;
+    delete modelOwner;
+}
 
-    harness->setProperty("accounts", QVariantList{disabledAccount});
-    QVERIFY(QMetaObject::invokeMethod(harness, "ensureSelectedAccount"));
-    QCOMPARE(harness->property("selectorIndex").toInt(), -1);
-    QVERIFY(harness->property("selectedAccountId").toString().isEmpty());
+void MediaBridgeQmlTest::productionSourceLibraryRejectsDisabledAccounts()
+{
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
 
-    delete harness;
+    AccountControllerDouble accountController;
+    const QVariantMap disabled{{QStringLiteral("accountId"), QStringLiteral("offline")},
+                               {QStringLiteral("displayName"), QStringLiteral("Offline")},
+                               {QStringLiteral("enabled"), false}};
+    const QVariantMap enabled{{QStringLiteral("accountId"), QStringLiteral("home")},
+                              {QStringLiteral("displayName"), QStringLiteral("Home")},
+                              {QStringLiteral("enabled"), true}};
+    accountController.setAccounts(QVariantList{disabled, enabled});
+    ResultModelDouble results;
+    MediaBridgeDouble mediaBridge(&accountController, &results);
+    engine.rootContext()->setContextProperty("mediaBridge", &mediaBridge);
+
+    QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/QueMusic/pages/SourceLibraryPage.qml")));
+    QObject *page = component.create();
+    QVERIFY2(page != nullptr, qPrintable(component.errorString()));
+    QCOMPARE(page->property("selectedAccount").toMap().value(QStringLiteral("accountId")).toString(),
+             QStringLiteral("home"));
+
+    accountController.setAccounts(QVariantList{disabled});
+    QCoreApplication::processEvents();
+    QVERIFY(!page->property("selectedAccount").isValid() || page->property("selectedAccount").isNull());
+
+    delete page;
 }
 
 QTEST_MAIN(MediaBridgeQmlTest)

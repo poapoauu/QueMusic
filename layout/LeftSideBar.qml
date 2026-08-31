@@ -61,6 +61,11 @@ Rectangle {
         return choice >= 6 ? choice + 1 : choice;
     }
 
+    function navigate(choice) {
+        sidebar.indexed(choice);
+        mainContent.contentIndexed(sidebar.contentIndexForNav(choice));
+    }
+
     Connections {
         target: window
         function onExit() {
@@ -282,8 +287,7 @@ Rectangle {
                     onReleased: navDelegate.scale = 1.0
                     onCanceled: navDelegate.scale = 1.0
                     onClicked: {
-                        sidebar.indexed(index);
-                        mainContent.contentIndexed(sidebar.contentIndexForNav(index));
+                        sidebar.navigate(index);
                         forceActiveFocus();
                     }
                 }
