@@ -1,5 +1,6 @@
 #include "MediaBridge.h"
 
+#include "SourceAccountController.h"
 #include "IMusicSourceSession.h"
 #include "SourceSessionRegistry.h"
 #include "SourceTypes.h"
@@ -59,6 +60,16 @@ MediaRequestState MediaBridge::requestState() const
 {
     return m_lastOperation.has_value() ? modelFor(*m_lastOperation)->requestState()
                                        : MediaRequestState::Idle;
+}
+
+SourceAccountController *MediaBridge::accountController() const
+{
+    return m_accountController;
+}
+
+void MediaBridge::setAccountController(SourceAccountController *controller)
+{
+    m_accountController = controller;
 }
 
 void MediaBridge::search(const QString &sourceScope, const QString &keyword, int limit)

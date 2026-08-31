@@ -23,6 +23,7 @@ public:
     QUuid requestArtwork(const MediaId &id, const TrackRef &track);
     void trackRequest(const MediaId &id, const QUuid &requestId);
     void completeRequest(const MediaId &id, const QUuid &requestId);
+    void enable(const QString &sourceId, const QString &accountId);
     void disable(const QString &sourceId, const QString &accountId);
     void remove(const QString &sourceId, const QString &accountId);
     QList<StoredSourceAccount> enabledAccounts() const;

@@ -555,7 +555,7 @@ Rectangle {
     function lastMedia() {
         if(playListModel.playListIndex > 0) {
             playListModel.playListIndex -= 1;
-            musicControlMin.refreshMusicPlay();
+            window.playQueueEntry(playListModel.playListIndex);
             if(windowsSmtc.available)
                 windowsSmtc.setControlsEnabled(true, true,
                     playListModel.playListIndex < playListModel.count - 1,
@@ -569,7 +569,7 @@ Rectangle {
         } else {
             playListModel.playListIndex = 0;
         }
-        musicControlMin.refreshMusicPlay();
+        window.playQueueEntry(playListModel.playListIndex);
         if(windowsSmtc.available)
             windowsSmtc.setControlsEnabled(true, true,
                 playListModel.playListIndex < playListModel.count - 1,
@@ -578,7 +578,7 @@ Rectangle {
     // 随机播放音乐
     function randomMedia() {
         playListModel.playListIndex = Math.floor( Math.random() * playListModel.count );
-        musicControlMin.refreshMusicPlay();
+        window.playQueueEntry(playListModel.playListIndex);
         if(windowsSmtc.available)
             windowsSmtc.setControlsEnabled(true, true,
                 playListModel.playListIndex < playListModel.count - 1,
@@ -595,6 +595,10 @@ Rectangle {
 
     // 刷新音乐播放数据
     function refreshMusicPlay() {
+        window.playQueueEntry(playListModel.playListIndex);
+    }
+
+    function refreshLegacyMusicPlay() {
         var source = playListModel.get(playListModel.playListIndex).source;
         if(source == -1) {
             var sourcePath = playListModel.get(playListModel.playListIndex).path;

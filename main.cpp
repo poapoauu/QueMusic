@@ -12,6 +12,11 @@
 #include <QSettings>
 #include <QFileInfo>
 #include "core/source/SourceStartup.h"
+#include "core/media/MacKeychainSecretStore.h"
+#include "core/media/MediaBridge.h"
+#include "core/media/SourceAccountController.h"
+#include "core/media/SourceAccountStore.h"
+#include "core/media/SourceSessionRegistry.h"
 #include "cpp/FolderModel.h"
 #include "cpp/Favorites.h"
 #include "cpp/AccountManager.h"
@@ -164,7 +169,21 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("logManager", logManager);
 
     SourceManager *sourceManager = initializeSourceStartupBoundary(application, engine);
-    Q_UNUSED(sourceManager);
+
+    auto *sourceAccountSettings = new QSettings(
+        configPath + QStringLiteral("/BroNekoX/QueMusic.ini"), QSettings::IniFormat, &engine);
+#if defined(Q_OS_MACOS)
+    auto *sourceSecretStore = new MacKeychainSecretStore;
+#else
+    auto *sourceSecretStore = new UnavailableSecretStore;
+#endif
+    SourceAccountStore sourceAccountStore(sourceAccountSettings, sourceSecretStore);
+    SourceSessionRegistry sourceSessionRegistry(sourceManager, &sourceAccountStore, &engine);
+    SourceAccountController sourceAccountController(&sourceAccountStore, &sourceSessionRegistry,
+                                                    sourceManager, &engine);
+    MediaBridge mediaBridge(&sourceSessionRegistry, &engine);
+    mediaBridge.setAccountController(&sourceAccountController);
+    engine.rootContext()->setContextProperty("mediaBridge", &mediaBridge);
 
     // 创建模型实例
     FolderModel *myFolderModel = new FolderModel(&engine);

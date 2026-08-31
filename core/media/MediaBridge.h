@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MediaListModel.h"
+#include "SourceAccountController.h"
 
 #include <QHash>
 #include <QObject>
@@ -19,6 +20,7 @@ class MediaBridge : public QObject {
     Q_OBJECT
     Q_PROPERTY(MediaListModel *searchResults READ searchResults CONSTANT)
     Q_PROPERTY(MediaListModel *browseResults READ browseResults CONSTANT)
+    Q_PROPERTY(SourceAccountController *accountController READ accountController CONSTANT)
     Q_PROPERTY(MediaRequestState requestState READ requestState NOTIFY requestStateChanged)
 
 public:
@@ -28,6 +30,8 @@ public:
     MediaListModel *searchResults() const;
     MediaListModel *browseResults() const;
     MediaRequestState requestState() const;
+    SourceAccountController *accountController() const;
+    void setAccountController(SourceAccountController *controller);
 
     Q_INVOKABLE void search(const QString &sourceScope, const QString &keyword, int limit = 50);
     Q_INVOKABLE void browse(const QString &sourceId, const QString &accountId,
@@ -110,6 +114,7 @@ private:
     void emitRequestStateChangedFor(OperationType type);
 
     QPointer<SourceSessionRegistry> m_registry;
+    QPointer<SourceAccountController> m_accountController;
     MediaListModel *m_searchResults = nullptr;
     MediaListModel *m_browseResults = nullptr;
     std::optional<OperationType> m_lastOperation;

@@ -19,7 +19,8 @@ Rectangle {
         favouritePage, // 3: 收藏页
         filePage,      // 4: 本地文件页
         downloadPage,   // 5: 下载页
-        searchPage    // 6: 搜索页
+        searchPage,   // 6: 搜索页
+        sourceLibraryPage // 7: 统一来源音乐库
     ]
 
     property int pageIndex: 0
@@ -148,5 +149,18 @@ Rectangle {
         active: false
         sourceComponent: SearchPage {}
         onLoaded: { visible = true; mainContent.finishedLoaderPage(6) }
+    }
+
+    Loader {
+        id: sourceLibraryPage
+        x: 0
+        y: 60
+        opacity: 1
+        width: mainContent.width
+        height: mainContent.pageHeight
+        visible: false
+        active: false
+        sourceComponent: SourceLibraryPage {}
+        onLoaded: { visible = true; mainContent.finishedLoaderPage(7) }
     }
 }

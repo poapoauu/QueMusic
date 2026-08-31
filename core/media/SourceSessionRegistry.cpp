@@ -127,6 +127,16 @@ void SourceSessionRegistry::disable(const QString &sourceId, const QString &acco
     release(key);
 }
 
+void SourceSessionRegistry::enable(const QString &sourceId, const QString &accountId)
+{
+    const SessionKey key = keyFor(sourceId, accountId);
+    if (key.sourceId.isEmpty() || key.accountId.isEmpty()) {
+        return;
+    }
+    m_disabledAccounts.remove(key);
+    release(key);
+}
+
 void SourceSessionRegistry::remove(const QString &sourceId, const QString &accountId)
 {
     const SessionKey key = keyFor(sourceId, accountId);

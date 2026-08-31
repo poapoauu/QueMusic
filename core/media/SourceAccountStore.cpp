@@ -152,6 +152,30 @@ bool SourceAccountStore::upsert(const SourceAccount &account, bool enabled, QStr
     return false;
 }
 
+bool SourceAccountStore::setEnabled(const QString &sourceId, const QString &accountId, bool enabled,
+                                    QString *error)
+{
+    if (!m_settings || !hasAccountIdentity(sourceId, accountId, error)) {
+        return false;
+    }
+    const QString group = matchingGroupFor(sourceId, accountId);
+    if (group.isEmpty()) {
+        if (error) {
+            *error = QStringLiteral("Source account metadata is unavailable");
+        }
+        return false;
+    }
+    m_settings->setValue(group + QStringLiteral("/enabled"), enabled);
+    m_settings->sync();
+    if (m_settings->status() == QSettings::NoError) {
+        return true;
+    }
+    if (error) {
+        *error = QStringLiteral("Unable to persist source account state");
+    }
+    return false;
+}
+
 bool SourceAccountStore::remove(const QString &sourceId, const QString &accountId, QString *error)
 {
     if (!m_settings || !m_secretStore) {

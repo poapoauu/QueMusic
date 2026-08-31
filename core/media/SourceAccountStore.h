@@ -44,6 +44,8 @@ public:
     SourceAccountStore(QSettings *settings, ISecretStore *secretStore);
 
     bool upsert(const SourceAccount &account, bool enabled = true, QString *error = nullptr);
+    bool setEnabled(const QString &sourceId, const QString &accountId, bool enabled,
+                    QString *error = nullptr);
     bool remove(const QString &sourceId, const QString &accountId, QString *error = nullptr);
 
     std::optional<StoredSourceAccount> storedAccount(const QString &sourceId,

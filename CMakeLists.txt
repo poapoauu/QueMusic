@@ -148,6 +148,8 @@ target_include_directories(quemusic_source_session_registry PUBLIC
 add_library(quemusic_media_bridge STATIC
     core/media/MediaBridge.cpp
     core/media/MediaBridge.h
+    core/media/SourceAccountController.cpp
+    core/media/SourceAccountController.h
 )
 target_compile_features(quemusic_media_bridge PUBLIC cxx_std_17)
 target_link_libraries(quemusic_media_bridge PUBLIC
@@ -526,6 +528,23 @@ if(BUILD_TESTING)
     )
     add_dependencies(quemusic_media_bridge_playback_test quemusic_navidrome_source)
     add_test(NAME quemusic_media_bridge_playback_test COMMAND quemusic_media_bridge_playback_test)
+
+    qt_add_executable(quemusic_media_bridge_qml_test
+        tests/tst_MediaBridgeQml.cpp
+    )
+    target_compile_features(quemusic_media_bridge_qml_test PRIVATE cxx_std_17)
+    target_link_libraries(quemusic_media_bridge_qml_test PRIVATE
+        quemusic_media_bridge
+        quemusic_source_startup
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::Test
+    )
+    add_dependencies(quemusic_media_bridge_qml_test quemusic_navidrome_source)
+    add_test(NAME quemusic_media_bridge_qml_test COMMAND quemusic_media_bridge_qml_test)
+    set_tests_properties(quemusic_media_bridge_qml_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 endif()
 
 qt_add_executable(${PROJECT_NAME}
@@ -623,6 +642,7 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
         pages/FilePage.qml
         pages/DownloadPage.qml
         pages/SearchPage.qml
+        pages/SourceLibraryPage.qml
         api/qrcode.js
         ${QML_COMPONENTS}
 
@@ -721,6 +741,8 @@ target_link_libraries(${PROJECT_NAME}
         cryptopp::cryptopp
         quemusic_meshgradientplugin
         quemusic_source_startup
+        quemusic_media_bridge
+        quemusic_source_account_store
         z
     PUBLIC QWindowKit::Quick
 )

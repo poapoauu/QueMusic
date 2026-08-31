@@ -193,6 +193,7 @@ Rectangle {
         ListElement { display: "收藏"; iconChar: "\uf0c1" }  // sc
         ListElement { display: "本地"; iconChar: "\uf0f5" }   // bd
         ListElement { display: "下载"; iconChar: "\uf00f" }   // xz
+        ListElement { display: "音乐源"; iconChar: "\uf0bf" }
     }
 
     Column {

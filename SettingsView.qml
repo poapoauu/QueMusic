@@ -17,6 +17,7 @@ Item {
     property bool kugouShowLogin: false
     property string neteaseLoginStatus: "等待登录…"
     property string kugouLoginStatus: "等待登录…"
+    property var sourceAccounts: mediaBridge ? mediaBridge.accountController : null
 
     // 登录成功自动收起面板
     Connections {
@@ -156,6 +157,74 @@ Item {
             Options.settings.downloadFolder = p;
             mainWarn.tiped("已设置默认下载目录", 1);
         }
+    }
+
+    Dialog {
+        id: navidromeAccountDialog
+        modal: true
+        title: editingAccountId.length > 0 ? "编辑 Navidrome 账户" : "添加 Navidrome 账户"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        property string editingAccountId: ""
+        property bool saveSucceeded: false
+        width: 440
+        anchors.centerIn: parent
+        onAccepted: {
+            if (!sourceAccounts)
+                return;
+            saveSucceeded = editingAccountId.length > 0
+                ? sourceAccounts.updateNavidromeAccount(editingAccountId, accountNameField.text,
+                                                        serverUrlField.text, usernameField.text,
+                                                        passwordField.text)
+                : sourceAccounts.createNavidromeAccount(accountNameField.text, serverUrlField.text,
+                                                        usernameField.text, passwordField.text);
+            passwordField.text = "";
+            if (!saveSucceeded)
+                accountError.text = sourceAccounts.lastError;
+        }
+        onClosed: passwordField.text = ""
+        contentItem: Column {
+            spacing: 10
+            padding: 20
+            TextField {
+                id: accountNameField
+                width: parent.width - 40
+                placeholderText: "显示名称（可选）"
+            }
+            TextField {
+                id: serverUrlField
+                width: parent.width - 40
+                placeholderText: "服务器地址，例如 https://music.example.com"
+            }
+            TextField {
+                id: usernameField
+                width: parent.width - 40
+                placeholderText: "用户名"
+            }
+            TextField {
+                id: passwordField
+                width: parent.width - 40
+                placeholderText: navidromeAccountDialog.editingAccountId.length > 0
+                    ? "密码或令牌（留空以保留原凭据）" : "密码或令牌"
+                echoMode: TextInput.Password
+            }
+            Text {
+                id: accountError
+                width: parent.width - 40
+                visible: text.length > 0
+                wrapMode: Text.WordWrap
+                color: "#d85a5a"
+            }
+        }
+    }
+
+    function editNavidromeAccount(account) {
+        navidromeAccountDialog.editingAccountId = account ? account.accountId : "";
+        accountNameField.text = account ? account.displayName : "";
+        serverUrlField.text = account ? account.serverUrl : "";
+        usernameField.text = account ? account.username : "";
+        passwordField.text = "";
+        accountError.text = "";
+        navidromeAccountDialog.open();
     }
 
     Rectangle {
@@ -743,6 +812,92 @@ Item {
                                     mainWarn.tiped("目前无法使用", 0);
                                 }
                             }
+                        }
+                    }
+                }
+
+                QHead { text: "音乐源" }
+
+                Rectangle {
+                    width: settingStack.standWidth
+                    color: Style.themes.primaryColor
+                    radius: Style.settings.cubeRadius
+                    implicitHeight: sourceAccountColumn.implicitHeight + 24
+                    Column {
+                        id: sourceAccountColumn
+                        x: 16
+                        y: 12
+                        width: parent.width - 32
+                        spacing: 10
+                        Text {
+                            width: parent.width
+                            text: "Navidrome 账户的密码或令牌仅交给系统安全存储；这里不会显示或保存凭据。"
+                            wrapMode: Text.WordWrap
+                            color: Style.themes.textColor
+                            font.pixelSize: Style.settings.text
+                        }
+                        Repeater {
+                            model: sourceAccounts ? sourceAccounts.accounts : []
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: sourceAccountColumn.width
+                                height: 54
+                                radius: Style.settings.labelRadius
+                                color: Style.themes.hoverColor
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.margins: 10
+                                    spacing: 10
+                                    Column {
+                                        width: parent.width - 210
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        Text {
+                                            width: parent.width
+                                            text: modelData.displayName + " · " + modelData.sourceId
+                                            color: Style.themes.fontColor
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            width: parent.width
+                                            text: modelData.serverUrl + " · " + modelData.username
+                                            color: Style.themes.textColor
+                                            font.pixelSize: Style.settings.textTip
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    Switch {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        checked: modelData.enabled
+                                        onToggled: sourceAccounts.setAccountEnabled(modelData.accountId, checked)
+                                    }
+                                    Button {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "编辑"
+                                        onClicked: settingsView.editNavidromeAccount(modelData)
+                                    }
+                                    Button {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "移除"
+                                        onClicked: sourceAccounts.removeAccount(modelData.accountId)
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            visible: sourceAccounts && sourceAccounts.accounts.length === 0
+                            text: "还没有已配置的音乐源。"
+                            color: Style.themes.textColor
+                        }
+                        Button {
+                            text: "添加 Navidrome 账户"
+                            onClicked: settingsView.editNavidromeAccount(null)
+                        }
+                        Text {
+                            visible: sourceAccounts && sourceAccounts.lastError.length > 0
+                            text: sourceAccounts ? sourceAccounts.lastError : ""
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            color: "#d85a5a"
                         }
                     }
                 }

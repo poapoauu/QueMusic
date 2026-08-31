@@ -71,6 +71,38 @@ Window {
         }
     }
 
+    Connections {
+        target: mediaBridge
+        function onPlaybackReady(entry) {
+            window.applyBridgePlayback(entry);
+        }
+        function onEnqueueReady(entry) {
+            var key = window.mediaBridgeQueueKey(entry.mediaId);
+            for (var i = 0; i < playListModel.count; ++i) {
+                var queued = playListModel.get(i);
+                if (queued.bridge === true && queued.mediaId
+                        && window.mediaBridgeQueueKey(queued.mediaId) === key)
+                    return;
+            }
+            playListModel.append({
+                name: entry.title,
+                path: "bridge:" + key,
+                songer: entry.artist,
+                source: -2,
+                bridge: true,
+                mediaId: entry.mediaId,
+                albumTitle: entry.albumTitle,
+                artworkUrl: entry.artworkUrl,
+                durationMs: entry.durationMs
+            });
+            mainWarn.tiped("已加入播放列表", 1);
+        }
+        function onMediaActionFailed(error) {
+            if (error.action === "play")
+                mainWarn.tiped(error.message, 2);
+        }
+    }
+
     // 播放本地歌曲：同名 .lrc → 内嵌歌词 → 在线匹配 → 占位歌词
     function playLocalSong(path, name) {
         var meta = MusicApi.readLocalMetadata(path) || {};
@@ -102,6 +134,68 @@ Window {
             MusicApi.findLocalLyrics(path, title, artist, meta.duration || 0);
         }
         mainMedia.source = path;
+        mainMedia.play();
+    }
+
+    function mediaBridgeQueueKey(mediaId) {
+        return mediaId.sourceId + "/" + mediaId.accountId + "/" + mediaId.nativeId + "/" + mediaId.kind;
+    }
+
+    function playQueueEntry(index) {
+        if (index < 0 || index >= playListModel.count)
+            return;
+        var entry = playListModel.get(index);
+        if (entry.bridge === true && entry.mediaId) {
+            mediaBridge.play({
+                sourceId: entry.mediaId.sourceId,
+                accountId: entry.mediaId.accountId,
+                nativeId: entry.mediaId.nativeId,
+                kind: entry.mediaId.kind,
+                title: entry.name,
+                subtitle: entry.songer,
+                artists: entry.songer ? [entry.songer] : [],
+                albumTitle: entry.albumTitle || "",
+                artworkUrl: entry.artworkUrl || "",
+                durationMs: entry.durationMs || 0
+            });
+            return;
+        }
+        musicControlMin.refreshLegacyMusicPlay();
+    }
+
+    function applyBridgePlayback(entry) {
+        var key = mediaBridgeQueueKey(entry.mediaId);
+        var queueIndex = -1;
+        for (var i = 0; i < playListModel.count; ++i) {
+            var queued = playListModel.get(i);
+            if (queued.bridge === true && queued.mediaId
+                    && mediaBridgeQueueKey(queued.mediaId) === key) {
+                queueIndex = i;
+                break;
+            }
+        }
+        if (queueIndex < 0) {
+            playListModel.append({
+                name: entry.title,
+                path: "bridge:" + key,
+                songer: entry.artist,
+                source: -2,
+                bridge: true,
+                mediaId: entry.mediaId,
+                albumTitle: entry.albumTitle,
+                artworkUrl: entry.artworkUrl,
+                durationMs: entry.durationMs
+            });
+            queueIndex = playListModel.count - 1;
+        }
+        playListModel.playListIndex = queueIndex;
+        mainMedia.urlLocal = false;
+        mainMedia.noTitle = entry.title;
+        mainMedia.album = entry.albumTitle || "";
+        mainMedia.urlStr = entry.artworkUrl || "qrc:/QueMusic/resources/app/musicpic.png";
+        window.musicTitle = entry.title;
+        window.musicArtist = entry.artist;
+        mainMedia.source = entry.url;
         mainMedia.play();
     }
 
