@@ -528,7 +528,12 @@ void MediaBridge::handleSucceeded(const QUuid &requestId, const QString &operati
     const QString expectedOperation = request.intent.type == OperationType::Search
         ? QStringLiteral("search")
         : QStringLiteral("browse");
-    if (operation != expectedOperation || request.model == nullptr || !result.isObject()) {
+    if (request.model == nullptr) {
+        return;
+    }
+    if (operation != expectedOperation || !result.isObject()) {
+        request.model->setFailure(
+            {MediaErrorKind::InvalidRequest, QStringLiteral("Source returned an invalid response"), false});
         return;
     }
 

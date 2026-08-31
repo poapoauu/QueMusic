@@ -154,6 +154,11 @@ public:
         emit requestSucceeded(requestId, QStringLiteral("search"), result);
     }
 
+    void succeed(const QString &operation, const QJsonValue &result)
+    {
+        emit requestSucceeded(requestId, operation, result);
+    }
+
     QUuid requestId;
     QList<QUuid> cancelled;
 };
@@ -175,6 +180,7 @@ private slots:
     void mapsRootAndDirectoryBrowseResponses();
     void mapsEmptyAndFailureStatesAndRetriesSavedIntent();
     void ignoresTerminalCallbacksAfterCancellationOrInvalidation();
+    void malformedSuccessCallbacksFailActiveModel();
 };
 
 void MediaBridgeTest::mapsNormalizedNavidromeSearchIntoFixedRoles()
@@ -313,6 +319,26 @@ void MediaBridgeTest::ignoresTerminalCallbacksAfterCancellationOrInvalidation()
     emit harness.registry.sessionInvalidated(id.sourceId, id.accountId);
     session->succeed(QJsonObject{{QStringLiteral("items"), QJsonArray{}}});
     QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Idle);
+}
+
+void MediaBridgeTest::malformedSuccessCallbacksFailActiveModel()
+{
+    const MediaId id{QStringLiteral("test-source"), QStringLiteral("home")};
+    SourceSessionRegistry registry(nullptr, nullptr);
+    auto *session = installSession(&registry, id, new LateSession(&registry));
+    MediaBridge bridge(&registry);
+
+    bridge.search(QStringLiteral("test-source/home"), QStringLiteral("Song"), 20);
+    QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Loading);
+    session->succeed(QStringLiteral("browse"), QJsonObject{{QStringLiteral("items"), QJsonArray{}}});
+    QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Failed);
+    QCOMPARE(bridge.searchResults()->errorKind(), MediaErrorKind::InvalidRequest);
+
+    bridge.search(QStringLiteral("test-source/home"), QStringLiteral("Song"), 20);
+    QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Loading);
+    session->succeed(QJsonArray{});
+    QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Failed);
+    QCOMPARE(bridge.searchResults()->errorKind(), MediaErrorKind::InvalidRequest);
 }
 
 QTEST_MAIN(MediaBridgeTest)
