@@ -537,8 +537,15 @@ void MediaBridge::handleSucceeded(const QUuid &requestId, const QString &operati
         return;
     }
 
+    const QJsonValue itemsValue = result.toObject().value(QStringLiteral("items"));
+    if (!itemsValue.isArray()) {
+        request.model->setFailure(
+            {MediaErrorKind::InvalidRequest, QStringLiteral("Source returned invalid items"), false});
+        return;
+    }
+
     MediaPage page;
-    const QJsonArray normalizedItems = result.toObject().value(QStringLiteral("items")).toArray();
+    const QJsonArray normalizedItems = itemsValue.toArray();
     for (const QJsonValue &value : normalizedItems) {
         if (!value.isObject()) {
             continue;
@@ -552,6 +559,11 @@ void MediaBridge::handleSucceeded(const QUuid &requestId, const QString &operati
         if (!item.id.nativeId.isEmpty()) {
             page.items.append(item);
         }
+    }
+    if (!normalizedItems.isEmpty() && page.items.isEmpty()) {
+        request.model->setFailure(
+            {MediaErrorKind::InvalidRequest, QStringLiteral("Source returned no valid items"), false});
+        return;
     }
     if (request.intent.append) {
         request.model->appendPage(page);

@@ -327,18 +327,48 @@ void MediaBridgeTest::malformedSuccessCallbacksFailActiveModel()
     SourceSessionRegistry registry(nullptr, nullptr);
     auto *session = installSession(&registry, id, new LateSession(&registry));
     MediaBridge bridge(&registry);
+    const auto requestIsCleared = [&registry, &id](const QUuid &requestId) {
+        const auto entry = registry.m_sessions.constFind(registry.keyFor(id));
+        QVERIFY(entry != registry.m_sessions.cend());
+        QVERIFY(!entry->requests.contains(requestId));
+    };
 
     bridge.search(QStringLiteral("test-source/home"), QStringLiteral("Song"), 20);
     QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Loading);
     session->succeed(QStringLiteral("browse"), QJsonObject{{QStringLiteral("items"), QJsonArray{}}});
     QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Failed);
     QCOMPARE(bridge.searchResults()->errorKind(), MediaErrorKind::InvalidRequest);
+    requestIsCleared(session->requestId);
 
     bridge.search(QStringLiteral("test-source/home"), QStringLiteral("Song"), 20);
     QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Loading);
     session->succeed(QJsonArray{});
     QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Failed);
     QCOMPARE(bridge.searchResults()->errorKind(), MediaErrorKind::InvalidRequest);
+    requestIsCleared(session->requestId);
+
+    const auto malformedItemsFail = [&bridge, session, &requestIsCleared](const QJsonObject &result) {
+        bridge.search(QStringLiteral("test-source/home"), QStringLiteral("Song"), 20);
+        QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Loading);
+        session->succeed(result);
+        QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Failed);
+        QCOMPARE(bridge.searchResults()->errorKind(), MediaErrorKind::InvalidRequest);
+        requestIsCleared(session->requestId);
+        session->succeed(QJsonObject{{QStringLiteral("items"), QJsonArray{}}});
+        QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Failed);
+    };
+
+    malformedItemsFail({});
+    malformedItemsFail({{QStringLiteral("items"), QStringLiteral("not-an-array")}});
+    malformedItemsFail({{QStringLiteral("items"),
+                        QJsonArray{QStringLiteral("not-an-object"),
+                                   QJsonObject{{QStringLiteral("title"), QStringLiteral("Missing ID")}}}}});
+
+    bridge.search(QStringLiteral("test-source/home"), QStringLiteral("Song"), 20);
+    QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Loading);
+    session->succeed(QJsonObject{{QStringLiteral("items"), QJsonArray{}}});
+    QCOMPARE(bridge.searchResults()->requestState(), MediaRequestState::Empty);
+    requestIsCleared(session->requestId);
 }
 
 QTEST_MAIN(MediaBridgeTest)
