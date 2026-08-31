@@ -14,6 +14,7 @@ Item {
     property var artworkCache: ({})
     property int artworkRevision: 0
     readonly property var currentResults: browsing ? mediaBridge.browseResults : mediaBridge.searchResults
+    signal configureSourceRequested()
 
     function enabledAccounts() {
         var allAccounts = accountController ? accountController.accounts : []
@@ -170,12 +171,22 @@ Item {
             radius: Style.settings.cubeRadius
             clip: true
 
-            Text {
+            Column {
                 anchors.centerIn: parent
                 visible: !sourceLibrary.selectedAccount
-                text: "请先在设置中添加并启用一个 Navidrome 音乐源。"
-                color: Style.themes.textColor
-                font.pixelSize: Style.settings.textmain
+                spacing: 12
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "请先添加并启用一个 Navidrome 音乐源。"
+                    color: Style.themes.textColor
+                    font.pixelSize: Style.settings.textmain
+                }
+                Button {
+                    objectName: "sourceLibraryConfigureAction"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "配置 Navidrome"
+                    onClicked: sourceLibrary.configureSourceRequested()
+                }
             }
 
             Text {

@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QQuickItem>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QtQml/QQmlApplicationEngine>
@@ -60,6 +61,22 @@ public:
 private:
     QString m_name;
 };
+
+QQuickItem *findVisualItemByObjectName(QQuickItem *root, const QString &objectName)
+{
+    if (root == nullptr) {
+        return nullptr;
+    }
+    if (root->objectName() == objectName) {
+        return root;
+    }
+    for (QQuickItem *child : root->childItems()) {
+        if (QQuickItem *match = findVisualItemByObjectName(child, objectName)) {
+            return match;
+        }
+    }
+    return nullptr;
+}
 
 class WindowDouble final : public QObject {
     Q_OBJECT
@@ -153,6 +170,31 @@ private:
     QObject *m_results;
 };
 
+class PluginManagerDouble final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList plugins READ plugins NOTIFY pluginsChanged)
+
+public:
+    QVariantList plugins() const { return m_plugins; }
+
+    void setPlugins(QVariantList plugins)
+    {
+        m_plugins = std::move(plugins);
+        emit pluginsChanged();
+    }
+
+    Q_INVOKABLE void discoverPlugins() {}
+    Q_INVOKABLE void loadPlugin(const QString &) {}
+    Q_INVOKABLE void unloadPlugin(const QString &) {}
+    Q_INVOKABLE void reloadPlugin(const QString &) {}
+
+signals:
+    void pluginsChanged();
+
+private:
+    QVariantList m_plugins;
+};
+
 } // namespace
 
 class MediaBridgeQmlTest : public QObject {
@@ -164,6 +206,8 @@ private slots:
     void productionLeftSideBarDispatchesSourceLibrary();
     void productionPlayListExposesClearOtherSongs();
     void productionSourceLibraryRejectsDisabledAccounts();
+    void productionSourceLibraryOffersConfigurationWhenNoAccountExists();
+    void productionPluginPanelSeparatesContentAndOffersNavidromeSetup();
 };
 
 void MediaBridgeQmlTest::exposesOnlyBridgeAndAcceptsNormalizedQueueEntry()
@@ -407,6 +451,124 @@ void MediaBridgeQmlTest::productionSourceLibraryRejectsDisabledAccounts()
     QVERIFY(!page->property("selectedAccount").isValid() || page->property("selectedAccount").isNull());
 
     delete page;
+}
+
+void MediaBridgeQmlTest::productionSourceLibraryOffersConfigurationWhenNoAccountExists()
+{
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+
+    AccountControllerDouble accountController;
+    ResultModelDouble results;
+    MediaBridgeDouble mediaBridge(&accountController, &results);
+    engine.rootContext()->setContextProperty("mediaBridge", &mediaBridge);
+
+    QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/QueMusic/pages/SourceLibraryPage.qml")));
+    QObject *page = component.create();
+    QVERIFY2(page != nullptr, qPrintable(component.errorString()));
+
+    auto *pageItem = qobject_cast<QQuickItem *>(page);
+    QVERIFY(pageItem != nullptr);
+    QQuickItem *configureAction =
+        findVisualItemByObjectName(pageItem, QStringLiteral("sourceLibraryConfigureAction"));
+    QVERIFY(configureAction != nullptr);
+    QSignalSpy requested(page, SIGNAL(configureSourceRequested()));
+    QVERIFY(QMetaObject::invokeMethod(configureAction, "click"));
+    QCOMPARE(requested.count(), 1);
+
+    delete page;
+}
+
+void MediaBridgeQmlTest::productionPluginPanelSeparatesContentAndOffersNavidromeSetup()
+{
+    QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    NamedObject iconFont(QStringLiteral("Arial"));
+    engine.rootContext()->setContextProperty("iconFont", &iconFont);
+
+    PluginManagerDouble pluginManager;
+    pluginManager.setPlugins({
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("navidrome")},
+                    {QStringLiteral("name"), QStringLiteral("Navidrome")},
+                    {QStringLiteral("version"), QStringLiteral("1.0.0")},
+                    {QStringLiteral("state"), QStringLiteral("loaded")},
+                    {QStringLiteral("loadable"), false},
+                    {QStringLiteral("unloadable"), true},
+                    {QStringLiteral("reloadable"), true},
+                    {QStringLiteral("activeLeases"), 0}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("unrelated")},
+                    {QStringLiteral("name"), QStringLiteral("Unrelated")},
+                    {QStringLiteral("version"), QStringLiteral("1.0.0")},
+                    {QStringLiteral("state"), QStringLiteral("loaded")},
+                    {QStringLiteral("loadable"), false},
+                    {QStringLiteral("unloadable"), true},
+                    {QStringLiteral("reloadable"), true},
+                    {QStringLiteral("activeLeases"), 0}}
+    });
+
+    QQmlComponent component(&engine,
+                            QUrl(QStringLiteral("qrc:/QueMusic/components/PluginSettingsPanel.qml")));
+    QObject *panel = component.createWithInitialProperties({
+        {QStringLiteral("width"), 1200},
+        {QStringLiteral("height"), 760},
+        {QStringLiteral("containX"), 72},
+        {QStringLiteral("standWidth"), 900},
+        {QStringLiteral("pluginManager"), QVariant::fromValue(static_cast<QObject *>(&pluginManager))},
+        {QStringLiteral("selectedTab"), 2}
+    });
+    QVERIFY2(panel != nullptr, qPrintable(component.errorString()));
+    QCoreApplication::processEvents();
+    QCOMPARE(panel->property("selectedTab").toInt(), 2);
+    QCOMPARE(panel->property("pluginManager").value<QObject *>(),
+             static_cast<QObject *>(&pluginManager));
+    QCOMPARE(panel->property("plugins").toList().size(), 2);
+
+    auto *panelItem = qobject_cast<QQuickItem *>(panel);
+    QVERIFY(panelItem != nullptr);
+    auto *header = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelHeader"));
+    auto *tabs = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelTabs"));
+    auto *notice = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelNotice"));
+    auto *list = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelList"));
+    QVERIFY(header != nullptr);
+    QVERIFY(tabs != nullptr);
+    QVERIFY(notice != nullptr);
+    QVERIFY(list != nullptr);
+    auto xInPanel = [panel](QQuickItem *item) {
+        return item->mapToItem(qobject_cast<QQuickItem *>(panel), QPointF{}).x();
+    };
+    auto yInPanel = [panel](QQuickItem *item) {
+        return item->mapToItem(qobject_cast<QQuickItem *>(panel), QPointF{}).y();
+    };
+    QCOMPARE(xInPanel(header), xInPanel(tabs));
+    QCOMPARE(xInPanel(tabs), xInPanel(notice));
+    QVERIFY(yInPanel(header) + header->height() <= yInPanel(tabs));
+    QVERIFY(yInPanel(tabs) + tabs->height() <= yInPanel(notice));
+    QVERIFY(yInPanel(notice) + notice->height() <= yInPanel(list));
+
+    QVERIFY(findVisualItemByObjectName(panelItem, QStringLiteral("pluginCard_navidrome")) != nullptr);
+    QQuickItem *navidromeLoader = findVisualItemByObjectName(panelItem,
+                                                              QStringLiteral("navidromeConfigLoader"));
+    QVERIFY(navidromeLoader != nullptr);
+    QCOMPARE(navidromeLoader->property("status").toInt(), 1);
+    QQuickItem *navidromeAction = findVisualItemByObjectName(panelItem,
+                                                              QStringLiteral("navidromeConfigAction"));
+    QVERIFY(navidromeAction != nullptr);
+    QSignalSpy configured(panel, SIGNAL(configureNavidromeRequested()));
+    QVERIFY(QMetaObject::invokeMethod(navidromeAction, "click"));
+    QCOMPARE(configured.count(), 1);
+
+    pluginManager.setPlugins({QVariantMap{{QStringLiteral("id"), QStringLiteral("unrelated")},
+                                          {QStringLiteral("name"), QStringLiteral("Unrelated")},
+                                          {QStringLiteral("version"), QStringLiteral("1.0.0")},
+                                          {QStringLiteral("state"), QStringLiteral("loaded")},
+                                          {QStringLiteral("loadable"), false},
+                                          {QStringLiteral("unloadable"), true},
+                                          {QStringLiteral("reloadable"), true},
+                                          {QStringLiteral("activeLeases"), 0}}});
+    QCoreApplication::processEvents();
+    QVERIFY(findVisualItemByObjectName(panelItem, QStringLiteral("navidromeConfigAction")) == nullptr);
+
+    delete panel;
 }
 
 QTEST_MAIN(MediaBridgeQmlTest)

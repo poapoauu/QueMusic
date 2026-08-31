@@ -11,6 +11,7 @@ Rectangle {
     color: Style.themes.secondaryColor //Style.themes.blurOverlayColor
     readonly property int pageHeight: height - 60
     property bool pageLoadingEnabled: true
+    signal configureSourceRequested()
 
     // 页面数组，便于管理
     property var pages: [
@@ -161,7 +162,9 @@ Rectangle {
         height: mainContent.pageHeight
         visible: false
         active: mainContent.pageLoadingEnabled && false
-        sourceComponent: SourceLibraryPage {}
+        sourceComponent: SourceLibraryPage {
+            onConfigureSourceRequested: mainContent.configureSourceRequested()
+        }
         onLoaded: { visible = true; mainContent.finishedLoaderPage(7) }
     }
 }

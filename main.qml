@@ -56,6 +56,16 @@ Window {
 
     property string localLyricsRequestPath: ""
 
+    function openNavidromeAccountEditor() {
+        settingsView.openNavidromeAccountWhenLoaded = true;
+        settingsView.active = true;
+        if (settingsView.item) {
+            settingsView.visible = true;
+            settingsView.item.editNavidromeAccount(null);
+            settingsView.openNavidromeAccountWhenLoaded = false;
+        }
+    }
+
     Connections {
         target: MusicApi
         function onLocalLyricsReady(filePath, lyrics) {
@@ -647,6 +657,7 @@ Window {
             y: 0
             width: parent.width - x
             height: parent.height - 78
+            onConfigureSourceRequested: window.openNavidromeAccountEditor()
         }
 
         // 底部栏
@@ -808,12 +819,17 @@ Window {
         active: false
         visible: false
         z: 6
+        property bool openNavidromeAccountWhenLoaded: false
         source: "qrc:/QueMusic/SettingsView.qml"//"qrc:/QueMusic/SettingsView.qml"
         opacity: visible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 120 } }
         onLoaded: {
             visible = true;
             settingAnime.running = true;
+            if (openNavidromeAccountWhenLoaded) {
+                item.editNavidromeAccount(null);
+                openNavidromeAccountWhenLoaded = false;
+            }
         }
     }
 
