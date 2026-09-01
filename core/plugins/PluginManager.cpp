@@ -2,6 +2,7 @@
 
 #include "PluginManifest.h"
 #include "IMusicSourcePlugin.h"
+#include "v2/IMusicSourcePluginV2.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -43,7 +44,7 @@ QString pluginCategoryName(PluginCategory category)
     return QStringLiteral("unknown");
 }
 
-QString hostBuildMode()
+QString hostBuildKey()
 {
 #ifdef QT_NO_DEBUG
     return QStringLiteral("Release");
@@ -149,6 +150,7 @@ int PluginManager::discover()
                 manifest.category(),
                 PluginState::Discovered,
                 {},
+                {},
                 QFileInfo(manifestPath).absolutePath(),
                 0,
             };
@@ -184,6 +186,16 @@ bool PluginManager::load(const QString &packageId)
     auto loader = std::make_unique<QPluginLoader>();
     loader->setLoadHints({});
     loader->setFileName(entry->manifest.libraryAbsolutePath());
+    if (entry->manifest.category() == PluginCategory::Source) {
+        const QString metadataIid =
+            loader->metaData().value(QStringLiteral("IID")).toString();
+        if (metadataIid != entry->manifest.sourceInterfaceId()) {
+            fail(*entry,
+                 QStringLiteral("Package plugin metadata IID %1 does not match manifest interface %2")
+                     .arg(metadataIid, entry->manifest.sourceInterfaceId()));
+            return false;
+        }
+    }
     if (!loader->load()) {
         fail(*entry, loader->errorString());
         return false;
@@ -193,17 +205,25 @@ bool PluginManager::load(const QString &packageId)
         fail(*entry, loader->errorString());
         return false;
     }
-    if (entry->manifest.category() == PluginCategory::Source
-        && qobject_cast<IMusicSourcePlugin *>(instance) == nullptr) {
-        loader->unload();
-        fail(*entry, QStringLiteral("Package does not implement IMusicSourcePlugin"));
-        return false;
+    if (entry->manifest.category() == PluginCategory::Source) {
+        const int sourceSdkAbi = entry->manifest.sourceSdkAbi();
+        if (sourceSdkAbi == 1 && qobject_cast<IMusicSourcePlugin *>(instance) == nullptr) {
+            loader->unload();
+            fail(*entry, QStringLiteral("Package does not implement IMusicSourcePlugin"));
+            return false;
+        }
+        if (sourceSdkAbi == 2 && qobject_cast<IMusicSourcePluginV2 *>(instance) == nullptr) {
+            loader->unload();
+            fail(*entry, QStringLiteral("Package does not implement IMusicSourcePluginV2"));
+            return false;
+        }
     }
 
     entry->loader = std::move(loader);
     entry->instance = instance;
     entry->spec.state = PluginState::Loaded;
     entry->spec.error.clear();
+    entry->spec.busyReason.clear();
     emit pluginChanged(packageId);
     return entry->spec.state == PluginState::Loaded && entry->loader != nullptr;
 }
@@ -232,6 +252,8 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
         return PluginOperationResult::NotFound;
     }
     if (entry->spec.activeLeases != 0) {
+        entry->spec.busyReason = QStringLiteral("source.sessions.active");
+        emit pluginChanged(packageId);
         return PluginOperationResult::Busy;
     }
     if (entry->loader == nullptr) {
@@ -242,6 +264,7 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
         entry->instance = nullptr;
         entry->spec.state = PluginState::Unloaded;
         entry->spec.error.clear();
+        entry->spec.busyReason.clear();
         emit pluginChanged(packageId);
         return PluginOperationResult::Success;
     }
@@ -254,6 +277,7 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
     entry->instance = nullptr;
     entry->spec.state = PluginState::Unloaded;
     entry->spec.error.clear();
+    entry->spec.busyReason.clear();
     emit pluginChanged(packageId);
     return PluginOperationResult::Success;
 }
@@ -305,6 +329,7 @@ QVariantList PluginManager::plugins() const
             {QStringLiteral("category"), pluginCategoryName(spec.category)},
             {QStringLiteral("state"), pluginStateName(spec.state)},
             {QStringLiteral("error"), spec.error},
+            {QStringLiteral("busyReason"), spec.busyReason},
             {QStringLiteral("path"), spec.path},
             {QStringLiteral("activeLeases"), spec.activeLeases},
             {QStringLiteral("loadable"), entry->loader == nullptr},
@@ -376,10 +401,10 @@ bool PluginManager::supportsRuntime(const PluginManifest &manifest, QString *err
                      .arg(manifest.requiredArchitecture());
         return false;
     }
-    if (!manifest.requiredBuildMode().isEmpty()
-        && manifest.requiredBuildMode() != hostBuildMode()) {
-        *error = QStringLiteral("Package requires build mode %1")
-                     .arg(manifest.requiredBuildMode());
+    if (!manifest.requiredBuildKey().isEmpty()
+        && manifest.requiredBuildKey() != hostBuildKey()) {
+        *error = QStringLiteral("Package requires build key %1")
+                     .arg(manifest.requiredBuildKey());
         return false;
     }
     return true;
@@ -389,6 +414,7 @@ void PluginManager::fail(Entry &entry, const QString &error)
 {
     entry.spec.state = PluginState::Failed;
     entry.spec.error = error;
+    entry.spec.busyReason.clear();
     emit pluginLoadFailed(entry.spec.id, error);
     emit pluginChanged(entry.spec.id);
 }
@@ -401,5 +427,8 @@ void PluginManager::releaseLease(const QString &packageId)
     }
 
     --entry->spec.activeLeases;
+    if (entry->spec.activeLeases == 0) {
+        entry->spec.busyReason.clear();
+    }
     emit pluginChanged(packageId);
 }

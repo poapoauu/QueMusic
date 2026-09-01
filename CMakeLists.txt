@@ -341,6 +341,63 @@ if(BUILD_TESTING)
             "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}/$<TARGET_FILE_NAME:quemusic_frozen_v1_source_fixture>"
     )
 
+    if(CMAKE_OSX_ARCHITECTURES)
+        list(GET CMAKE_OSX_ARCHITECTURES 0 QUEMUSIC_TEST_ARCHITECTURE)
+    else()
+        set(QUEMUSIC_TEST_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    set(QUEMUSIC_TEST_BUILD_KEY "${CMAKE_BUILD_TYPE}")
+
+    function(add_v2_source_plugin_fixture target package_directory)
+        add_library(${target} MODULE
+            tests/fixtures/FakeV2SourcePlugin.cpp
+            tests/fixtures/FakeV2SourcePlugin.h
+        )
+        target_compile_features(${target} PRIVATE cxx_std_17)
+        target_link_libraries(${target} PRIVATE quemusic_source_sdk)
+        set_target_properties(${target} PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${package_directory}"
+            RUNTIME_OUTPUT_DIRECTORY "${package_directory}"
+        )
+    endfunction()
+
+    set(QUEMUSIC_V2_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-v2-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_fake_v2_source_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.fixture-v2")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "fixture-v2")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Fixture V2")
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_V2_PACKAGE_ROOT}/fixture-v2")
+    file(MAKE_DIRECTORY "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}")
+    add_v2_source_plugin_fixture(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                 "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}")
+    configure_file(
+        tests/fixtures/v2-manifest.json.in
+        "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}/manifest.json"
+        @ONLY
+    )
+
+    set(QUEMUSIC_INVALID_V2_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-v2-invalid-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_fake_v2_wrong_contract_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.fixture-v2-invalid")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "fixture-v2-invalid")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Fixture V2 Invalid")
+    set(QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}/fixture-v2-invalid")
+    file(MAKE_DIRECTORY "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}")
+    add_v2_source_plugin_fixture(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                 "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}")
+    target_compile_definitions(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE
+        QUEMUSIC_FAKE_V2_OMIT_INTERFACE
+    )
+    configure_file(
+        tests/fixtures/v2-manifest.json.in
+        "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}/manifest.json"
+        @ONLY
+    )
+
     add_source_plugin_fixture(quemusic_duplicate_source_fixture_one duplicate)
     target_compile_definitions(quemusic_duplicate_source_fixture_one PRIVATE
         QUEMUSIC_FIXTURE_SOURCE_ID="fixture.duplicate"
@@ -496,12 +553,18 @@ if(BUILD_TESTING)
     )
     target_compile_definitions(quemusic_plugin_manager_test PRIVATE
         QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
+        QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_V2_PACKAGE_ROOT}"
+        QUEMUSIC_TEST_INVALID_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}"
     )
     target_link_libraries(quemusic_plugin_manager_test PRIVATE
         quemusic_plugin_core
         Qt6::Test
     )
-    add_dependencies(quemusic_plugin_manager_test quemusic_test_source)
+    add_dependencies(quemusic_plugin_manager_test
+        quemusic_test_source
+        quemusic_fake_v2_source_fixture
+        quemusic_fake_v2_wrong_contract_fixture
+    )
     add_test(NAME quemusic_plugin_manager_test COMMAND quemusic_plugin_manager_test)
 
     qt_add_executable(quemusic_media_types_test

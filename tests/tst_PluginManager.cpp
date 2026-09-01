@@ -3,10 +3,13 @@
 
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPluginLoader>
+#include <QPointer>
 #include <QSignalSpy>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -14,8 +17,15 @@ class PluginManagerTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void loadsV1AndV2AccordingToManifestAbi();
+    void rejectsRuntimeMismatchBeforeLoadingV2_data();
+    void rejectsRuntimeMismatchBeforeLoadingV2();
+    void rejectsPluginMetadataIidThatDisagreesWithManifest();
+    void rejectsV2PluginThatDoesNotImplementDeclaredInterface();
     void refusesUnloadWhileLeaseIsActive();
+    void refusesUnloadWhileV2SessionLeaseExists();
     void reloadsAfterFinalLeaseIsReleased();
+    void repeatedReloadDoesNotRetainV2InstancesOrLeases();
     void malformedPackageDoesNotBlockValidPackage();
     void rejectsDuplicateSourceIdBeforeLoad();
     void failedActivationPreservesLoaderLifecycle();
@@ -36,6 +46,151 @@ void copyPackage(const QString &sourcePath, const QString &destinationPath)
     }
 }
 
+QString hostBuildKey()
+{
+#ifdef QT_NO_DEBUG
+    return QStringLiteral("Release");
+#else
+    return QStringLiteral("Debug");
+#endif
+}
+
+void replaceRuntimeRequirement(const QString &packagePath, const QString &key,
+                               const QJsonValue &value)
+{
+    const QString manifestPath = QDir(packagePath).filePath(QStringLiteral("manifest.json"));
+    QFile manifestFile(manifestPath);
+    QVERIFY(manifestFile.open(QIODevice::ReadOnly));
+    QJsonObject manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+    manifestFile.close();
+    QJsonObject requirements = manifest.value(QStringLiteral("runtimeRequirements")).toObject();
+    requirements.insert(key, value);
+    manifest.insert(QStringLiteral("runtimeRequirements"), requirements);
+    QVERIFY(manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    manifestFile.write(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+}
+
+void rewriteV1PackageAsV2(const QString &packagePath)
+{
+    const QString manifestPath = QDir(packagePath).filePath(QStringLiteral("manifest.json"));
+    QFile manifestFile(manifestPath);
+    QVERIFY(manifestFile.open(QIODevice::ReadOnly));
+    QJsonObject manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+    manifestFile.close();
+    manifest.insert(QStringLiteral("id"), QStringLiteral("org.quemusic.source.fixture-v2-iid-mismatch"));
+    manifest.insert(QStringLiteral("sourceId"), QStringLiteral("fixture-v2-iid-mismatch"));
+    manifest.insert(
+        QStringLiteral("interfaces"),
+        QJsonArray{QJsonObject{{QStringLiteral("id"),
+                                QStringLiteral("org.quemusic.MusicSourcePlugin/2.0")},
+                               {QStringLiteral("version"), QStringLiteral("2.0")}}});
+    manifest.insert(QStringLiteral("runtimeRequirements"),
+                    QJsonObject{{QStringLiteral("sourceSdkAbi"), 2},
+                                {QStringLiteral("qtMajor"), QT_VERSION_MAJOR},
+                                {QStringLiteral("architecture"),
+                                 QSysInfo::currentCpuArchitecture()},
+                                {QStringLiteral("buildKey"), hostBuildKey()}});
+    QVERIFY(manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    manifestFile.write(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+}
+
+}
+
+void PluginManagerTest::loadsV1AndV2AccordingToManifestAbi()
+{
+    PluginManager manager;
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR));
+
+    QCOMPARE(manager.discover(), 2);
+    QVERIFY(manager.load(QStringLiteral("org.quemusic.source.fixture")));
+    QVERIFY(manager.load(QStringLiteral("org.quemusic.source.fixture-v2")));
+    QCOMPARE(manager.plugin(QStringLiteral("org.quemusic.source.fixture")).state,
+             PluginState::Loaded);
+    QObject *v2Instance =
+        manager.pluginInstance(QStringLiteral("org.quemusic.source.fixture-v2"));
+    QVERIFY(v2Instance != nullptr);
+    QCOMPARE(v2Instance->property("sourceSdkAbi").toInt(), 2);
+}
+
+void PluginManagerTest::rejectsRuntimeMismatchBeforeLoadingV2_data()
+{
+    QTest::addColumn<QString>("requirement");
+    QTest::addColumn<QJsonValue>("value");
+    QTest::addColumn<QString>("errorFragment");
+
+    QTest::newRow("qt-major") << QStringLiteral("qtMajor")
+                               << QJsonValue(QT_VERSION_MAJOR + 1)
+                               << QStringLiteral("Qt major");
+    QTest::newRow("architecture") << QStringLiteral("architecture")
+                                  << QJsonValue(QStringLiteral("not-the-host-architecture"))
+                                  << QStringLiteral("architecture");
+    QTest::newRow("build-key") << QStringLiteral("buildKey")
+                               << QJsonValue(hostBuildKey() == QStringLiteral("Debug")
+                                                 ? QStringLiteral("Release")
+                                                 : QStringLiteral("Debug"))
+                               << QStringLiteral("build key");
+}
+
+void PluginManagerTest::rejectsRuntimeMismatchBeforeLoadingV2()
+{
+    QFETCH(QString, requirement);
+    QFETCH(QJsonValue, value);
+    QFETCH(QString, errorFragment);
+
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString packagePath = QDir(root.path()).filePath(QStringLiteral("fixture-v2"));
+    copyPackage(QDir(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR))
+                    .filePath(QStringLiteral("fixture-v2")),
+                packagePath);
+    replaceRuntimeRequirement(packagePath, requirement, value);
+
+    PluginManager manager;
+    manager.addSearchPath(root.path());
+    QCOMPARE(manager.discover(), 1);
+    QVERIFY(manager.load(QStringLiteral("org.quemusic.source.fixture-v2")) == false);
+    const PluginSpec spec = manager.plugin(QStringLiteral("org.quemusic.source.fixture-v2"));
+    QCOMPARE(spec.state, PluginState::Failed);
+    QVERIFY2(spec.error.contains(errorFragment, Qt::CaseInsensitive), qPrintable(spec.error));
+    QVERIFY(manager.pluginInstance(QStringLiteral("org.quemusic.source.fixture-v2")) == nullptr);
+}
+
+void PluginManagerTest::rejectsV2PluginThatDoesNotImplementDeclaredInterface()
+{
+    PluginManager manager;
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_INVALID_V2_PLUGIN_PACKAGE_DIR));
+
+    QCOMPARE(manager.discover(), 1);
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture-v2-invalid");
+    QVERIFY(manager.load(packageId) == false);
+    const PluginSpec spec = manager.plugin(packageId);
+    QCOMPARE(spec.state, PluginState::Failed);
+    QVERIFY2(spec.error.contains(QStringLiteral("IMusicSourcePluginV2")), qPrintable(spec.error));
+    QVERIFY(manager.pluginInstance(packageId) == nullptr);
+}
+
+void PluginManagerTest::rejectsPluginMetadataIidThatDisagreesWithManifest()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString packagePath = QDir(root.path()).filePath(QStringLiteral("iid-mismatch"));
+    copyPackage(QDir(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR))
+                    .filePath(QStringLiteral("fixture")),
+                packagePath);
+    rewriteV1PackageAsV2(packagePath);
+
+    PluginManager manager;
+    manager.addSearchPath(root.path());
+    QCOMPARE(manager.discover(), 1);
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture-v2-iid-mismatch");
+    QVERIFY(manager.load(packageId) == false);
+    const PluginSpec spec = manager.plugin(packageId);
+    QCOMPARE(spec.state, PluginState::Failed);
+    QVERIFY2(spec.error.contains(QStringLiteral("metadata IID")), qPrintable(spec.error));
+    QVERIFY(spec.error.contains(QStringLiteral("MusicSourcePlugin/1.0")));
+    QVERIFY(spec.error.contains(QStringLiteral("MusicSourcePlugin/2.0")));
+    QVERIFY(manager.pluginInstance(packageId) == nullptr);
 }
 
 void PluginManagerTest::refusesUnloadWhileLeaseIsActive()
@@ -56,9 +211,35 @@ void PluginManagerTest::refusesUnloadWhileLeaseIsActive()
         QVERIFY(lease.isValid());
         QCOMPARE(manager.unload(QStringLiteral("org.quemusic.source.fixture")),
                  PluginOperationResult::Busy);
+        QCOMPARE(manager.plugin(QStringLiteral("org.quemusic.source.fixture")).busyReason,
+                 QStringLiteral("source.sessions.active"));
     }
+    QVERIFY(manager.plugin(QStringLiteral("org.quemusic.source.fixture")).busyReason.isEmpty());
     QCOMPARE(manager.unload(QStringLiteral("org.quemusic.source.fixture")),
              PluginOperationResult::Success);
+}
+
+void PluginManagerTest::refusesUnloadWhileV2SessionLeaseExists()
+{
+    PluginManager manager;
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture-v2");
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR));
+
+    QCOMPARE(manager.discover(), 1);
+    QVERIFY(manager.load(packageId));
+    PluginLease firstLease = manager.acquire(packageId);
+    PluginLease finalLease = manager.acquire(packageId);
+    QCOMPARE(manager.unload(packageId), PluginOperationResult::Busy);
+    QCOMPARE(manager.plugin(packageId).state, PluginState::Loaded);
+    QCOMPARE(manager.plugin(packageId).busyReason, QStringLiteral("source.sessions.active"));
+
+    firstLease = {};
+    QCOMPARE(manager.plugin(packageId).activeLeases, 1);
+    QCOMPARE(manager.plugin(packageId).busyReason, QStringLiteral("source.sessions.active"));
+    finalLease = {};
+    QCOMPARE(manager.plugin(packageId).activeLeases, 0);
+    QVERIFY(manager.plugin(packageId).busyReason.isEmpty());
+    QCOMPARE(manager.unload(packageId), PluginOperationResult::Success);
 }
 
 void PluginManagerTest::reloadsAfterFinalLeaseIsReleased()
@@ -79,6 +260,28 @@ void PluginManagerTest::reloadsAfterFinalLeaseIsReleased()
              qPrintable(manager.plugin(QStringLiteral("org.quemusic.source.fixture")).error));
     QCOMPARE(manager.plugin(QStringLiteral("org.quemusic.source.fixture")).state,
              PluginState::Loaded);
+}
+
+void PluginManagerTest::repeatedReloadDoesNotRetainV2InstancesOrLeases()
+{
+    PluginManager manager;
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture-v2");
+    manager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR));
+
+    QCOMPARE(manager.discover(), 1);
+    QVERIFY(manager.load(packageId));
+    for (int iteration = 0; iteration < 50; ++iteration) {
+        QPointer<QObject> previousInstance = manager.pluginInstance(packageId);
+        QVERIFY(previousInstance != nullptr);
+        QCOMPARE(previousInstance->property("sourceSdkAbi").toInt(), 2);
+
+        QCOMPARE(manager.reload(packageId), PluginOperationResult::Success);
+        QVERIFY2(previousInstance.isNull(), "Reload retained the previous v2 plugin instance");
+        QVERIFY(manager.pluginInstance(packageId) != nullptr);
+        QCOMPARE(manager.plugin(packageId).state, PluginState::Loaded);
+        QCOMPARE(manager.plugin(packageId).activeLeases, 0);
+        QVERIFY(manager.plugin(packageId).busyReason.isEmpty());
+    }
 }
 
 void PluginManagerTest::malformedPackageDoesNotBlockValidPackage()

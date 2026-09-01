@@ -32,6 +32,7 @@ struct PluginSpec {
     PluginCategory category = PluginCategory::Unknown;
     PluginState state = PluginState::Discovered;
     QString error;
+    QString busyReason;
     QString path;
     int activeLeases = 0;
 };

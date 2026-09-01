@@ -19,9 +19,11 @@ public:
     PluginCategory category() const;
     QString libraryAbsolutePath() const;
     int minimumHostPluginApiMinor() const;
+    int sourceSdkAbi() const;
+    QString sourceInterfaceId() const;
     int requiredQtMajor() const;
     QString requiredArchitecture() const;
-    QString requiredBuildMode() const;
+    QString requiredBuildKey() const;
 
 private:
     bool m_valid = false;
@@ -32,7 +34,9 @@ private:
     PluginCategory m_category = PluginCategory::Unknown;
     QString m_libraryAbsolutePath;
     int m_minimumHostPluginApiMinor = 0;
+    int m_sourceSdkAbi = 0;
+    QString m_sourceInterfaceId;
     int m_requiredQtMajor = 0;
     QString m_requiredArchitecture;
-    QString m_requiredBuildMode;
+    QString m_requiredBuildKey;
 };
