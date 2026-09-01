@@ -47,6 +47,11 @@ add_library(quemusic_source_sdk STATIC
     sdk/source/SourcePluginContext.h
     sdk/source/SourceTypes.cpp
     sdk/source/SourceTypes.h
+    sdk/source/v2/IMusicSourcePluginV2.h
+    sdk/source/v2/IMusicSourceSessionV2.h
+    sdk/source/v2/ISourceProvidersV2.h
+    sdk/source/v2/SourceV2Types.cpp
+    sdk/source/v2/SourceV2Types.h
 )
 target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -223,6 +228,24 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_types_test COMMAND quemusic_source_types_test)
+
+    qt_add_executable(quemusic_source_v2_types_test
+        tests/tst_SourceV2Types.cpp
+    )
+    target_link_libraries(quemusic_source_v2_types_test PRIVATE
+        quemusic_source_sdk
+        Qt6::Test
+    )
+    add_test(NAME quemusic_source_v2_types_test COMMAND quemusic_source_v2_types_test)
+
+    qt_add_executable(quemusic_source_v2_contract_test
+        tests/tst_SourceV2Contract.cpp
+    )
+    target_link_libraries(quemusic_source_v2_contract_test PRIVATE
+        quemusic_source_sdk
+        Qt6::Test
+    )
+    add_test(NAME quemusic_source_v2_contract_test COMMAND quemusic_source_v2_contract_test)
 
     qt_add_executable(quemusic_source_account_store_test
         tests/tst_SourceAccountStore.cpp
