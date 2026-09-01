@@ -87,7 +87,7 @@ void rewriteV1PackageAsV2(const QString &packagePath)
                     QJsonObject{{QStringLiteral("sourceSdkAbi"), 2},
                                 {QStringLiteral("qtMajor"), QT_VERSION_MAJOR},
                                 {QStringLiteral("architecture"),
-                                 QSysInfo::currentCpuArchitecture()},
+                                 QSysInfo::buildCpuArchitecture()},
                                 {QStringLiteral("buildKey"), hostBuildKey()}});
     QVERIFY(manifestFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
     manifestFile.write(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
