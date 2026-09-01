@@ -22,6 +22,7 @@ private slots:
     void rejectsRuntimeMismatchBeforeLoadingV2();
     void enforcesCanonicalArchitectureCompatibility_data();
     void enforcesCanonicalArchitectureCompatibility();
+    void usesQtBuildArchitectureForNativeCompatibility();
     void rejectsPluginMetadataIidThatDisagreesWithManifest();
     void rejectsV2PluginThatDoesNotImplementDeclaredInterface();
     void refusesUnloadWhileLeaseIsActive();
@@ -132,7 +133,7 @@ void PluginManagerTest::enforcesCanonicalArchitectureCompatibility_data()
     QTest::addColumn<QString>("declaredArchitecture");
     QTest::addColumn<bool>("compatible");
 
-    const QString host = QSysInfo::currentCpuArchitecture().trimmed().toLower();
+    const QString host = QSysInfo::buildCpuArchitecture().trimmed().toLower();
     if (host == QStringLiteral("x86_64") || host == QStringLiteral("amd64")) {
         QTest::newRow("host-amd64-alias") << QStringLiteral("AMD64") << true;
         QTest::newRow("host-x86-64-canonical") << QStringLiteral("x86_64") << true;
@@ -175,6 +176,21 @@ void PluginManagerTest::enforcesCanonicalArchitectureCompatibility()
         QVERIFY2(spec.error.contains(QStringLiteral("architecture"), Qt::CaseInsensitive),
                  qPrintable(spec.error));
     }
+}
+
+void PluginManagerTest::usesQtBuildArchitectureForNativeCompatibility()
+{
+    const QString sourcePath = QFINDTESTDATA("../core/plugins/PluginManager.cpp");
+    QVERIFY2(!sourcePath.isEmpty(), "PluginManager.cpp test data was not found");
+
+    QFile sourceFile(sourcePath);
+    QVERIFY(sourceFile.open(QIODevice::ReadOnly));
+    const QByteArray source = sourceFile.readAll();
+
+    QVERIFY2(source.contains("QSysInfo::buildCpuArchitecture()"),
+             "Native plugin compatibility must use the Qt/process build architecture");
+    QVERIFY2(!source.contains("QSysInfo::currentCpuArchitecture()"),
+             "OS/native CPU architecture is wrong under translation or emulation");
 }
 
 void PluginManagerTest::rejectsRuntimeMismatchBeforeLoadingV2()

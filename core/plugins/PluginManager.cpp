@@ -49,6 +49,11 @@ QString hostBuildKey()
     return QStringLiteral(QUEMUSIC_PLUGIN_BUILD_KEY);
 }
 
+QString hostPluginArchitecture()
+{
+    return canonicalPluginArchitecture(QSysInfo::buildCpuArchitecture());
+}
+
 }
 
 struct PluginLease::State {
@@ -383,6 +388,7 @@ const PluginManager::Entry *PluginManager::findEntry(const QString &packageId) c
 
 bool PluginManager::supportsRuntime(const PluginManifest &manifest, QString *error) const
 {
+    const QString hostArchitecture = hostPluginArchitecture();
     if (manifest.minimumHostPluginApiMinor() > hostPluginApiMinor) {
         *error = QStringLiteral("Package requires a newer host plugin API");
         return false;
@@ -393,10 +399,9 @@ bool PluginManager::supportsRuntime(const PluginManifest &manifest, QString *err
     }
     if (!manifest.requiredArchitecture().isEmpty()
         && !isPluginArchitectureCompatible(manifest.requiredArchitecture(),
-                                           QSysInfo::currentCpuArchitecture())) {
+                                           hostArchitecture)) {
         *error = QStringLiteral("Package requires architecture %1; host is %2")
-                     .arg(manifest.requiredArchitecture(),
-                          canonicalPluginArchitecture(QSysInfo::currentCpuArchitecture()));
+                     .arg(manifest.requiredArchitecture(), hostArchitecture);
         return false;
     }
     if (!manifest.requiredBuildKey().isEmpty()
