@@ -7,6 +7,13 @@ enum class PluginCategory {
     Source,
 };
 
+// Native source packages use x86_64, arm64, or universal in manifests.
+// A universal package contains both supported slices and is loadable by an
+// x86_64 or arm64 process; a single-architecture package must match exactly.
+QString canonicalPluginArchitecture(const QString &architecture);
+bool isPluginArchitectureCompatible(const QString &requiredArchitecture,
+                                    const QString &hostArchitecture);
+
 class PluginManifest {
 public:
     static PluginManifest fromFile(const QString &manifestPath, QString *error = nullptr);

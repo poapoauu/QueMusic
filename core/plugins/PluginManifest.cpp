@@ -17,6 +17,7 @@ namespace {
 constexpr int hostPluginApiMajor = 1;
 constexpr int sourceSdkV1Abi = 1;
 constexpr int sourceSdkV2Abi = 2;
+constexpr auto sourceInterfacePrefix = "org.quemusic.MusicSourcePlugin/";
 constexpr auto sourceV1InterfaceId = "org.quemusic.MusicSourcePlugin/1.0";
 constexpr auto sourceV2InterfaceId = "org.quemusic.MusicSourcePlugin/2.0";
 
@@ -41,11 +42,15 @@ QString parseSourceInterfaceId(const QJsonValue &interfaces, QString *error)
             continue;
         }
         const QString id = interfaceValue.toObject().value(QStringLiteral("id")).toString();
-        if (id != QString::fromLatin1(sourceV1InterfaceId)
-            && id != QString::fromLatin1(sourceV2InterfaceId)) {
+        if (!id.startsWith(QString::fromLatin1(sourceInterfacePrefix))) {
             continue;
         }
-        if (!recognizedInterface.isEmpty() && recognizedInterface != id) {
+        if (id != QString::fromLatin1(sourceV1InterfaceId)
+            && id != QString::fromLatin1(sourceV2InterfaceId)) {
+            *error = QStringLiteral("Manifest source plugin interface %1 is unsupported").arg(id);
+            return {};
+        }
+        if (!recognizedInterface.isEmpty()) {
             *error = QStringLiteral("Manifest declares multiple source plugin interfaces");
             return {};
         }
@@ -85,6 +90,33 @@ bool jsonIntegerAtLeast(const QJsonValue &value, int minimum, int *result)
     return true;
 }
 
+}
+
+QString canonicalPluginArchitecture(const QString &architecture)
+{
+    const QString value = architecture.trimmed().toLower();
+    if (value == QStringLiteral("x86_64") || value == QStringLiteral("amd64")
+        || value == QStringLiteral("x64")) {
+        return QStringLiteral("x86_64");
+    }
+    if (value == QStringLiteral("arm64") || value == QStringLiteral("aarch64")) {
+        return QStringLiteral("arm64");
+    }
+    if (value == QStringLiteral("universal") || value == QStringLiteral("universal2")) {
+        return QStringLiteral("universal");
+    }
+    return {};
+}
+
+bool isPluginArchitectureCompatible(const QString &requiredArchitecture,
+                                    const QString &hostArchitecture)
+{
+    const QString required = canonicalPluginArchitecture(requiredArchitecture);
+    const QString host = canonicalPluginArchitecture(hostArchitecture);
+    if (required == QStringLiteral("universal")) {
+        return host == QStringLiteral("x86_64") || host == QStringLiteral("arm64");
+    }
+    return !required.isEmpty() && required == host;
 }
 
 PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *error)
@@ -240,7 +272,15 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
             && (!buildKey.isString() || buildKey.toString().isEmpty())) {
             return invalidManifest(QStringLiteral("Manifest required build key is invalid"), error);
         }
-        requiredArchitecture = architecture.toString();
+        if (!architecture.isUndefined()) {
+            requiredArchitecture = canonicalPluginArchitecture(architecture.toString());
+            if (requiredArchitecture.isEmpty()) {
+                return invalidManifest(
+                    QStringLiteral("Manifest required architecture %1 is unsupported")
+                        .arg(architecture.toString()),
+                    error);
+            }
+        }
         requiredBuildKey = buildKey.toString();
     } else if (interfaceAbi != sourceSdkV1Abi) {
         return invalidManifest(QStringLiteral("Manifest source SDK ABI is missing"), error);

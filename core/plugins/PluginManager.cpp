@@ -46,11 +46,7 @@ QString pluginCategoryName(PluginCategory category)
 
 QString hostBuildKey()
 {
-#ifdef QT_NO_DEBUG
-    return QStringLiteral("Release");
-#else
-    return QStringLiteral("Debug");
-#endif
+    return QStringLiteral(QUEMUSIC_PLUGIN_BUILD_KEY);
 }
 
 }
@@ -396,9 +392,11 @@ bool PluginManager::supportsRuntime(const PluginManifest &manifest, QString *err
         return false;
     }
     if (!manifest.requiredArchitecture().isEmpty()
-        && manifest.requiredArchitecture() != QSysInfo::currentCpuArchitecture()) {
-        *error = QStringLiteral("Package requires architecture %1")
-                     .arg(manifest.requiredArchitecture());
+        && !isPluginArchitectureCompatible(manifest.requiredArchitecture(),
+                                           QSysInfo::currentCpuArchitecture())) {
+        *error = QStringLiteral("Package requires architecture %1; host is %2")
+                     .arg(manifest.requiredArchitecture(),
+                          canonicalPluginArchitecture(QSysInfo::currentCpuArchitecture()));
         return false;
     }
     if (!manifest.requiredBuildKey().isEmpty()

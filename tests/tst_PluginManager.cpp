@@ -20,6 +20,8 @@ private slots:
     void loadsV1AndV2AccordingToManifestAbi();
     void rejectsRuntimeMismatchBeforeLoadingV2_data();
     void rejectsRuntimeMismatchBeforeLoadingV2();
+    void enforcesCanonicalArchitectureCompatibility_data();
+    void enforcesCanonicalArchitectureCompatibility();
     void rejectsPluginMetadataIidThatDisagreesWithManifest();
     void rejectsV2PluginThatDoesNotImplementDeclaredInterface();
     void refusesUnloadWhileLeaseIsActive();
@@ -48,11 +50,7 @@ void copyPackage(const QString &sourcePath, const QString &destinationPath)
 
 QString hostBuildKey()
 {
-#ifdef QT_NO_DEBUG
-    return QStringLiteral("Release");
-#else
-    return QStringLiteral("Debug");
-#endif
+    return QStringLiteral(QUEMUSIC_TEST_BUILD_KEY);
 }
 
 void replaceRuntimeRequirement(const QString &packagePath, const QString &key,
@@ -122,14 +120,61 @@ void PluginManagerTest::rejectsRuntimeMismatchBeforeLoadingV2_data()
     QTest::newRow("qt-major") << QStringLiteral("qtMajor")
                                << QJsonValue(QT_VERSION_MAJOR + 1)
                                << QStringLiteral("Qt major");
-    QTest::newRow("architecture") << QStringLiteral("architecture")
-                                  << QJsonValue(QStringLiteral("not-the-host-architecture"))
-                                  << QStringLiteral("architecture");
     QTest::newRow("build-key") << QStringLiteral("buildKey")
                                << QJsonValue(hostBuildKey() == QStringLiteral("Debug")
                                                  ? QStringLiteral("Release")
                                                  : QStringLiteral("Debug"))
                                << QStringLiteral("build key");
+}
+
+void PluginManagerTest::enforcesCanonicalArchitectureCompatibility_data()
+{
+    QTest::addColumn<QString>("declaredArchitecture");
+    QTest::addColumn<bool>("compatible");
+
+    const QString host = QSysInfo::currentCpuArchitecture().trimmed().toLower();
+    if (host == QStringLiteral("x86_64") || host == QStringLiteral("amd64")) {
+        QTest::newRow("host-amd64-alias") << QStringLiteral("AMD64") << true;
+        QTest::newRow("host-x86-64-canonical") << QStringLiteral("x86_64") << true;
+        QTest::newRow("opposite-aarch64-alias") << QStringLiteral("aarch64") << false;
+        QTest::newRow("opposite-arm64-canonical") << QStringLiteral("arm64") << false;
+    } else if (host == QStringLiteral("arm64") || host == QStringLiteral("aarch64")) {
+        QTest::newRow("host-aarch64-alias") << QStringLiteral("aarch64") << true;
+        QTest::newRow("host-arm64-canonical") << QStringLiteral("arm64") << true;
+        QTest::newRow("opposite-amd64-alias") << QStringLiteral("AMD64") << false;
+        QTest::newRow("opposite-x86-64-canonical") << QStringLiteral("x86_64") << false;
+    } else {
+        QSKIP(qPrintable(QStringLiteral("Unsupported test host architecture: %1").arg(host)));
+    }
+    QTest::newRow("universal-package") << QStringLiteral("universal") << true;
+}
+
+void PluginManagerTest::enforcesCanonicalArchitectureCompatibility()
+{
+    QFETCH(QString, declaredArchitecture);
+    QFETCH(bool, compatible);
+
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString packagePath = QDir(root.path()).filePath(QStringLiteral("fixture-v2"));
+    copyPackage(QDir(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR))
+                    .filePath(QStringLiteral("fixture-v2")),
+                packagePath);
+    replaceRuntimeRequirement(packagePath, QStringLiteral("architecture"),
+                              declaredArchitecture);
+
+    PluginManager manager;
+    manager.addSearchPath(root.path());
+    QCOMPARE(manager.discover(), 1);
+    QCOMPARE(manager.load(QStringLiteral("org.quemusic.source.fixture-v2")), compatible);
+    const PluginSpec spec = manager.plugin(QStringLiteral("org.quemusic.source.fixture-v2"));
+    if (compatible) {
+        QCOMPARE(spec.state, PluginState::Loaded);
+    } else {
+        QCOMPARE(spec.state, PluginState::Failed);
+        QVERIFY2(spec.error.contains(QStringLiteral("architecture"), Qt::CaseInsensitive),
+                 qPrintable(spec.error));
+    }
 }
 
 void PluginManagerTest::rejectsRuntimeMismatchBeforeLoadingV2()

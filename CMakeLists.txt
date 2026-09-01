@@ -67,6 +67,9 @@ add_library(quemusic_plugin_core STATIC
     core/plugins/PluginManager.h
 )
 target_compile_features(quemusic_plugin_core PUBLIC cxx_std_17)
+target_compile_definitions(quemusic_plugin_core PRIVATE
+    QUEMUSIC_PLUGIN_BUILD_KEY="$<IF:$<CONFIG:Debug>,Debug,Release>"
+)
 target_link_libraries(quemusic_plugin_core PUBLIC
     quemusic_source_sdk
     Qt6::Core
@@ -341,12 +344,51 @@ if(BUILD_TESTING)
             "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}/$<TARGET_FILE_NAME:quemusic_frozen_v1_source_fixture>"
     )
 
-    if(CMAKE_OSX_ARCHITECTURES)
-        list(GET CMAKE_OSX_ARCHITECTURES 0 QUEMUSIC_TEST_ARCHITECTURE)
+    function(canonicalize_plugin_architecture architecture output_variable)
+        string(TOLOWER "${architecture}" normalized_architecture)
+        if(normalized_architecture STREQUAL "x86_64"
+                OR normalized_architecture STREQUAL "amd64"
+                OR normalized_architecture STREQUAL "x64")
+            set(normalized_architecture "x86_64")
+        elseif(normalized_architecture STREQUAL "arm64"
+                OR normalized_architecture STREQUAL "aarch64")
+            set(normalized_architecture "arm64")
+        else()
+            message(FATAL_ERROR
+                "Unsupported source plugin target architecture: ${architecture}")
+        endif()
+        set(${output_variable} "${normalized_architecture}" PARENT_SCOPE)
+    endfunction()
+
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        set(QUEMUSIC_TEST_TARGET_ARCHITECTURES)
+        foreach(target_architecture IN LISTS CMAKE_OSX_ARCHITECTURES)
+            canonicalize_plugin_architecture(
+                "${target_architecture}" canonical_target_architecture)
+            list(APPEND QUEMUSIC_TEST_TARGET_ARCHITECTURES
+                "${canonical_target_architecture}")
+        endforeach()
+        list(REMOVE_DUPLICATES QUEMUSIC_TEST_TARGET_ARCHITECTURES)
+        list(LENGTH QUEMUSIC_TEST_TARGET_ARCHITECTURES target_architecture_count)
+        if(target_architecture_count EQUAL 2)
+            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "x86_64" x86_index)
+            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "arm64" arm_index)
+            if(x86_index EQUAL -1 OR arm_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Unsupported universal source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
+            endif()
+            set(QUEMUSIC_TEST_ARCHITECTURE "universal")
+        elseif(target_architecture_count EQUAL 1)
+            list(GET QUEMUSIC_TEST_TARGET_ARCHITECTURES 0 QUEMUSIC_TEST_ARCHITECTURE)
+        else()
+            message(FATAL_ERROR
+                "Unsupported source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
+        endif()
     else()
-        set(QUEMUSIC_TEST_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
+        canonicalize_plugin_architecture(
+            "${CMAKE_SYSTEM_PROCESSOR}" QUEMUSIC_TEST_ARCHITECTURE)
     endif()
-    set(QUEMUSIC_TEST_BUILD_KEY "${CMAKE_BUILD_TYPE}")
+    set(QUEMUSIC_TEST_BUILD_KEY "$<IF:$<CONFIG:Debug>,Debug,Release>")
 
     function(add_v2_source_plugin_fixture target package_directory)
         add_library(${target} MODULE
@@ -361,6 +403,21 @@ if(BUILD_TESTING)
         )
     endfunction()
 
+    function(generate_v2_source_plugin_manifest target package_directory)
+        set(QUEMUSIC_V2_FIXTURE_LIBRARY "$<TARGET_FILE_NAME:${target}>")
+        set(configured_manifest
+            "${CMAKE_CURRENT_BINARY_DIR}/${target}-manifest.json.in")
+        configure_file(
+            tests/fixtures/v2-manifest.json.in
+            "${configured_manifest}"
+            @ONLY
+        )
+        file(GENERATE
+            OUTPUT "${package_directory}/manifest.json"
+            INPUT "${configured_manifest}"
+        )
+    endfunction()
+
     set(QUEMUSIC_V2_PACKAGE_ROOT
         "${CMAKE_CURRENT_BINARY_DIR}/test-source-v2-packages")
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_fake_v2_source_fixture)
@@ -368,15 +425,11 @@ if(BUILD_TESTING)
     set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "fixture-v2")
     set(QUEMUSIC_V2_FIXTURE_NAME "Fixture V2")
     set(QUEMUSIC_V2_FIXTURE_PACKAGE_DIR
-        "${QUEMUSIC_V2_PACKAGE_ROOT}/fixture-v2")
-    file(MAKE_DIRECTORY "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}")
+        "${QUEMUSIC_V2_PACKAGE_ROOT}/$<CONFIG>/fixture-v2")
     add_v2_source_plugin_fixture(${QUEMUSIC_V2_FIXTURE_TARGET}
                                  "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}")
-    configure_file(
-        tests/fixtures/v2-manifest.json.in
-        "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}/manifest.json"
-        @ONLY
-    )
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}")
 
     set(QUEMUSIC_INVALID_V2_PACKAGE_ROOT
         "${CMAKE_CURRENT_BINARY_DIR}/test-source-v2-invalid-packages")
@@ -385,18 +438,14 @@ if(BUILD_TESTING)
     set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "fixture-v2-invalid")
     set(QUEMUSIC_V2_FIXTURE_NAME "Fixture V2 Invalid")
     set(QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR
-        "${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}/fixture-v2-invalid")
-    file(MAKE_DIRECTORY "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}")
+        "${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}/$<CONFIG>/fixture-v2-invalid")
     add_v2_source_plugin_fixture(${QUEMUSIC_V2_FIXTURE_TARGET}
                                  "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}")
     target_compile_definitions(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE
         QUEMUSIC_FAKE_V2_OMIT_INTERFACE
     )
-    configure_file(
-        tests/fixtures/v2-manifest.json.in
-        "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}/manifest.json"
-        @ONLY
-    )
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}")
 
     add_source_plugin_fixture(quemusic_duplicate_source_fixture_one duplicate)
     target_compile_definitions(quemusic_duplicate_source_fixture_one PRIVATE
@@ -553,8 +602,9 @@ if(BUILD_TESTING)
     )
     target_compile_definitions(quemusic_plugin_manager_test PRIVATE
         QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
-        QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_V2_PACKAGE_ROOT}"
-        QUEMUSIC_TEST_INVALID_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}"
+        QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_V2_PACKAGE_ROOT}/$<CONFIG>"
+        QUEMUSIC_TEST_INVALID_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}/$<CONFIG>"
+        QUEMUSIC_TEST_BUILD_KEY="$<IF:$<CONFIG:Debug>,Debug,Release>"
     )
     target_link_libraries(quemusic_plugin_manager_test PRIVATE
         quemusic_plugin_core
@@ -566,6 +616,14 @@ if(BUILD_TESTING)
         quemusic_fake_v2_wrong_contract_fixture
     )
     add_test(NAME quemusic_plugin_manager_test COMMAND quemusic_plugin_manager_test)
+    add_test(NAME quemusic_plugin_v2_fixture_package_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dpackage_dir=$<TARGET_FILE_DIR:quemusic_fake_v2_source_fixture>"
+            "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_fake_v2_source_fixture>"
+            "-Dbuild_config=$<CONFIG>"
+            "-Dexpected_architecture=${QUEMUSIC_TEST_ARCHITECTURE}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyV2FixturePackage.cmake"
+    )
 
     qt_add_executable(quemusic_media_types_test
         tests/tst_MediaTypes.cpp
