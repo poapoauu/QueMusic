@@ -15,11 +15,14 @@ private slots:
 
 void SourceV2TypesTest::mediaIdentityIncludesSourceInstance()
 {
-    const MediaRefV2 a{"navidrome", "home", "admin", MediaEntityTypeV2::Track, "42"};
-    const MediaRefV2 b{"navidrome", "office", "admin", MediaEntityTypeV2::Track, "42"};
+    const MediaRefV2 a{"navidrome", "home", "admin", MediaEntityTypeV2::Album, "42"};
+    const MediaRefV2 b{"navidrome", "office", "admin", MediaEntityTypeV2::Album, "42"};
+    const QVariantMap serialized = mediaRefV2ToVariantMap(a);
 
     QVERIFY(a != b);
-    QCOMPARE(mediaRefV2FromVariantMap(mediaRefV2ToVariantMap(a)), a);
+    QCOMPARE(serialized.value(QStringLiteral("entityType")).toInt(),
+             static_cast<int>(MediaEntityTypeV2::Album));
+    QCOMPARE(mediaRefV2FromVariantMap(serialized), a);
 }
 
 void SourceV2TypesTest::availabilityPreservesReasonAndConstraints()

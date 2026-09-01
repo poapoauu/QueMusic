@@ -125,6 +125,24 @@ static_assert(!HasSettingsSchema<IMusicSourcePluginV2>::value);
 static_assert(!std::is_base_of_v<QObject, IPageProviderV2>);
 static_assert(!std::is_base_of_v<QObject, IPluginSettingsProviderV2>);
 
+using StateChangedSignalV2 = void (IMusicSourceSessionV2::*)(SourceSessionStateV2);
+using CapabilitiesChangedSignalV2 = void (IMusicSourceSessionV2::*)(CapabilitySetV2);
+using PageReadySignalV2 = void (IMusicSourceSessionV2::*)(QUuid, PageResultV2);
+using StreamReadySignalV2 = void (IMusicSourceSessionV2::*)(QUuid, StreamDescriptorV2);
+using ActionCompletedSignalV2 = void (IMusicSourceSessionV2::*)(QUuid, ActionResultV2);
+using RequestFailedSignalV2 = void (IMusicSourceSessionV2::*)(QUuid, SourceErrorV2);
+
+static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::stateChanged),
+                             StateChangedSignalV2>);
+static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::capabilitiesChanged),
+                             CapabilitiesChangedSignalV2>);
+static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::pageReady), PageReadySignalV2>);
+static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::streamReady), StreamReadySignalV2>);
+static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::actionCompleted),
+                             ActionCompletedSignalV2>);
+static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::requestFailed),
+                             RequestFailedSignalV2>);
+
 } // namespace
 
 class SourceV2ContractTest : public QObject {
