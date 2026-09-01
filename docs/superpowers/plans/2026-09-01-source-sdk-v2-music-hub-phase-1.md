@@ -353,7 +353,6 @@ class IMusicSourcePluginV2 {
 public:
     virtual ~IMusicSourcePluginV2() = default;
     virtual SourceDescriptorV2 descriptor() const = 0;
-    virtual SettingsSchemaV2 settingsSchema() const = 0;
     virtual IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &configuration,
                                                  QObject *parent) = 0;
 };
@@ -425,6 +424,12 @@ public:
     virtual QUuid deleteBookmark(const MediaRefV2 &media) = 0;
 };
 
+class IPluginSettingsProviderV2 {
+public:
+    virtual ~IPluginSettingsProviderV2() = default;
+    virtual SettingsSchemaV2 settingsSchema() const = 0;
+};
+
 #define QUEMUSIC_PAGE_PROVIDER_V2_IID "org.quemusic.source.PageProvider/2.0"
 #define QUEMUSIC_PLAYBACK_PROVIDER_V2_IID "org.quemusic.source.PlaybackProvider/2.0"
 #define QUEMUSIC_FAVORITE_PROVIDER_V2_IID "org.quemusic.source.FavoriteProvider/2.0"
@@ -434,6 +439,7 @@ public:
 #define QUEMUSIC_DOWNLOAD_PROVIDER_V2_IID "org.quemusic.source.DownloadProvider/2.0"
 #define QUEMUSIC_PLAY_QUEUE_PROVIDER_V2_IID "org.quemusic.source.PlayQueueProvider/2.0"
 #define QUEMUSIC_BOOKMARK_PROVIDER_V2_IID "org.quemusic.source.BookmarkProvider/2.0"
+#define QUEMUSIC_PLUGIN_SETTINGS_PROVIDER_V2_IID "org.quemusic.source.PluginSettingsProvider/2.0"
 
 Q_DECLARE_INTERFACE(IPageProviderV2, QUEMUSIC_PAGE_PROVIDER_V2_IID)
 Q_DECLARE_INTERFACE(IPlaybackProviderV2, QUEMUSIC_PLAYBACK_PROVIDER_V2_IID)
@@ -444,6 +450,7 @@ Q_DECLARE_INTERFACE(IPlaylistProviderV2, QUEMUSIC_PLAYLIST_PROVIDER_V2_IID)
 Q_DECLARE_INTERFACE(IDownloadProviderV2, QUEMUSIC_DOWNLOAD_PROVIDER_V2_IID)
 Q_DECLARE_INTERFACE(IPlayQueueProviderV2, QUEMUSIC_PLAY_QUEUE_PROVIDER_V2_IID)
 Q_DECLARE_INTERFACE(IBookmarkProviderV2, QUEMUSIC_BOOKMARK_PROVIDER_V2_IID)
+Q_DECLARE_INTERFACE(IPluginSettingsProviderV2, QUEMUSIC_PLUGIN_SETTINGS_PROVIDER_V2_IID)
 ```
 
 Optional interfaces contain methods only; all completion and error signals come from `IMusicSourceSessionV2`.
@@ -1303,7 +1310,9 @@ Expected: generic controller and schema form are missing; old Navidrome-specific
 ```cpp
 QVariantList PluginSettingsController::settingsSections() const
 {
-    return settingsSchemaToVariantList(selectedPlugin()->settingsSchema(),
+    auto *settings = qobject_cast<IPluginSettingsProviderV2 *>(selectedPluginObject());
+    if (settings == nullptr) return {};
+    return settingsSchemaToVariantList(settings->settingsSchema(),
                                        m_draftNonSecretValues,
                                        m_credentialConfigured);
 }
@@ -1475,6 +1484,8 @@ After successful ping, request `getOpenSubsonicExtensions`. A 404/unsupported ex
 - [ ] **Step 5: Update both Qt and package manifests to v2**
 
 Set `Q_PLUGIN_METADATA` IID to `org.quemusic.MusicSourcePlugin/2.0`, Qt metadata `sdkAbi` to `2`, and package manifest interface/version to `2.0` with `runtimeRequirements.sourceSdkAbi = 2`.
+
+Declare `Q_INTERFACES(IMusicSourcePluginV2 IPluginSettingsProviderV2)` on `NavidromeSourcePlugin`; the base source-plugin interface remains independent of settings UI.
 
 - [ ] **Step 6: Run focused tests**
 
