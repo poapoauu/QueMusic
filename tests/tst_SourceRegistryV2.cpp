@@ -197,6 +197,7 @@ IMusicSourceSessionV2 *RegistryV2FixturePlugin::createSession(
 #include "SourceAccountStore.h"
 #include "v2/ISourceProvidersV2.h"
 
+#include <QEvent>
 #include <QHash>
 #include <QMetaObject>
 #include <QPointer>
@@ -352,6 +353,39 @@ private:
     QString m_packageId;
 };
 
+class CreationCallbackObserver final : public QObject {
+    Q_OBJECT
+
+public:
+    CreationCallbackObserver(SourceRegistry *registry, PluginManager *plugins,
+                             QString packageId)
+        : m_registry(registry)
+        , m_plugins(plugins)
+        , m_packageId(std::move(packageId))
+    {
+    }
+
+    int callbackCount = 0;
+    int leasesAtDestruction = -1;
+    QPointer<QObject> capturedSession;
+
+public slots:
+    void closeAllOnCreation(QObject *session)
+    {
+        ++callbackCount;
+        capturedSession = session;
+        connect(session, &QObject::destroyed, this, [this] {
+            leasesAtDestruction = m_plugins->plugin(m_packageId).activeLeases;
+        });
+        m_registry->closeAll();
+    }
+
+private:
+    SourceRegistry *m_registry = nullptr;
+    PluginManager *m_plugins = nullptr;
+    QString m_packageId;
+};
+
 SourceInstanceDescriptorV2 descriptorFor(const QList<SourceInstanceDescriptorV2> &descriptors,
                                          const QString &sourceInstanceId)
 {
@@ -396,6 +430,12 @@ private slots:
     void pluginDescriptorSourceMismatchPreventsSession();
     void v1PluginIsNeverReinterpretedAsV2();
     void sessionCreationIsLazyAndReusesTheLiveSession();
+    void creationReservationPreventsReentrantAcquireRecursion();
+    void closeInstanceDuringAcquireInvalidatesCreation();
+    void closeAllDuringAcquireInvalidatesCreation();
+    void disableDuringAcquireInvalidatesCreation();
+    void registryDestructionDuringAcquireInvalidatesCreation();
+    void closeAllDuringCreateSessionInvalidatesBeforeOpen();
     void terminalSignalsRemoveRequestsAndCloseCancelsFirst();
     void synchronousOpenTerminalDoesNotRemainActive();
     void closeRejectsReentrantCreationFromCancelCloseAndDestruction();
@@ -403,6 +443,7 @@ private slots:
     void rejectsSessionThatIgnoresRegistryParent();
     void reparentedSessionIsRejectedAndClosed();
     void externalDestructionDefersLeaseReleaseAndRecreation();
+    void registryDestructionTransfersDeferredLeaseToPluginManagerQueue();
     void disableClosesSessionBeforeReleasingLease();
     void destructionClosesSessionBeforeReleasingLease();
     void closeAllIsIdempotent();
@@ -565,6 +606,161 @@ void SourceRegistryV2Test::sessionCreationIsLazyAndReusesTheLiveSession()
     QCOMPARE(configuration.value(QStringLiteral("secretSize")).toInt(),
              QByteArrayLiteral("fixture-secret").size());
     QVERIFY(!configuration.contains(QStringLiteral("secret")));
+}
+
+void SourceRegistryV2Test::creationReservationPreventsReentrantAcquireRecursion()
+{
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    const QString instanceId = QStringLiteral("registry-v2/home");
+    IMusicSourceSessionV2 *reentrantSession = nullptr;
+    bool handledAcquire = false;
+    connect(&harness.pluginManager, &PluginManager::pluginChanged, this,
+            [&](const QString &packageId) {
+                if (handledAcquire || packageId != kPackageId) {
+                    return;
+                }
+                handledAcquire = true;
+                reentrantSession = harness.registry.sessionFor(instanceId);
+            });
+
+    IMusicSourceSessionV2 *session = harness.registry.sessionFor(instanceId);
+
+    QVERIFY(handledAcquire);
+    QVERIFY(reentrantSession == nullptr);
+    QVERIFY(session != nullptr);
+    QCOMPARE(harness.validPluginObject()->property("createCount").toInt(), 1);
+    QCOMPARE(session->parent(), &harness.registry);
+    QCOMPARE(harness.registry.children().count(session), 1);
+    QCOMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 1);
+}
+
+void SourceRegistryV2Test::closeInstanceDuringAcquireInvalidatesCreation()
+{
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    const QString instanceId = QStringLiteral("registry-v2/home");
+    bool handledAcquire = false;
+    connect(&harness.pluginManager, &PluginManager::pluginChanged, this,
+            [&](const QString &packageId) {
+                if (handledAcquire || packageId != kPackageId) {
+                    return;
+                }
+                handledAcquire = true;
+                QVERIFY(harness.registry.closeInstance(instanceId));
+            });
+
+    QVERIFY(harness.registry.sessionFor(instanceId) == nullptr);
+    QVERIFY(handledAcquire);
+    QCOMPARE(harness.validPluginObject()->property("createCount").toInt(), 0);
+    QVERIFY(harness.registry.children().isEmpty());
+    QCOMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 0);
+}
+
+void SourceRegistryV2Test::closeAllDuringAcquireInvalidatesCreation()
+{
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    const QString instanceId = QStringLiteral("registry-v2/home");
+    bool handledAcquire = false;
+    connect(&harness.pluginManager, &PluginManager::pluginChanged, this,
+            [&](const QString &packageId) {
+                if (handledAcquire || packageId != kPackageId) {
+                    return;
+                }
+                handledAcquire = true;
+                harness.registry.closeAll();
+            });
+
+    QVERIFY(harness.registry.sessionFor(instanceId) == nullptr);
+    QVERIFY(handledAcquire);
+    QCOMPARE(harness.validPluginObject()->property("createCount").toInt(), 0);
+    QVERIFY(harness.registry.children().isEmpty());
+    QCOMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 0);
+}
+
+void SourceRegistryV2Test::disableDuringAcquireInvalidatesCreation()
+{
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    const QString instanceId = QStringLiteral("registry-v2/home");
+    bool handledAcquire = false;
+    connect(&harness.pluginManager, &PluginManager::pluginChanged, this,
+            [&](const QString &packageId) {
+                if (handledAcquire || packageId != kPackageId) {
+                    return;
+                }
+                handledAcquire = true;
+                QVERIFY(harness.registry.disableInstance(instanceId));
+            });
+
+    QVERIFY(harness.registry.sessionFor(instanceId) == nullptr);
+    QVERIFY(handledAcquire);
+    QCOMPARE(harness.validPluginObject()->property("createCount").toInt(), 0);
+    QVERIFY(harness.registry.children().isEmpty());
+    QCOMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 0);
+    QVERIFY(!descriptorFor(harness.registry.enabledInstances(), instanceId).enabled);
+}
+
+void SourceRegistryV2Test::registryDestructionDuringAcquireInvalidatesCreation()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    TestSecretStore secretStore;
+    SourceAccountStore accountStore(&settings, &secretStore);
+    PluginManager pluginManager;
+    pluginManager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(pluginManager.discover(), 1);
+    QVERIFY(pluginManager.load(kPackageId));
+    QVERIFY(accountStore.upsert(sourceAccount(kSourceId, QStringLiteral("home"),
+                                              QStringLiteral("Home"))));
+
+    auto *registry = new SourceRegistry(&pluginManager, &accountStore);
+    QPointer<SourceRegistry> guardedRegistry(registry);
+    bool handledAcquire = false;
+    connect(&pluginManager, &PluginManager::pluginChanged, this,
+            [&](const QString &packageId) {
+                if (handledAcquire || packageId != kPackageId) {
+                    return;
+                }
+                handledAcquire = true;
+                delete registry;
+            });
+
+    IMusicSourceSessionV2 *session =
+        registry->sessionFor(QStringLiteral("registry-v2/home"));
+    QVERIFY(handledAcquire);
+    QVERIFY(guardedRegistry.isNull());
+    QVERIFY(session == nullptr);
+    QCOMPARE(pluginManager.pluginInstance(kPackageId)->property("createCount").toInt(), 0);
+    QCOMPARE(pluginManager.plugin(kPackageId).activeLeases, 0);
+}
+
+void SourceRegistryV2Test::closeAllDuringCreateSessionInvalidatesBeforeOpen()
+{
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    CreationCallbackObserver observer(&harness.registry, &harness.pluginManager, kPackageId);
+    QVERIFY(QObject::connect(harness.validPluginObject(), SIGNAL(sessionCreated(QObject*)),
+                             &observer, SLOT(closeAllOnCreation(QObject*))));
+
+    QVERIFY(harness.registry.sessionFor(QStringLiteral("registry-v2/home")) == nullptr);
+    QCOMPARE(observer.callbackCount, 1);
+    QVERIFY(observer.capturedSession.isNull());
+    QCOMPARE(observer.leasesAtDestruction, 1);
+    QCOMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 0);
+    QVERIFY(harness.registry.children().isEmpty());
+    const QStringList events = harness.validPluginObject()->property("events").toStringList();
+    for (const QString &event : events) {
+        QVERIFY(!event.startsWith(QStringLiteral("open:registry-v2/home:")));
+    }
 }
 
 void SourceRegistryV2Test::terminalSignalsRemoveRequestsAndCloseCancelsFirst()
@@ -761,6 +957,38 @@ void SourceRegistryV2Test::externalDestructionDefersLeaseReleaseAndRecreation()
 
     QVERIFY(harness.registry.sessionFor(instanceId) != nullptr);
     QCOMPARE(harness.validPluginObject()->property("createCount").toInt(), 2);
+}
+
+void SourceRegistryV2Test::registryDestructionTransfersDeferredLeaseToPluginManagerQueue()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    TestSecretStore secretStore;
+    SourceAccountStore accountStore(&settings, &secretStore);
+    PluginManager pluginManager;
+    pluginManager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(pluginManager.discover(), 1);
+    QVERIFY(pluginManager.load(kPackageId));
+    QVERIFY(accountStore.upsert(sourceAccount(kSourceId, QStringLiteral("home"),
+                                              QStringLiteral("Home"))));
+
+    auto *registry = new SourceRegistry(&pluginManager, &accountStore);
+    const QString instanceId = QStringLiteral("registry-v2/home");
+    IMusicSourceSessionV2 *session = registry->sessionFor(instanceId);
+    QVERIFY(session != nullptr);
+    session->setParent(nullptr);
+    delete session;
+
+    QCOMPARE(pluginManager.plugin(kPackageId).activeLeases, 1);
+    registry->closeAll();
+    QVERIFY(registry->sessionFor(instanceId) == nullptr);
+    delete registry;
+    QCOMPARE(pluginManager.plugin(kPackageId).activeLeases, 1);
+
+    QCoreApplication::sendPostedEvents(&pluginManager, QEvent::MetaCall);
+    QCOMPARE(pluginManager.plugin(kPackageId).activeLeases, 0);
 }
 
 void SourceRegistryV2Test::disableClosesSessionBeforeReleasingLease()

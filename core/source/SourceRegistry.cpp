@@ -3,11 +3,14 @@
 #include "SourceAccountStore.h"
 #include "v2/IMusicSourcePluginV2.h"
 
-#include <QCoreApplication>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QVariantMap>
 
 #include <algorithm>
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -30,7 +33,53 @@ QList<StoredSourceAccount> sortedAccounts(SourceAccountStore *accounts)
     return result;
 }
 
+void quarantineDeferredLease(std::shared_ptr<void> lease)
+{
+    struct Quarantine {
+        QMutex mutex;
+        std::vector<std::shared_ptr<void>> leases;
+    };
+    static Quarantine *const quarantine = new Quarantine;
+    const QMutexLocker locker(&quarantine->mutex);
+    quarantine->leases.push_back(std::move(lease));
 }
+
+}
+
+class SourceRegistry::CreationReservation {
+public:
+    CreationReservation(SourceRegistry *registry, QString instanceId, quint64 token,
+                        quint64 lifecycleGeneration, quint64 instanceGeneration)
+        : m_registry(registry)
+        , m_instanceId(std::move(instanceId))
+        , m_token(token)
+        , m_lifecycleGeneration(lifecycleGeneration)
+        , m_instanceGeneration(instanceGeneration)
+    {
+    }
+
+    ~CreationReservation()
+    {
+        if (m_registry != nullptr) {
+            m_registry->releaseCreation(m_instanceId, m_token);
+        }
+    }
+
+    bool isCurrent() const
+    {
+        return m_registry != nullptr
+            && m_registry->creationIsCurrent(m_instanceId, m_token,
+                                             m_lifecycleGeneration,
+                                             m_instanceGeneration);
+    }
+
+private:
+    QPointer<SourceRegistry> m_registry;
+    QString m_instanceId;
+    quint64 m_token = 0;
+    quint64 m_lifecycleGeneration = 0;
+    quint64 m_instanceGeneration = 0;
+};
 
 SourceRegistry::SourceRegistry(PluginManager *plugins, SourceAccountStore *accounts,
                                QObject *parent)
@@ -43,7 +92,12 @@ SourceRegistry::SourceRegistry(PluginManager *plugins, SourceAccountStore *accou
 SourceRegistry::~SourceRegistry()
 {
     m_destroying = true;
+    ++m_lifecycleGeneration;
     closeAll(false);
+    // Every pending token is also owned by the PluginManager callback (or quarantine).
+    // Dropping registry tracking here cannot release a lease in a session destructor.
+    m_deferredReleaseTokens.clear();
+    m_deferredLeaseReleases.clear();
 }
 
 PluginManager *SourceRegistry::pluginManager() const
@@ -81,7 +135,7 @@ QList<SourceInstanceDescriptorV2> SourceRegistry::enabledInstances() const
 IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
 {
     if (m_closingAll || m_destroying || m_closingInstances.contains(instanceId)
-        || m_creatingInstances.contains(instanceId)) {
+        || m_creationReservations.contains(instanceId)) {
         return nullptr;
     }
 
@@ -103,6 +157,10 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     if (m_plugins == nullptr || m_accounts == nullptr) {
         return nullptr;
     }
+    std::unique_ptr<CreationReservation> reservation = reserveCreation(instanceId);
+    if (!reservation) {
+        return nullptr;
+    }
     const std::optional<StoredSourceAccount> stored = accountForInstance(instanceId);
     if (!stored.has_value() || !stored->enabled) {
         return nullptr;
@@ -118,8 +176,25 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     if (!loadedV2PluginForSource(stored->sourceId, &packageId, &plugin)) {
         return nullptr;
     }
+    if (!reservation->isCurrent()) {
+        return nullptr;
+    }
     PluginLease lease = m_plugins->acquire(packageId);
-    if (!lease.isValid()) {
+    if (!lease.isValid() || !reservation->isCurrent()) {
+        lease = {};
+        return nullptr;
+    }
+
+    plugin = qobject_cast<IMusicSourcePluginV2 *>(m_plugins->pluginInstance(packageId));
+    if (plugin == nullptr || !reservation->isCurrent()) {
+        lease = {};
+        return nullptr;
+    }
+    const SourceDescriptorV2 pluginDescriptor = plugin->descriptor();
+    if (!reservation->isCurrent() || pluginDescriptor.sourceId != stored->sourceId
+        || (!pluginDescriptor.pluginPackageId.isEmpty()
+            && pluginDescriptor.pluginPackageId != packageId)) {
+        lease = {};
         return nullptr;
     }
 
@@ -132,11 +207,16 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
         stored->parameters,
         account->secret,
     };
-    m_creatingInstances.insert(instanceId);
+    const QPointer<SourceRegistry> registryGuard(this);
     QPointer<IMusicSourceSessionV2> session = plugin->createSession(configuration, this);
-    if (session == nullptr) {
+    if (registryGuard == nullptr || session == nullptr || !reservation->isCurrent()) {
+        if (session != nullptr) {
+            session->close();
+            if (session != nullptr) {
+                delete session;
+            }
+        }
         lease = {};
-        m_creatingInstances.remove(instanceId);
         return nullptr;
     }
     if (session->parent() != this) {
@@ -145,7 +225,14 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
             delete session;
         }
         lease = {};
-        m_creatingInstances.remove(instanceId);
+        return nullptr;
+    }
+    if (!reservation->isCurrent()) {
+        session->close();
+        if (session != nullptr) {
+            delete session;
+        }
+        lease = {};
         return nullptr;
     }
 
@@ -154,7 +241,6 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     entry.sessionIdentity = session.data();
     entry.lease = std::move(lease);
     m_sessions.insert(instanceId, std::move(entry));
-    m_creatingInstances.remove(instanceId);
 
     QObject *const sessionIdentity = session.data();
     connect(session, &IMusicSourceSessionV2::requestStarted, this,
@@ -198,6 +284,9 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
             });
 
     session->open();
+    if (registryGuard == nullptr || !reservation->isCurrent()) {
+        return nullptr;
+    }
     bool active = false;
     {
         const auto current = m_sessions.constFind(instanceId);
@@ -212,7 +301,10 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
         return nullptr;
     }
     emit instanceChanged(instanceId);
-    return session;
+    if (registryGuard == nullptr || !reservation->isCurrent()) {
+        return nullptr;
+    }
+    return session.data();
 }
 
 bool SourceRegistry::enableInstance(const QString &instanceId)
@@ -243,6 +335,7 @@ bool SourceRegistry::disableInstance(const QString &instanceId)
     if (!account.has_value()) {
         return false;
     }
+    invalidateInstanceCreation(instanceId);
     if (!account->enabled) {
         return true;
     }
@@ -275,6 +368,48 @@ void SourceRegistry::trackRequest(const QString &instanceId, QObject *session,
         && entry->session != nullptr) {
         entry->activeRequests.insert(requestId);
     }
+}
+
+std::unique_ptr<SourceRegistry::CreationReservation> SourceRegistry::reserveCreation(
+    const QString &instanceId)
+{
+    if (m_closingAll || m_destroying || m_closingInstances.contains(instanceId)
+        || m_creationReservations.contains(instanceId)) {
+        return {};
+    }
+    ++m_nextCreationToken;
+    if (m_nextCreationToken == 0) {
+        ++m_nextCreationToken;
+    }
+    const quint64 token = m_nextCreationToken;
+    const quint64 instanceGeneration = m_instanceLifecycleGenerations.value(instanceId);
+    m_creationReservations.insert(instanceId, token);
+    return std::make_unique<CreationReservation>(this, instanceId, token,
+                                                 m_lifecycleGeneration,
+                                                 instanceGeneration);
+}
+
+bool SourceRegistry::creationIsCurrent(const QString &instanceId, quint64 token,
+                                       quint64 lifecycleGeneration,
+                                       quint64 instanceGeneration) const
+{
+    return !m_closingAll && !m_destroying && !m_closingInstances.contains(instanceId)
+        && m_lifecycleGeneration == lifecycleGeneration
+        && m_instanceLifecycleGenerations.value(instanceId) == instanceGeneration
+        && m_creationReservations.value(instanceId) == token;
+}
+
+void SourceRegistry::releaseCreation(const QString &instanceId, quint64 token)
+{
+    if (m_creationReservations.value(instanceId) == token) {
+        m_creationReservations.remove(instanceId);
+    }
+}
+
+void SourceRegistry::invalidateInstanceCreation(const QString &instanceId)
+{
+    quint64 &generation = m_instanceLifecycleGenerations[instanceId];
+    ++generation;
 }
 
 std::optional<StoredSourceAccount> SourceRegistry::accountForInstance(
@@ -325,12 +460,6 @@ bool SourceRegistry::loadedV2PluginForSource(const QString &sourceId, QString *p
         if (candidate == nullptr) {
             continue;
         }
-        const SourceDescriptorV2 descriptor = candidate->descriptor();
-        if (descriptor.sourceId != sourceId
-            || (!descriptor.pluginPackageId.isEmpty()
-                && descriptor.pluginPackageId != candidatePackageId)) {
-            continue;
-        }
         *packageId = candidatePackageId;
         *plugin = candidate;
         return true;
@@ -361,25 +490,43 @@ void SourceRegistry::handleExternalDestruction(const QString &instanceId, QObjec
 
     m_closingInstances.insert(instanceId);
     SessionEntry entry = m_sessions.take(instanceId);
-    auto deferredLease = std::make_shared<PluginLease>(std::move(entry.lease));
+    ++m_nextDeferredReleaseToken;
+    if (m_nextDeferredReleaseToken == 0) {
+        ++m_nextDeferredReleaseToken;
+    }
+    const quint64 tokenId = m_nextDeferredReleaseToken;
+    auto deferredLease =
+        std::make_shared<DeferredLeaseRelease>(std::move(entry.lease));
+    m_deferredLeaseReleases.insert(tokenId, deferredLease);
+    m_deferredReleaseTokens.insert(instanceId, tokenId);
     const QPointer<SourceRegistry> registry(this);
-    QObject *const dispatcher = QCoreApplication::instance();
-    if (dispatcher == nullptr) {
+    PluginManager *const cleanupOwner = m_plugins.data();
+    if (cleanupOwner == nullptr) {
+        quarantineDeferredLease(deferredLease);
         return;
     }
-    QMetaObject::invokeMethod(
-        dispatcher,
-        [registry, instanceId, deferredLease] {
-            *deferredLease = {};
+    const bool queued = QMetaObject::invokeMethod(
+        cleanupOwner,
+        [registry, instanceId, tokenId, deferredLease] {
+            deferredLease->release();
             if (registry != nullptr) {
-                registry->finishDeferredDestruction(instanceId);
+                registry->finishDeferredDestruction(instanceId, tokenId);
             }
         },
         Qt::QueuedConnection);
+    if (!queued) {
+        quarantineDeferredLease(deferredLease);
+    }
 }
 
-void SourceRegistry::finishDeferredDestruction(const QString &instanceId)
+void SourceRegistry::finishDeferredDestruction(const QString &instanceId, quint64 token)
 {
+    if (m_deferredReleaseTokens.value(instanceId) != token
+        || !m_deferredLeaseReleases.contains(token)) {
+        return;
+    }
+    m_deferredReleaseTokens.remove(instanceId);
+    m_deferredLeaseReleases.remove(token);
     m_closingInstances.remove(instanceId);
     if (!m_destroying) {
         emit instanceChanged(instanceId);
@@ -388,6 +535,7 @@ void SourceRegistry::finishDeferredDestruction(const QString &instanceId)
 
 bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
 {
+    invalidateInstanceCreation(instanceId);
     if (m_closingInstances.contains(instanceId)) {
         return true;
     }
@@ -422,6 +570,7 @@ bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
 
 void SourceRegistry::closeAll(bool notify)
 {
+    ++m_lifecycleGeneration;
     if (m_closingAll) {
         return;
     }
