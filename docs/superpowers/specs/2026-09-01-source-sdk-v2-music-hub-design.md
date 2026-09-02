@@ -143,6 +143,8 @@ SDK v2 使用新的 Qt 插件 IID，例如 `org.quemusic.IMusicSourcePlugin/2.0`
 
 `IMusicSourcePluginV2` 只负责插件级元数据、设置描述和创建会话。`IMusicSourceSessionV2` 负责一个具体音源实例的连接状态、能力协商、取消请求和关闭。
 
+`IMusicSourceSessionV2` 还必须统一发出类型化 `requestStarted(requestId)` 信号。`open()` 和所有可选 provider 的异步方法都必须在任何同步完成或失败信号之前先发出该信号；核心据此记录并在关闭、切换范围或卸载插件前取消全部未完成请求。仅返回请求 ID 而不发出该信号属于不符合 v2 契约。
+
 功能以可选的类型化接口提供：
 
 - `IPageProvider`
@@ -190,6 +192,7 @@ PageResult
 
 - UI 线程不得执行阻塞网络或磁盘操作。
 - 每个异步请求携带请求 ID、页面代次和取消令牌。
+- 每个异步请求必须先通过会话的 `requestStarted` 信号登记，再允许发出完成或失败信号。
 - 切换页面、音源范围或卸载插件时必须取消相关请求。
 - 迟到结果若代次不匹配必须丢弃。
 - 插件返回纯 DTO；不得把插件拥有的模型或对象树直接交给 QML。
@@ -267,6 +270,8 @@ accountId:        stable-user-id
 ```
 
 一个插件可以拥有多个实例。非敏感配置按插件命名空间保存并带配置版本。密码、访问令牌和 Cookie 通过 `ICredentialStore` 写入系统安全凭据库；普通配置只保存凭据引用。秘密不得暴露给 QML，也不得写入日志。
+
+`sourceId` 是插件声明的稳定 slug，必须非空且不得包含 `/`；`accountId` 保持现有存储语义并允许包含 `/`。因此 `sourceInstanceId = sourceId + "/" + accountId` 可逆且不会改写已有账号或凭据键。
 
 原生插件与主程序运行在同一进程，因此属于受信任代码；凭据存储不能把原生插件变成安全沙箱。
 

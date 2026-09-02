@@ -341,6 +341,7 @@ public:
     virtual void close() = 0;
     virtual void cancel(const QUuid &requestId) = 0;
 signals:
+    void requestStarted(QUuid requestId);
     void stateChanged(SourceSessionStateV2 state);
     void capabilitiesChanged(CapabilitySetV2 capabilities);
     void pageReady(QUuid requestId, PageResultV2 result);
@@ -453,7 +454,7 @@ Q_DECLARE_INTERFACE(IBookmarkProviderV2, QUEMUSIC_BOOKMARK_PROVIDER_V2_IID)
 Q_DECLARE_INTERFACE(IPluginSettingsProviderV2, QUEMUSIC_PLUGIN_SETTINGS_PROVIDER_V2_IID)
 ```
 
-Optional interfaces contain methods only; all completion and error signals come from `IMusicSourceSessionV2`.
+Optional interfaces contain methods only; request lifecycle, completion and error signals all come from `IMusicSourceSessionV2`. `open()` and every asynchronous provider method must emit `requestStarted(requestId)` before any synchronous terminal signal so the host can cancel every outstanding request without wrapping provider interfaces.
 
 - [ ] **Step 5: Run focused tests**
 
@@ -568,6 +569,8 @@ Use this manifest shape for all v2 source packages:
 
 The configured fixture substitutes the current architecture and build mode. `PluginManifest::fromFile()` must require the v2 IID and `sourceSdkAbi == 2`; runtime checks compare Qt major, architecture and build key before `QPluginLoader::load()`.
 
+For every source package, `sourceId` is a stable slug: reject empty values and values containing `/`. Account IDs retain their existing storage semantics and may contain `/`; constraining the plugin-owned source slug keeps `sourceId/accountId` instance IDs unambiguous without migrating account keys.
+
 - [ ] **Step 4: Cast loaded source instances to v2 and keep precise failure states**
 
 ```cpp
@@ -678,6 +681,8 @@ struct SourceInstanceDescriptorV2 {
 
 Keep existing settings groups keyed by `(sourceId, accountId)` and derive `sourceInstanceId` deterministically. This avoids rewriting stored secrets while making all new DTOs instance-aware.
 
+`sourceId` is guaranteed slash-free by `PluginManifest`; `accountId` may contain `/`. Do not split an instance ID at every slash: resolve it against stored `(sourceId, accountId)` pairs or split only at the first separator.
+
 - [ ] **Step 4: Implement lease-owned sessions and cancellation-first shutdown**
 
 ```cpp
@@ -701,6 +706,8 @@ bool SourceRegistry::closeInstance(const QString &instanceId)
 ```
 
 Use `QPointer`, remove completed request IDs, and close all sessions before registry destruction. A session can only be created from an enabled account whose secret can be read.
+
+Connect the mandatory typed `IMusicSourceSessionV2::requestStarted` signal; do not depend on an optional dynamic signal invented by a fixture. Shutdown must mark the instance as closing and remove/take its session entry before invoking plugin virtual methods, while retaining the local lease until cancellation, close and destruction return. `sessionFor()` must reject per-instance or global shutdown, and `closeAll()` must block creation while draining all entries. A returned session is borrowed and registry-owned; validate/enforce registry parentage. If a session is destroyed externally, defer lease release until the destruction stack has unwound.
 
 - [ ] **Step 5: Run registry and storage tests**
 
