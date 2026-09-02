@@ -132,6 +132,7 @@ private slots:
     void rejectsUntrustedParameterNames();
     void keepsSlashContainingAccountIdentitiesDistinct();
     void readsLegacyRawPercentEscapedAccountId();
+    void enablingLegacyRawAccountDoesNotRewriteItsKeysOrSecretReference();
     void updatesLegacyRawPercentEscapedAccountInPlace();
     void removesLegacyRawPercentEscapedAccount();
     void preservesPreviousAccountWhenOldSecretCleanupFails();
@@ -374,6 +375,29 @@ void SourceAccountStoreTest::readsLegacyRawPercentEscapedAccountId()
     QCOMPARE(accounts.size(), 1);
     QCOMPARE(accounts.constFirst().sourceId, fixture.sourceId);
     QCOMPARE(accounts.constFirst().accountId, fixture.accountId);
+}
+
+void SourceAccountStoreTest::enablingLegacyRawAccountDoesNotRewriteItsKeysOrSecretReference()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
+    settings.setValue(fixture.group() + QStringLiteral("/enabled"), false);
+    settings.sync();
+
+    QVERIFY(store.setEnabled(fixture.sourceId, fixture.accountId, true));
+    QCOMPARE(settings.value(fixture.group() + QStringLiteral("/enabled")).toBool(), true);
+    QCOMPARE(settings.value(fixture.group() + QStringLiteral("/secretReference")).toString(),
+             fixture.reference);
+    QVERIFY(!settings.contains(
+        QStringLiteral("sourceAccountsV2/navidrome/home%252Foffice/secretReference")));
+    QCOMPARE(store.secretReference(fixture.sourceId, fixture.accountId), fixture.reference);
+    QCOMPARE(secretStore.value(fixture.reference), fixture.secret);
 }
 
 void SourceAccountStoreTest::updatesLegacyRawPercentEscapedAccountInPlace()
