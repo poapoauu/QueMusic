@@ -3,10 +3,11 @@
 #include "SourceAccountStore.h"
 #include "v2/IMusicSourcePluginV2.h"
 
-#include <QMetaMethod>
+#include <QCoreApplication>
 #include <QVariantMap>
 
 #include <algorithm>
+#include <memory>
 
 namespace {
 
@@ -41,6 +42,7 @@ SourceRegistry::SourceRegistry(PluginManager *plugins, SourceAccountStore *accou
 
 SourceRegistry::~SourceRegistry()
 {
+    m_destroying = true;
     closeAll(false);
 }
 
@@ -61,9 +63,15 @@ QList<SourceInstanceDescriptorV2> SourceRegistry::enabledInstances() const
         descriptor.accountId = account.accountId;
         descriptor.displayName = account.displayName;
         descriptor.enabled = account.enabled;
-        const auto session = m_sessions.constFind(instanceId);
-        if (session != m_sessions.cend() && session->session != nullptr) {
-            descriptor.state = session->session->state();
+        QPointer<IMusicSourceSessionV2> session;
+        {
+            const auto current = m_sessions.constFind(instanceId);
+            if (current != m_sessions.cend()) {
+                session = current->session;
+            }
+        }
+        if (session != nullptr) {
+            descriptor.state = session->state();
         }
         descriptors.append(descriptor);
     }
@@ -72,12 +80,24 @@ QList<SourceInstanceDescriptorV2> SourceRegistry::enabledInstances() const
 
 IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
 {
-    auto existing = m_sessions.find(instanceId);
-    if (existing != m_sessions.end()) {
-        if (existing->session != nullptr) {
-            return existing->session;
+    if (m_closingAll || m_destroying || m_closingInstances.contains(instanceId)
+        || m_creatingInstances.contains(instanceId)) {
+        return nullptr;
+    }
+
+    QPointer<IMusicSourceSessionV2> existingSession;
+    {
+        const auto existing = m_sessions.constFind(instanceId);
+        if (existing != m_sessions.cend()) {
+            existingSession = existing->session;
         }
-        m_sessions.erase(existing);
+    }
+    if (existingSession != nullptr) {
+        if (existingSession->parent() != this) {
+            closeEntry(instanceId, true);
+            return nullptr;
+        }
+        return existingSession;
     }
 
     if (m_plugins == nullptr || m_accounts == nullptr) {
@@ -112,65 +132,85 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
         stored->parameters,
         account->secret,
     };
-    IMusicSourceSessionV2 *session = plugin->createSession(configuration, this);
+    m_creatingInstances.insert(instanceId);
+    QPointer<IMusicSourceSessionV2> session = plugin->createSession(configuration, this);
     if (session == nullptr) {
+        lease = {};
+        m_creatingInstances.remove(instanceId);
+        return nullptr;
+    }
+    if (session->parent() != this) {
+        session->close();
+        if (session != nullptr) {
+            delete session;
+        }
+        lease = {};
+        m_creatingInstances.remove(instanceId);
         return nullptr;
     }
 
     SessionEntry entry;
     entry.session = session;
-    entry.sessionIdentity = session;
+    entry.sessionIdentity = session.data();
     entry.lease = std::move(lease);
-    m_sessions.insert(instanceId, entry);
+    m_sessions.insert(instanceId, std::move(entry));
+    m_creatingInstances.remove(instanceId);
 
+    QObject *const sessionIdentity = session.data();
+    connect(session, &IMusicSourceSessionV2::requestStarted, this,
+            [this, instanceId, sessionIdentity](const QUuid &requestId) {
+                trackRequest(instanceId, sessionIdentity, requestId);
+            });
     connect(session, &IMusicSourceSessionV2::pageReady, this,
-            [this, instanceId, session](const QUuid &requestId, const PageResultV2 &) {
-                forgetRequest(instanceId, session, requestId);
+            [this, instanceId, sessionIdentity](const QUuid &requestId,
+                                                const PageResultV2 &) {
+                forgetRequest(instanceId, sessionIdentity, requestId);
             });
     connect(session, &IMusicSourceSessionV2::streamReady, this,
-            [this, instanceId, session](const QUuid &requestId, const StreamDescriptorV2 &) {
-                forgetRequest(instanceId, session, requestId);
+            [this, instanceId, sessionIdentity](const QUuid &requestId,
+                                                const StreamDescriptorV2 &) {
+                forgetRequest(instanceId, sessionIdentity, requestId);
             });
     connect(session, &IMusicSourceSessionV2::actionCompleted, this,
-            [this, instanceId, session](const QUuid &requestId, const ActionResultV2 &) {
-                forgetRequest(instanceId, session, requestId);
+            [this, instanceId, sessionIdentity](const QUuid &requestId,
+                                                const ActionResultV2 &) {
+                forgetRequest(instanceId, sessionIdentity, requestId);
             });
     connect(session, &IMusicSourceSessionV2::requestFailed, this,
-            [this, instanceId, session](const QUuid &requestId, const SourceErrorV2 &) {
-                forgetRequest(instanceId, session, requestId);
+            [this, instanceId, sessionIdentity](const QUuid &requestId,
+                                                const SourceErrorV2 &) {
+                forgetRequest(instanceId, sessionIdentity, requestId);
             });
-    connect(session, &QObject::destroyed, this, [this, instanceId, session] {
-        const auto current = m_sessions.find(instanceId);
-        if (current != m_sessions.end() && current->sessionIdentity == session) {
-            m_sessions.erase(current);
-            emit instanceChanged(instanceId);
-        }
+    connect(session, &QObject::destroyed, this, [this, instanceId, sessionIdentity] {
+        handleExternalDestruction(instanceId, sessionIdentity);
     });
-
-    const int requestStartedIndex =
-        session->metaObject()->indexOfSignal("requestStarted(QUuid)");
-    const int trackRequestIndex = metaObject()->indexOfSlot("trackObservableRequest(QUuid)");
-    if (requestStartedIndex >= 0 && trackRequestIndex >= 0) {
-        QObject::connect(session, session->metaObject()->method(requestStartedIndex), this,
-                         metaObject()->method(trackRequestIndex));
-    }
-
-    const QUuid openRequest = session->open();
-    auto current = m_sessions.find(instanceId);
-    if (current == m_sessions.end() || current->sessionIdentity != session
-        || current->session == nullptr) {
-        return nullptr;
-    }
-    if (!openRequest.isNull()) {
-        current->activeRequests.insert(openRequest);
-    }
     connect(session, &IMusicSourceSessionV2::stateChanged, this,
-            [this, instanceId, session](SourceSessionStateV2) {
-                const auto active = m_sessions.constFind(instanceId);
-                if (active != m_sessions.cend() && active->sessionIdentity == session) {
+            [this, instanceId, sessionIdentity](SourceSessionStateV2) {
+                bool active = false;
+                {
+                    const auto current = m_sessions.constFind(instanceId);
+                    active = current != m_sessions.cend()
+                        && current->sessionIdentity == sessionIdentity;
+                }
+                if (active) {
                     emit instanceChanged(instanceId);
                 }
             });
+
+    session->open();
+    bool active = false;
+    {
+        const auto current = m_sessions.constFind(instanceId);
+        active = current != m_sessions.cend() && current->sessionIdentity == sessionIdentity
+            && current->session != nullptr;
+    }
+    if (!active) {
+        return nullptr;
+    }
+    if (session->parent() != this) {
+        closeEntry(instanceId, true);
+        return nullptr;
+    }
     emit instanceChanged(instanceId);
     return session;
 }
@@ -224,17 +264,16 @@ void SourceRegistry::closeAll()
     closeAll(true);
 }
 
-void SourceRegistry::trackObservableRequest(const QUuid requestId)
+void SourceRegistry::trackRequest(const QString &instanceId, QObject *session,
+                                  const QUuid &requestId)
 {
     if (requestId.isNull()) {
         return;
     }
-    QObject *requestingSession = sender();
-    for (auto entry = m_sessions.begin(); entry != m_sessions.end(); ++entry) {
-        if (entry->sessionIdentity == requestingSession && entry->session != nullptr) {
-            entry->activeRequests.insert(requestId);
-            return;
-        }
+    const auto entry = m_sessions.find(instanceId);
+    if (entry != m_sessions.end() && entry->sessionIdentity == session
+        && entry->session != nullptr) {
+        entry->activeRequests.insert(requestId);
     }
 }
 
@@ -308,21 +347,60 @@ void SourceRegistry::forgetRequest(const QString &instanceId, QObject *session,
     }
 }
 
+void SourceRegistry::handleExternalDestruction(const QString &instanceId, QObject *session)
+{
+    bool isCurrentSession = false;
+    {
+        const auto current = m_sessions.constFind(instanceId);
+        isCurrentSession = current != m_sessions.cend()
+            && current->sessionIdentity == session;
+    }
+    if (!isCurrentSession) {
+        return;
+    }
+
+    m_closingInstances.insert(instanceId);
+    SessionEntry entry = m_sessions.take(instanceId);
+    auto deferredLease = std::make_shared<PluginLease>(std::move(entry.lease));
+    const QPointer<SourceRegistry> registry(this);
+    QObject *const dispatcher = QCoreApplication::instance();
+    if (dispatcher == nullptr) {
+        return;
+    }
+    QMetaObject::invokeMethod(
+        dispatcher,
+        [registry, instanceId, deferredLease] {
+            *deferredLease = {};
+            if (registry != nullptr) {
+                registry->finishDeferredDestruction(instanceId);
+            }
+        },
+        Qt::QueuedConnection);
+}
+
+void SourceRegistry::finishDeferredDestruction(const QString &instanceId)
+{
+    m_closingInstances.remove(instanceId);
+    if (!m_destroying) {
+        emit instanceChanged(instanceId);
+    }
+}
+
 bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
 {
-    const auto entry = m_sessions.find(instanceId);
-    if (entry == m_sessions.end()) {
+    if (m_closingInstances.contains(instanceId)) {
         return true;
     }
-    if (entry->closing) {
+    if (!m_sessions.contains(instanceId)) {
         return true;
     }
-    entry->closing = true;
 
-    const QPointer<IMusicSourceSessionV2> session = entry->session;
+    m_closingInstances.insert(instanceId);
+    SessionEntry entry = m_sessions.take(instanceId);
+    const QPointer<IMusicSourceSessionV2> session = entry.session;
     if (session != nullptr) {
         QObject::disconnect(session, nullptr, this, nullptr);
-        const QSet<QUuid> requests = entry->activeRequests;
+        const QSet<QUuid> requests = entry.activeRequests;
         for (const QUuid &requestId : requests) {
             if (session == nullptr) {
                 break;
@@ -334,7 +412,8 @@ bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
             delete session;
         }
     }
-    m_sessions.erase(entry);
+    entry.lease = {};
+    m_closingInstances.remove(instanceId);
     if (notify) {
         emit instanceChanged(instanceId);
     }
@@ -343,9 +422,16 @@ bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
 
 void SourceRegistry::closeAll(bool notify)
 {
+    if (m_closingAll) {
+        return;
+    }
+    m_closingAll = true;
     QStringList instanceIds = m_sessions.keys();
     std::sort(instanceIds.begin(), instanceIds.end());
     for (const QString &instanceId : instanceIds) {
         closeEntry(instanceId, notify);
+    }
+    if (!m_destroying) {
+        m_closingAll = false;
     }
 }

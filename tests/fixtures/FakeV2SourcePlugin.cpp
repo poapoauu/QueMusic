@@ -11,7 +11,12 @@ public:
     SourceIdentityV2 identity() const override { return {}; }
     SourceSessionStateV2 state() const override { return SourceSessionStateV2::Closed; }
     CapabilitySetV2 capabilities() const override { return {}; }
-    QUuid open() override { return QUuid::createUuid(); }
+    QUuid open() override
+    {
+        const QUuid requestId = QUuid::createUuid();
+        emit requestStarted(requestId);
+        return requestId;
+    }
     void close() override { }
     void cancel(const QUuid &) override { }
 };

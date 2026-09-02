@@ -19,6 +19,8 @@ public:
     virtual void cancel(const QUuid &requestId) = 0;
 
 signals:
+    // open() and every asynchronous provider method must emit this before a terminal signal.
+    void requestStarted(QUuid requestId);
     void stateChanged(SourceSessionStateV2 state);
     void capabilitiesChanged(CapabilitySetV2 capabilities);
     void pageReady(QUuid requestId, PageResultV2 result);

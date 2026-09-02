@@ -73,6 +73,8 @@ class PluginManifestTest : public QObject {
 private slots:
     void acceptsNativeSourcePackage();
     void acceptsV2SourceInterface();
+    void rejectsInvalidSourceSlug_data();
+    void rejectsInvalidSourceSlug();
     void rejectsSourceInterfaceAbiMismatch_data();
     void rejectsSourceInterfaceAbiMismatch();
     void rejectsAmbiguousSourceInterfaceDeclarations_data();
@@ -90,6 +92,47 @@ private slots:
     void rejectsLibraryDirectoryPath();
     void rejectsLibrarySymlinkOutsidePackage();
 };
+
+void PluginManifestTest::rejectsInvalidSourceSlug_data()
+{
+    QTest::addColumn<bool>("v2");
+    QTest::addColumn<QString>("sourceId");
+    QTest::addColumn<QString>("expectedError");
+
+    QTest::newRow("v1-empty")
+        << false << QString() << QStringLiteral("Manifest source ID is empty");
+    QTest::newRow("v1-slash")
+        << false << QStringLiteral("vendor/source")
+        << QStringLiteral("Manifest source ID must not contain '/'");
+    QTest::newRow("v2-empty")
+        << true << QString() << QStringLiteral("Manifest source ID is empty");
+    QTest::newRow("v2-slash")
+        << true << QStringLiteral("vendor/source")
+        << QStringLiteral("Manifest source ID must not contain '/'");
+}
+
+void PluginManifestTest::rejectsInvalidSourceSlug()
+{
+    QFETCH(bool, v2);
+    QFETCH(QString, sourceId);
+    QFETCH(QString, expectedError);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QFile library(QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")));
+    QVERIFY(library.open(QIODevice::WriteOnly));
+    library.close();
+
+    QJsonObject manifest = v2 ? validV2NativeSourceManifest() : validNativeSourceManifest();
+    manifest.insert(QStringLiteral("sourceId"), sourceId);
+    writeManifest(directory.path(), manifest);
+
+    QString error;
+    QVERIFY(!PluginManifest::fromFile(
+                 QDir(directory.path()).filePath(QStringLiteral("manifest.json")), &error)
+                 .isValid());
+    QCOMPARE(error, expectedError);
+}
 
 void PluginManifestTest::rejectsMalformedPluginApi_data()
 {

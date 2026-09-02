@@ -487,6 +487,32 @@ if(BUILD_TESTING)
     generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
                                        "${QUEMUSIC_REGISTRY_V2_FIXTURE_PACKAGE_DIR}")
 
+    set(QUEMUSIC_REGISTRY_V2_SECOND_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-registry-v2-secondary-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_source_registry_v2_secondary_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID
+        "org.quemusic.source.registry-v2-secondary")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "registry-secondary")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Registry V2 Secondary Fixture")
+    set(QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_REGISTRY_V2_SECOND_PACKAGE_ROOT}/$<CONFIG>/registry-secondary")
+    add_library(${QUEMUSIC_V2_FIXTURE_TARGET} MODULE
+        tests/tst_SourceRegistryV2.cpp
+    )
+    target_compile_features(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE cxx_std_17)
+    target_compile_definitions(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE
+        QUEMUSIC_SOURCE_REGISTRY_V2_FIXTURE
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_PACKAGE_ID="${QUEMUSIC_V2_FIXTURE_PACKAGE_ID}"
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_SOURCE_ID="${QUEMUSIC_V2_FIXTURE_SOURCE_ID}"
+    )
+    target_link_libraries(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE quemusic_source_sdk)
+    set_target_properties(${QUEMUSIC_V2_FIXTURE_TARGET} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR}"
+    )
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR}")
+
     set(QUEMUSIC_REGISTRY_V2_MISMATCH_PACKAGE_ROOT
         "${CMAKE_CURRENT_BINARY_DIR}/test-source-registry-v2-mismatch-packages")
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_source_registry_v2_mismatch_fixture)
@@ -697,6 +723,7 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_source_registry_v2_test PRIVATE cxx_std_17)
     target_compile_definitions(quemusic_source_registry_v2_test PRIVATE
         QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_REGISTRY_V2_PACKAGE_ROOT}/$<CONFIG>"
+        QUEMUSIC_TEST_REGISTRY_V2_SECOND_PLUGIN_PACKAGE_DIR="${QUEMUSIC_REGISTRY_V2_SECOND_PACKAGE_ROOT}/$<CONFIG>"
         QUEMUSIC_TEST_REGISTRY_V2_MISMATCH_PLUGIN_PACKAGE_DIR="${QUEMUSIC_REGISTRY_V2_MISMATCH_PACKAGE_ROOT}/$<CONFIG>"
         QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
     )
@@ -706,6 +733,7 @@ if(BUILD_TESTING)
     )
     add_dependencies(quemusic_source_registry_v2_test
         quemusic_source_registry_v2_fixture
+        quemusic_source_registry_v2_secondary_fixture
         quemusic_source_registry_v2_mismatch_fixture
         quemusic_test_source
     )

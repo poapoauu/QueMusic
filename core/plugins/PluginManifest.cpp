@@ -155,6 +155,9 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     if (sourceId.isEmpty()) {
         return invalidManifest(QStringLiteral("Manifest source ID is empty"), error);
     }
+    if (sourceId.contains(QLatin1Char('/'))) {
+        return invalidManifest(QStringLiteral("Manifest source ID must not contain '/'"), error);
+    }
     if (object.value(QStringLiteral("runtime")).toString() != QStringLiteral("native-qt")) {
         return invalidManifest(QStringLiteral("Manifest runtime is not native-qt"), error);
     }

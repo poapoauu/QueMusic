@@ -49,13 +49,13 @@ public:
         return {{{SourceActionV2::Play, {AvailabilityV2::Available, {}, {}}}}};
     }
 
-    QUuid open() override { return QUuid::createUuid(); }
+    QUuid open() override { return nextRequestId(); }
     void close() override { }
     void cancel(const QUuid &) override { }
 
     QUuid fetchPage(const PageQueryV2 &) override
     {
-        const QUuid requestId = QUuid::createUuid();
+        const QUuid requestId = nextRequestId();
         QTimer::singleShot(0, this, [this, requestId] {
             emit pageReady(requestId, PageResultV2{});
         });
@@ -91,7 +91,12 @@ public:
     QUuid deleteBookmark(const MediaRefV2 &) override { return nextRequestId(); }
 
 private:
-    static QUuid nextRequestId() { return QUuid::createUuid(); }
+    QUuid nextRequestId()
+    {
+        const QUuid requestId = QUuid::createUuid();
+        emit requestStarted(requestId);
+        return requestId;
+    }
 };
 
 class FakeMusicSourcePluginV2 final : public QObject,
@@ -126,6 +131,7 @@ static_assert(!std::is_base_of_v<QObject, IPageProviderV2>);
 static_assert(!std::is_base_of_v<QObject, IPluginSettingsProviderV2>);
 
 using StateChangedSignalV2 = void (IMusicSourceSessionV2::*)(SourceSessionStateV2);
+using RequestStartedSignalV2 = void (IMusicSourceSessionV2::*)(QUuid);
 using CapabilitiesChangedSignalV2 = void (IMusicSourceSessionV2::*)(CapabilitySetV2);
 using PageReadySignalV2 = void (IMusicSourceSessionV2::*)(QUuid, PageResultV2);
 using StreamReadySignalV2 = void (IMusicSourceSessionV2::*)(QUuid, StreamDescriptorV2);
@@ -134,6 +140,8 @@ using RequestFailedSignalV2 = void (IMusicSourceSessionV2::*)(QUuid, SourceError
 
 static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::stateChanged),
                              StateChangedSignalV2>);
+static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::requestStarted),
+                             RequestStartedSignalV2>);
 static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::capabilitiesChanged),
                              CapabilitiesChangedSignalV2>);
 static_assert(std::is_same_v<decltype(&IMusicSourceSessionV2::pageReady), PageReadySignalV2>);
@@ -151,6 +159,7 @@ class SourceV2ContractTest : public QObject {
 private slots:
     void locksStableContractIdentifiers();
     void discoversOptionalProvidersByInterface();
+    void startsEveryAsynchronousRequestOnBaseSession();
     void returnsCompletionsThroughBaseSessionSignals();
     void keepsSettingsSchemaOnOptionalProvider();
 };
@@ -195,6 +204,60 @@ void SourceV2ContractTest::discoversOptionalProvidersByInterface()
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(&session));
     QVERIFY(qobject_cast<IPlayQueueProviderV2 *>(&session));
     QVERIFY(qobject_cast<IBookmarkProviderV2 *>(&session));
+}
+
+void SourceV2ContractTest::startsEveryAsynchronousRequestOnBaseSession()
+{
+    FakeMusicSourceSessionV2 session;
+    QSignalSpy started(&session, &IMusicSourceSessionV2::requestStarted);
+    auto *pages = qobject_cast<IPageProviderV2 *>(&session);
+    auto *favorites = qobject_cast<IFavoriteProviderV2 *>(&session);
+    auto *playback = qobject_cast<IPlaybackProviderV2 *>(&session);
+    auto *ratings = qobject_cast<IRatingProviderV2 *>(&session);
+    auto *scrobbles = qobject_cast<IScrobbleProviderV2 *>(&session);
+    auto *playlists = qobject_cast<IPlaylistProviderV2 *>(&session);
+    auto *downloads = qobject_cast<IDownloadProviderV2 *>(&session);
+    auto *queue = qobject_cast<IPlayQueueProviderV2 *>(&session);
+    auto *bookmarks = qobject_cast<IBookmarkProviderV2 *>(&session);
+    const MediaRefV2 media;
+
+    QVERIFY(pages);
+    QVERIFY(favorites);
+    QVERIFY(playback);
+    QVERIFY(ratings);
+    QVERIFY(scrobbles);
+    QVERIFY(playlists);
+    QVERIFY(downloads);
+    QVERIFY(queue);
+    QVERIFY(bookmarks);
+
+    const QList<QUuid> requestIds{
+        session.open(),
+        pages->fetchPage({}),
+        favorites->setFavorite(media, true),
+        playback->resolveStream(media),
+        playback->fetchArtwork(media),
+        playback->fetchLyrics(media),
+        ratings->setRating(media, 5),
+        scrobbles->scrobble(media, 1000, true),
+        playlists->createPlaylist(QStringLiteral("Mix"), {}),
+        playlists->updatePlaylist(media, {}),
+        playlists->deletePlaylist(media),
+        downloads->download(media, QUrl(QStringLiteral("file:///tmp/fixture"))),
+        queue->fetchPlayQueue(),
+        queue->savePlayQueue({}, media, 1000),
+        bookmarks->fetchBookmarks(),
+        bookmarks->createBookmark(media, 1000, QStringLiteral("note")),
+        bookmarks->deleteBookmark(media),
+    };
+
+    QCOMPARE(started.count(), requestIds.size());
+    for (qsizetype index = 0; index < requestIds.size(); ++index) {
+        QVERIFY(!requestIds.at(index).isNull());
+        QCOMPARE(started.at(index).at(0).toUuid(), requestIds.at(index));
+    }
+    QCOMPARE(session.metaObject()->indexOfSignal("requestStarted(QUuid)"),
+             IMusicSourceSessionV2::staticMetaObject.indexOfSignal("requestStarted(QUuid)"));
 }
 
 void SourceV2ContractTest::returnsCompletionsThroughBaseSessionSignals()

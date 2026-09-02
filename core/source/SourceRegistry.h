@@ -40,6 +40,7 @@ public:
 
     PluginManager *pluginManager() const;
     QList<SourceInstanceDescriptorV2> enabledInstances() const;
+    // Borrowed pointer. The registry owns every returned session and its plugin lease.
     IMusicSourceSessionV2 *sessionFor(const QString &sourceInstanceId);
     bool enableInstance(const QString &sourceInstanceId);
     bool disableInstance(const QString &sourceInstanceId);
@@ -49,16 +50,12 @@ public:
 signals:
     void instanceChanged(QString sourceInstanceId);
 
-private slots:
-    void trackObservableRequest(QUuid requestId);
-
 private:
     struct SessionEntry {
         QPointer<IMusicSourceSessionV2> session;
         QObject *sessionIdentity = nullptr;
         PluginLease lease;
         QSet<QUuid> activeRequests;
-        bool closing = false;
     };
 
     std::optional<StoredSourceAccount> accountForInstance(
@@ -68,10 +65,18 @@ private:
                                  IMusicSourcePluginV2 **plugin) const;
     void forgetRequest(const QString &sourceInstanceId, QObject *session,
                        const QUuid &requestId);
+    void trackRequest(const QString &sourceInstanceId, QObject *session,
+                      const QUuid &requestId);
+    void handleExternalDestruction(const QString &sourceInstanceId, QObject *session);
+    void finishDeferredDestruction(const QString &sourceInstanceId);
     bool closeEntry(const QString &sourceInstanceId, bool notify);
     void closeAll(bool notify);
 
     QPointer<PluginManager> m_plugins;
     SourceAccountStore *m_accounts = nullptr;
     QHash<QString, SessionEntry> m_sessions;
+    QSet<QString> m_closingInstances;
+    QSet<QString> m_creatingInstances;
+    bool m_closingAll = false;
+    bool m_destroying = false;
 };
