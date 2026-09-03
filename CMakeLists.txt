@@ -273,6 +273,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(quemusic_music_page_model_test PRIVATE
         quemusic_music_page_model
+        Qt6::Gui
         Qt6::Qml
         Qt6::Test
     )

@@ -206,6 +206,10 @@ bool MusicPageModel::applyResult(quint64 generation, const PageResultV2 &result)
     const auto previousSources = sourceStates();
     const auto previousError = errorMap();
     const bool terminal = !result.cached && result.complete;
+    const bool allSourcesFailed = terminal && !result.sourceStates.isEmpty()
+        && std::all_of(result.sourceStates.cbegin(), result.sourceStates.cend(), [](const auto &source) {
+            return source.state == SourcePageLoadStateV2::Failed;
+        });
     QVariantMap sectionErrors;
     for (auto it = result.sourceStates.cbegin(); it != result.sourceStates.cend(); ++it) {
         if (it->error)
@@ -223,6 +227,12 @@ bool MusicPageModel::applyResult(quint64 generation, const PageResultV2 &result)
             endInsertRows();
         } else if (terminal || existing->generation != generation || !existing->terminal) {
             const int position = std::distance(m_rows.begin(), existing);
+            if (allSourcesFailed && section.items.isEmpty() && existing->cached) {
+                // The query completed with errors, not a successful empty section.
+                // Retain its cached content while recording this generation's outcome.
+                row.section = existing->section;
+                row.cached = true;
+            }
             *existing = row;
             emit dataChanged(index(position), index(position));
         }

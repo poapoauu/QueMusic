@@ -58,6 +58,8 @@ private slots:
     void finalNetworkStateReplacesCachedFailure();
     void typedFailureWaitsForAllExpectedSections();
     void failedRefreshKeepsCachedItems();
+    void emptyFinalResultKeepsCacheOnlyWhenAllSourcesFailed_data();
+    void emptyFinalResultKeepsCacheOnlyWhenAllSourcesFailed();
     void qmlRolesExposeTypedRefsAndOnlySuppliedAvailability();
     void qmlReadsPageStateAndNestedItemValues();
     void failedSourceWithoutOptionalErrorIsNotEmpty();
@@ -332,6 +334,62 @@ void MusicPageModelTest::failedRefreshKeepsCachedItems()
     QCOMPARE(model.state(), PageLoadStateV2::Failed);
     QCOMPARE(model.itemAt(0, 0).value("title").toString(), "cached");
     QVERIFY(model.cached());
+}
+
+// An empty failed result must not erase cached items; a successful empty result must replace them.
+void MusicPageModelTest::emptyFinalResultKeepsCacheOnlyWhenAllSourcesFailed_data()
+{
+    QTest::addColumn<bool>("allFailed");
+    QTest::addColumn<bool>("successfulSibling");
+    QTest::newRow("all-sources-failed") << true << false;
+    QTest::newRow("successful-empty") << false << false;
+    QTest::newRow("failed-section-with-successful-sibling") << true << true;
+}
+
+void MusicPageModelTest::emptyFinalResultKeepsCacheOnlyWhenAllSourcesFailed()
+{
+    QFETCH(bool, allFailed);
+    QFETCH(bool, successfulSibling);
+    MusicPageModel model(MusicPageKindV2::Recommendation);
+    auto generation = model.beginRequest();
+    auto snapshot = sampleResult("cached-song");
+    snapshot.cached = true;
+    QVERIFY(model.applyResult(generation, snapshot));
+    generation = model.beginRequest();
+
+    auto finalResult = sampleResult("music.section.recent");
+    finalResult.sections.first().items.clear();
+    const SourceErrorV2 failure{SourceErrorKindV2::Network, "source.network",
+                                "Connection refused", 503, true};
+    const SourcePageStateV2 source = allFailed
+        ? SourcePageStateV2{SourcePageLoadStateV2::Failed, failure}
+        : SourcePageStateV2{SourcePageLoadStateV2::Empty, std::nullopt};
+    finalResult.sourceStates.insert("navidrome/home", source);
+    finalResult.sourceStates.insert("navidrome/backup", source);
+    if (successfulSibling)
+        QVERIFY(model.applyResult(generation, sampleResult("fresh-sibling", "newest")));
+    QVERIFY(model.applyResult(generation, finalResult));
+    QCOMPARE(model.state(), PageLoadStateV2::Loading);
+    QVERIFY(model.finishGeneration(generation, successfulSibling ? 2 : 1));
+    QCOMPARE(model.rowCount(), successfulSibling ? 2 : 1);
+    if (successfulSibling)
+        QCOMPARE(model.itemAt(1, 0).value("title").toString(), "fresh-sibling");
+
+    if (allFailed) {
+        QCOMPARE(model.state(), successfulSibling ? PageLoadStateV2::Ready : PageLoadStateV2::Failed);
+        QCOMPARE(model.error().detail, "Connection refused");
+        QCOMPARE(sourceState(model, "navidrome/home").value("error").toMap().value("httpStatus").toInt(), 503);
+        QCOMPARE(model.data(model.index(0), MusicPageModel::ErrorRole).toMap()
+                     .value("navidrome/home").toMap().value("messageKey").toString(), "source.network");
+        QCOMPARE(model.itemAt(0, 0).value("title").toString(), "cached-song");
+        QVERIFY(model.cached());
+    } else {
+        QCOMPARE(model.state(), PageLoadStateV2::Empty);
+        QCOMPARE(model.section(0).titleKey, "music.section.recent");
+        QVERIFY(model.itemAt(0, 0).isEmpty());
+        QVERIFY(!model.cached());
+        QVERIFY(model.errorMap().isEmpty());
+    }
 }
 
 // Flattening identity or defaulting absent actions to available would enable unsupported UI actions.
