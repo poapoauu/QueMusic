@@ -47,7 +47,8 @@ QList<MediaItemV2> AggregateComposer::composeItems(const QList<QList<MediaItemV2
 
 PageResultV2 AggregateComposer::compose(const QList<SourcePageResultV2> &inputs,
                                         int limit, const QString &cursor,
-                                        const QString &scope) const
+                                        const QString &scope,
+                                        const QHash<PageSectionKindV2,QString> &sectionScopes) const
 {
     PageResultV2 out;
     AggregateCursorState prior;
@@ -81,7 +82,10 @@ PageResultV2 AggregateComposer::compose(const QList<SourcePageResultV2> &inputs,
     }
     for (auto section : sections) {
         AggregateCursorState state;
-        state.scope = scope; state.nextSource = prior.nextSource; state.seenIds = prior.seenIds;
+        // Root responses may have several standard sections. Each token binds
+        // the query identity with that returned section substituted into it.
+        state.scope = sectionScopes.value(section.kind,scope);
+        state.nextSource = prior.nextSource; state.seenIds = prior.seenIds;
         QList<QList<MediaItemV2>> rows;
         for (const auto &input : merged) {
             SourcePageResultV2 buffered{input.sourceInstanceId, {}, input.error};

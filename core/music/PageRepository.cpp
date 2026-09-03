@@ -175,13 +175,18 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
 {
     auto g=m_groups.value(id); if (!g) return;
     auto req=g->requests.value(source); if (!req || req->done) return;
-    // Providers owe one terminal PageResult for one standard-section query.
+    // One terminal counts as one query even when the initial response contains
+    // multiple standard sections. Ruling12 continuations are section-specific.
     if (!failure && (!page.complete || page.cached)) failure=error(SourceErrorKindV2::InvalidRequest);
+    QSet<PageSectionKindV2> kinds;
     if (!failure) for (const auto &s:page.sections) {
-        if (s.kind!=g->key.query.section || (s.hasMore && s.nextCursor.isEmpty())) failure=error(SourceErrorKindV2::InvalidRequest);
+        if (int(s.kind)<0 || int(s.kind)>int(PageSectionKindV2::SearchResults)
+            || kinds.contains(s.kind) || (s.hasMore && s.nextCursor.isEmpty())
+            || (!g->key.query.cursor.isEmpty() && s.kind!=g->key.query.section))
+            failure=error(SourceErrorKindV2::InvalidRequest);
+        kinds.insert(s.kind);
         for (const auto &i:s.items) if (i.ref.sourceInstanceId!=source) failure=error(SourceErrorKindV2::InvalidRequest);
     }
-    if (page.sections.size()>1) failure=error(SourceErrorKindV2::InvalidRequest);
     req->done=true; disconnectAll(req->connections);
     req->result.error=failure;
     if (!failure) {
@@ -205,7 +210,13 @@ void PageRepository::finish(const QUuid &id)
         inputs.append(req->result); if (!req->result.error) ++success;
     }
     if (!inputs.isEmpty() && !success) { fail(id,inputs.first().error.value()); return; }
-    auto result=m_composer->compose(inputs,g->key.query.limit,g->key.query.cursor,g->scope);
+    QHash<PageSectionKindV2,QString> sectionScopes;
+    for (const auto &input:inputs) for (const auto &section:input.page.sections) {
+        auto key=g->key;
+        key.query.section=section.kind;
+        sectionScopes.insert(section.kind,PageCache::queryScope(key));
+    }
+    auto result=m_composer->compose(inputs,g->key.query.limit,g->key.query.cursor,g->scope,sectionScopes);
     if (!result.complete) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
     result.cached=false; result.complete=true;
     if (!g->cacheable || inputs.isEmpty()) {

@@ -90,6 +90,30 @@ private slots:
         auto next = c.compose({}, 10, first.sections[0].nextCursor, "scope");
         QCOMPARE(ids(next), QStringList({"h2", "o2"}));
     }
+    void siblingSectionsKeepIndependentDedupHistory()
+    {
+        AggregateComposer c;
+        auto a=page("home",{"h1","h2"}), b=page("office",{"o1","o2"});
+        for (auto source:{&a,&b}) {
+            source->page.sections[0].items[0].externalIds={{"isrc","shared-recording"}};
+            auto sibling=source->page.sections[0]; sibling.kind=PageSectionKindV2::FrequentlyPlayed;
+            sibling.sectionId="frequent";
+            for (auto &item:sibling.items) item.ref.entityId="f"+item.ref.entityId;
+            source->page.sections.append(sibling);
+        }
+        const QHash<PageSectionKindV2,QString> scopes{{PageSectionKindV2::RecentlyPlayed,"recent-query"},
+                                                     {PageSectionKindV2::FrequentlyPlayed,"frequent-query"}};
+        auto first=c.compose({a,b},1,{},"root-query",scopes);
+        QCOMPARE(ids(first),QStringList({"h1","fh1"}));
+        const auto recentToken=first.sections[0].nextCursor, frequentToken=first.sections[1].nextCursor;
+        QVERIFY(!c.decodeCursor(recentToken,"frequent-query"));
+        auto recent=c.compose({},1,recentToken,"recent-query",scopes);
+        QCOMPARE(ids(recent),QStringList({"h2"}));
+        auto frequent=c.compose({},1,frequentToken,"frequent-query",scopes);
+        QCOMPARE(ids(frequent),QStringList({"fh2"}));
+        QCOMPARE(ids(c.compose({},1,recent.sections[0].nextCursor,"recent-query",scopes)),QStringList({"o2"}));
+        QCOMPARE(ids(c.compose({},1,frequent.sections[0].nextCursor,"frequent-query",scopes)),QStringList({"fo2"}));
+    }
 };
 QTEST_GUILESS_MAIN(AggregateComposerTest)
 #include "tst_AggregateComposer.moc"

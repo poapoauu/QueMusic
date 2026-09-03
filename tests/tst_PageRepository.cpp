@@ -21,6 +21,7 @@ public:
         auto id = QUuid::createUuid();
         setProperty("lastRequest", id);
         setProperty("lastCursor", query.cursor);
+        setProperty("lastSection",int(query.section));
         setProperty("calls", property("calls").toInt() + 1);
         emit requestStarted(id);
         if (property("inlineFailure").toBool()) emit requestFailed(id, {SourceErrorKindV2::Network});
@@ -117,6 +118,13 @@ static PageResultV2 sample(QString source, QStringList ids = {"one"}, bool more 
     }
     return {{s},{},false,true};
 }
+static PageSectionV2 favoriteSection(QString source, PageSectionKindV2 kind, QString prefix, bool more=true)
+{
+    auto section=sample(source,{prefix+"1",prefix+"2"},more).sections[0];
+    section.kind=kind; section.sectionId=QString::number(int(kind));
+    section.nextCursor=more ? source+"-private-"+prefix : QString{};
+    return section;
+}
 class PageRepositoryTest : public QObject {
     Q_OBJECT
 private slots:
@@ -200,7 +208,7 @@ private slots:
         emit a->pageReady(a->property("lastRequest").toUuid(),sample("home",{"h1","h2"}));
         emit b->pageReady(b->property("lastRequest").toUuid(),sample("office",{"o1","o2"}));
         QTRY_COMPARE(ready.size(),1);
-        QStringList actual={"h1"};
+        QStringList actual={qvariant_cast<PageResultV2>(ready[0][2]).sections[0].items[0].ref.entityId};
         for (int n=1;n<4;++n) {
             q.cursor=qvariant_cast<PageResultV2>(ready.last()[2]).sections[0].nextCursor;
             h.repo.requestPage(q,1); QTRY_COMPARE(ready.size(),n+1);
@@ -308,6 +316,120 @@ private slots:
         QTRY_COMPARE(ready.size(),2);
         QCOMPARE(ready[0][0].toUuid(),second); QCOMPARE(ready[1][0].toUuid(),first);
         QCOMPARE(qvariant_cast<PageResultV2>(ready[0][2]).sections[0].items[0].title,QString("second"));
+    }
+    void initialFavoritesThreeSectionsCompleteExactlyOneQuery()
+    {
+        PageHarness h; QVERIFY(h.init()); auto a=h.session("home"), b=h.session("office");
+        PageQueryV2 q; q.page=MusicPageKindV2::Favorites; q.limit=1;
+        MusicPageModel model(MusicPageKindV2::Favorites); auto generation=model.beginRequest();
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady), failed(&h.repo,&PageRepository::pageFailed);
+        int terminals=0;
+        connect(&h.repo,&PageRepository::pageReady,&model,[&](QUuid,quint64 gen,PageResultV2 p) {
+            model.applyResult(gen,p); if (!p.cached && p.complete) ++terminals;
+        });
+        auto id=h.repo.requestPage(q,generation); QCOMPARE(ready.size(),0);
+        QTRY_COMPARE(a->property("calls").toInt(),1);
+        for (auto session:{a,b}) {
+            const auto source=session==a ? QString("home") : QString("office");
+            PageResultV2 p{{favoriteSection(source,PageSectionKindV2::FavoriteTracks,"t"),
+                           favoriteSection(source,PageSectionKindV2::FavoriteAlbums,"a"),
+                           favoriteSection(source,PageSectionKindV2::FavoriteArtists,"r")},{},false,true};
+            emit session->pageReady(session->property("lastRequest").toUuid(),p);
+        }
+        QTRY_VERIFY(ready.size()+failed.size()==1);
+        QCOMPARE(failed.size(),0); QCOMPARE(ready[0][0].toUuid(),id);
+        auto p=qvariant_cast<PageResultV2>(ready[0][2]); QCOMPARE(p.sections.size(),3);
+        QCOMPARE(p.sections[0].items[0].ref.entityId,QString("t1"));
+        QCOMPARE(p.sections[1].items[0].ref.entityId,QString("a1"));
+        QCOMPARE(p.sections[2].items[0].ref.entityId,QString("r1"));
+        QCOMPARE(terminals,1); QVERIFY(model.finishGeneration(generation,1));
+        QCOMPARE(model.rowCount(),3); QCOMPARE(model.state(),PageLoadStateV2::Ready);
+    }
+    void siblingContinuationsRemainIndependentThroughRemoteBoundary()
+    {
+        PageHarness h; QVERIFY(h.init()); auto a=h.session("home"), b=h.session("office");
+        PageQueryV2 root; root.page=MusicPageKindV2::Favorites; root.limit=1;
+        root.searchText="unchanged"; root.filters={{"genre","Jazz"}};
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady), failed(&h.repo,&PageRepository::pageFailed);
+        h.repo.requestPage(root,1); QTRY_COMPARE(a->property("calls").toInt(),1);
+        for (auto session:{a,b}) {
+            const auto source=session==a?QString("home"):QString("office");
+            const auto prefix=session==a?QString("h"):QString("o");
+            emit session->pageReady(session->property("lastRequest").toUuid(),
+                {{favoriteSection(source,PageSectionKindV2::FavoriteTracks,prefix+"t"),
+                  favoriteSection(source,PageSectionKindV2::FavoriteAlbums,prefix+"a"),
+                  favoriteSection(source,PageSectionKindV2::FavoriteArtists,prefix+"r")},{},false,true});
+        }
+        QTRY_VERIFY(ready.size()+failed.size()==1); QCOMPARE(failed.size(),0);
+        auto initial=qvariant_cast<PageResultV2>(ready[0][2]); QCOMPARE(initial.sections.size(),3);
+        QHash<PageSectionKindV2,QString> tokens;
+        QHash<PageSectionKindV2,QStringList> rows;
+        for (const auto &s:initial.sections) { tokens[s.kind]=s.nextCursor; rows[s.kind]={s.items[0].ref.entityId}; }
+        // Mutating each dimension, including the clicked section, must fail
+        // before provider work and must not consume the valid sibling token.
+        for (int mode=0;mode<7;++mode) {
+            auto q=root; q.section=PageSectionKindV2::FavoriteAlbums; q.cursor=tokens.value(PageSectionKindV2::FavoriteAlbums);
+            if (mode==0) q.section=PageSectionKindV2::FavoriteTracks;
+            if (mode==1) q.page=MusicPageKindV2::Search;
+            if (mode==2) q.scope.sourceInstanceId="task5/home";
+            if (mode==3) q.searchText="changed";
+            if (mode==4) q.filters={{"genre","Rock"}};
+            if (mode==5) q.limit=2;
+            if (mode==6) q.cursor+="!";
+            h.repo.requestPage(q,2); QTRY_COMPARE(failed.size(),mode+1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::InvalidRequest);
+        }
+        QCOMPARE(a->property("calls").toInt(),1); QCOMPARE(b->property("calls").toInt(),1);
+        // Interleave albums/tracks. Each has four buffered rows followed by two
+        // remote pages; the untouched artist token must keep its original rows.
+        for (int step=0;step<7;++step) for (auto kind:{PageSectionKindV2::FavoriteAlbums,PageSectionKindV2::FavoriteTracks}) {
+            auto q=root; q.section=kind; q.cursor=tokens.value(kind);
+            const int count=ready.size(); auto id=h.repo.requestPage(q,3);
+            if (step==2 || step==3) {
+                const int calls=kind==PageSectionKindV2::FavoriteAlbums?2:3;
+                // Home consumed its second buffered row one turn before office.
+                // Complete precisely the source whose own buffer is exhausted.
+                auto session=step==2?a:b;
+                QTRY_COMPARE(session->property("calls").toInt(),calls);
+                const QString suffix=kind==PageSectionKindV2::FavoriteAlbums?"a":"t";
+                const auto source=session==a?QString("home"):QString("office");
+                const auto prefix=session==a?QString("h"):QString("o");
+                QCOMPARE(session->property("lastSection").toInt(),int(kind));
+                QCOMPARE(session->property("lastCursor").toString(),source+"-private-"+prefix+suffix);
+                auto section=favoriteSection(source,kind,prefix+suffix,false);
+                section.items[0].ref.entityId=prefix+suffix+"3"; section.items[1].ref.entityId=prefix+suffix+"4";
+                emit session->pageReady(session->property("lastRequest").toUuid(),{{section},{},false,true});
+            }
+            QTRY_COMPARE(ready.size(),count+1); QCOMPARE(ready.last()[0].toUuid(),id);
+            auto p=qvariant_cast<PageResultV2>(ready.last()[2]); QCOMPARE(p.sections.size(),1);
+            QCOMPARE(p.sections[0].kind,kind); QCOMPARE(p.sections[0].items.size(),1);
+            rows[kind].append(p.sections[0].items[0].ref.entityId); tokens[kind]=p.sections[0].nextCursor;
+        }
+        QCOMPARE(rows.value(PageSectionKindV2::FavoriteAlbums),QStringList({"ha1","oa1","ha2","oa2","ha3","oa3","ha4","oa4"}));
+        QCOMPARE(rows.value(PageSectionKindV2::FavoriteTracks),QStringList({"ht1","ot1","ht2","ot2","ht3","ot3","ht4","ot4"}));
+        QVERIFY(tokens.value(PageSectionKindV2::FavoriteAlbums).isEmpty());
+        auto q=root; q.section=PageSectionKindV2::FavoriteArtists; q.cursor=tokens.value(q.section);
+        int count=ready.size(); h.repo.requestPage(q,4); QTRY_COMPARE(ready.size(),count+1);
+        QCOMPARE(qvariant_cast<PageResultV2>(ready.last()[2]).sections[0].items[0].ref.entityId,QString("or1"));
+        QCOMPARE(a->property("calls").toInt(),3); QCOMPARE(b->property("calls").toInt(),3);
+    }
+    void liveResultsPreserveSafeConstraintsAndFailClosedForObjects()
+    {
+        PageHarness h; QVERIFY(h.init()); auto a=h.session("home");
+        PageQueryV2 q; q.scope.sourceInstanceId="task5/home";
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady);
+        h.repo.requestPage(q,1); QTRY_COMPARE(a->property("calls").toInt(),1);
+        QObject object; auto p=sample("home",{"safe","unsafe"});
+        p.sections[0].items[0].availableActions[SourceActionV2::Play]={AvailabilityV2::Available,"",{{"sameSourceOnly",true},{"maxBitrate",192}}};
+        p.sections[0].items[1].availableActions[SourceActionV2::Play]={AvailabilityV2::Available,"provider",{{"maxBitrate",QVariant::fromValue(&object)}}};
+        emit a->pageReady(a->property("lastRequest").toUuid(),p); QTRY_COMPARE(ready.size(),1);
+        auto out=qvariant_cast<PageResultV2>(ready[0][2]); QVERIFY(!out.cached);
+        const auto safe=out.sections[0].items[0].availableActions.value(SourceActionV2::Play);
+        QCOMPARE(safe.state,AvailabilityV2::Available); QCOMPARE(safe.constraints.value("sameSourceOnly").toBool(),true);
+        QCOMPARE(safe.constraints.value("maxBitrate").toDouble(),192.0);
+        const auto unsafe=out.sections[0].items[1].availableActions.value(SourceActionV2::Play);
+        QCOMPARE(unsafe.state,AvailabilityV2::Unavailable); QVERIFY(!unsafe.reasonKey.isEmpty());
+        QVERIFY(!unsafe.constraints.contains("maxBitrate"));
     }
 };
 QTEST_GUILESS_MAIN(PageRepositoryTest)

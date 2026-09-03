@@ -1,6 +1,7 @@
 #pragma once
 #include "v2/SourceV2Types.h"
 #include <chrono>
+#include <memory>
 class QThreadPool;
 
 struct PageCacheKeyV2 {
@@ -15,7 +16,8 @@ struct CachedPageV2 {
 };
 
 // Synchronous low-level file API. Repositories use the shared serial IO pool;
-// copying a cache copies its directory configuration, not a QObject/file handle.
+// Copies share a sanitized 64-entry memory LRU. Independently opened caches for
+// the same directory participate in source invalidation without disk polling.
 class PageCache final {
 public:
     explicit PageCache(QString directory = {});
@@ -27,7 +29,11 @@ public:
     static QString queryScope(const PageCacheKeyV2 &key);
     static PageResultV2 sanitized(const PageResultV2 &page);
 private:
+    struct Memory;
+    static QList<std::weak_ptr<Memory>> &activeMemories();
+    void remember(const QString &path, CachedPageV2 page, const QStringList &sources) const;
     QString m_directory;
+    std::shared_ptr<Memory> m_memory;
 };
 
 // One process-wide FIFO executor orders cache store/lookup/invalidation without
