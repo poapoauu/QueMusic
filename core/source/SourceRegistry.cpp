@@ -3,14 +3,11 @@
 #include "SourceAccountStore.h"
 #include "v2/IMusicSourcePluginV2.h"
 
-#include <QMutex>
-#include <QMutexLocker>
 #include <QVariantMap>
 
 #include <algorithm>
 #include <memory>
 #include <utility>
-#include <vector>
 
 namespace {
 
@@ -31,17 +28,6 @@ QList<StoredSourceAccount> sortedAccounts(SourceAccountStore *accounts)
                   return left.accountId < right.accountId;
               });
     return result;
-}
-
-void quarantineDeferredLease(std::shared_ptr<void> lease)
-{
-    struct Quarantine {
-        QMutex mutex;
-        std::vector<std::shared_ptr<void>> leases;
-    };
-    static Quarantine *const quarantine = new Quarantine;
-    const QMutexLocker locker(&quarantine->mutex);
-    quarantine->leases.push_back(std::move(lease));
 }
 
 }
@@ -94,10 +80,6 @@ SourceRegistry::~SourceRegistry()
     m_destroying = true;
     ++m_lifecycleGeneration;
     closeAll(false);
-    // Every pending token is also owned by the PluginManager callback (or quarantine).
-    // Dropping registry tracking here cannot release a lease in a session destructor.
-    m_deferredReleaseTokens.clear();
-    m_deferredLeaseReleases.clear();
 }
 
 PluginManager *SourceRegistry::pluginManager() const
@@ -240,6 +222,7 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     entry.session = session;
     entry.sessionIdentity = session.data();
     entry.lease = std::move(lease);
+    entry.packageId = packageId;
     m_sessions.insert(instanceId, std::move(entry));
 
     QObject *const sessionIdentity = session.data();
@@ -490,46 +473,14 @@ void SourceRegistry::handleExternalDestruction(const QString &instanceId, QObjec
 
     m_closingInstances.insert(instanceId);
     SessionEntry entry = m_sessions.take(instanceId);
-    ++m_nextDeferredReleaseToken;
-    if (m_nextDeferredReleaseToken == 0) {
-        ++m_nextDeferredReleaseToken;
-    }
-    const quint64 tokenId = m_nextDeferredReleaseToken;
-    auto deferredLease =
-        std::make_shared<DeferredLeaseRelease>(std::move(entry.lease));
-    m_deferredLeaseReleases.insert(tokenId, deferredLease);
-    m_deferredReleaseTokens.insert(instanceId, tokenId);
     const QPointer<SourceRegistry> registry(this);
-    PluginManager *const cleanupOwner = m_plugins.data();
-    if (cleanupOwner == nullptr) {
-        quarantineDeferredLease(deferredLease);
-        return;
+    if (m_plugins != nullptr) {
+        m_plugins->pinLoadedPackage(entry.packageId);
     }
-    const bool queued = QMetaObject::invokeMethod(
-        cleanupOwner,
-        [registry, instanceId, tokenId, deferredLease] {
-            deferredLease->release();
-            if (registry != nullptr) {
-                registry->finishDeferredDestruction(instanceId, tokenId);
-            }
-        },
-        Qt::QueuedConnection);
-    if (!queued) {
-        quarantineDeferredLease(deferredLease);
-    }
-}
-
-void SourceRegistry::finishDeferredDestruction(const QString &instanceId, quint64 token)
-{
-    if (m_deferredReleaseTokens.value(instanceId) != token
-        || !m_deferredLeaseReleases.contains(token)) {
-        return;
-    }
-    m_deferredReleaseTokens.remove(instanceId);
-    m_deferredLeaseReleases.remove(token);
-    m_closingInstances.remove(instanceId);
-    if (!m_destroying) {
-        emit instanceChanged(instanceId);
+    // The package pin, not this session's lease count, now guarantees safety.
+    entry.lease = {};
+    if (registry != nullptr) {
+        emit registry->instanceChanged(instanceId);
     }
 }
 

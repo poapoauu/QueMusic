@@ -55,21 +55,11 @@ signals:
 private:
     class CreationReservation;
 
-    struct DeferredLeaseRelease {
-        explicit DeferredLeaseRelease(PluginLease pluginLease)
-            : lease(std::move(pluginLease))
-        {
-        }
-
-        void release() { lease = {}; }
-
-        PluginLease lease;
-    };
-
     struct SessionEntry {
         QPointer<IMusicSourceSessionV2> session;
         QObject *sessionIdentity = nullptr;
         PluginLease lease;
+        QString packageId;
         QSet<QUuid> activeRequests;
     };
 
@@ -90,7 +80,6 @@ private:
     void releaseCreation(const QString &sourceInstanceId, quint64 token);
     void invalidateInstanceCreation(const QString &sourceInstanceId);
     void handleExternalDestruction(const QString &sourceInstanceId, QObject *session);
-    void finishDeferredDestruction(const QString &sourceInstanceId, quint64 token);
     bool closeEntry(const QString &sourceInstanceId, bool notify);
     void closeAll(bool notify);
 
@@ -99,12 +88,9 @@ private:
     QHash<QString, SessionEntry> m_sessions;
     QHash<QString, quint64> m_creationReservations;
     QHash<QString, quint64> m_instanceLifecycleGenerations;
-    QHash<quint64, std::shared_ptr<DeferredLeaseRelease>> m_deferredLeaseReleases;
-    QHash<QString, quint64> m_deferredReleaseTokens;
     QSet<QString> m_closingInstances;
     quint64 m_lifecycleGeneration = 0;
     quint64 m_nextCreationToken = 0;
-    quint64 m_nextDeferredReleaseToken = 0;
     bool m_closingAll = false;
     bool m_destroying = false;
 };

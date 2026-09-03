@@ -707,7 +707,9 @@ bool SourceRegistry::closeInstance(const QString &instanceId)
 
 Use `QPointer`, remove completed request IDs, and close all sessions before registry destruction. A session can only be created from an enabled account whose secret can be read.
 
-Connect the mandatory typed `IMusicSourceSessionV2::requestStarted` signal; do not depend on an optional dynamic signal invented by a fixture. Shutdown must mark the instance as closing and remove/take its session entry before invoking plugin virtual methods, while retaining the local lease until cancellation, close and destruction return. `sessionFor()` must reject per-instance or global shutdown, and `closeAll()` must block creation while draining all entries. A returned session is borrowed and registry-owned; validate/enforce registry parentage. If a session is destroyed externally, defer lease release until the destruction stack has unwound.
+Connect the mandatory typed `IMusicSourceSessionV2::requestStarted` signal; do not depend on an optional dynamic signal invented by a fixture. Shutdown must mark the instance as closing and remove/take its session entry before invoking plugin virtual methods, while retaining the local lease until cancellation, close and destruction return. `sessionFor()` must reject per-instance or global shutdown, and `closeAll()` must block creation while draining all entries. A returned session is borrowed and registry-owned; validate/enforce registry parentage.
+
+External destruction violates borrowed ownership: the host has no reliable notification after an arbitrary external deleting destructor returns. Queued events are not an unwind boundary. On detecting this violation, fail closed by pinning the offending loaded package (including its loader and root instance) for process lifetime, even across PluginManager destruction. Refuse unload, reload, failure-unload and new session acquisition for that package with a restart-required diagnostic; normal registry-owned close and unrelated packages remain unaffected. Coalesce repeated pins per loaded package and remove superseded deferred-release machinery. This focused safety correction may also modify `core/plugins/PluginManager.h/.cpp` and `tests/tst_PluginManager.cpp`.
 
 - [ ] **Step 5: Run registry and storage tests**
 
@@ -757,7 +759,7 @@ void MusicPageModelTest::dropsResultsFromOldGeneration()
     const quint64 currentGeneration = model.beginRequest();
     QVERIFY(!model.applyResult(oldGeneration, sampleResult("old")));
     QVERIFY(model.applyResult(currentGeneration, sampleResult("current")));
-    QCOMPARE(model.section(0).title, "current");
+    QCOMPARE(model.section(0).titleKey, "current");
 }
 ```
 

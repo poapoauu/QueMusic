@@ -201,6 +201,8 @@ IMusicSourceSessionV2 *RegistryV2FixturePlugin::createSession(
 #include <QHash>
 #include <QMetaObject>
 #include <QPointer>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -416,6 +418,37 @@ QString cancelEvent(const QString &sourceInstanceId, const QString &requestId)
     return QStringLiteral("cancel:") + sourceInstanceId + QLatin1Char(':') + requestId;
 }
 
+QString pinTestCase()
+{
+    QString name = QString::fromLatin1(QTest::currentTestFunction());
+    if (const char *tag = QTest::currentDataTag(); tag != nullptr && *tag != '\0') {
+        name += QLatin1Char(':') + QString::fromLatin1(tag);
+    }
+    return name;
+}
+
+bool isPinTestChild()
+{
+    return qEnvironmentVariable("QUEMUSIC_PIN_TEST") == pinTestCase();
+}
+
+void runPinTestChild()
+{
+    // A permanent pin must never be undone for test cleanup. Each scenario gets
+    // a fresh process, and the OS reclaims its quarantined package on exit.
+    QProcess child;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("QUEMUSIC_PIN_TEST"), pinTestCase());
+    child.setProcessEnvironment(environment);
+    child.setProcessChannelMode(QProcess::MergedChannels);
+    child.start(QCoreApplication::applicationFilePath(), {pinTestCase()});
+    QVERIFY(child.waitForStarted());
+    QVERIFY(child.waitForFinished(30000));
+    const QByteArray output = child.readAll();
+    QVERIFY2(child.exitStatus() == QProcess::NormalExit, output.constData());
+    QVERIFY2(child.exitCode() == 0, output.constData());
+}
+
 }
 
 class SourceRegistryV2Test : public QObject {
@@ -442,8 +475,12 @@ private slots:
     void closeAllBlocksRecreationWhileDraining();
     void rejectsSessionThatIgnoresRegistryParent();
     void reparentedSessionIsRejectedAndClosed();
-    void externalDestructionDefersLeaseReleaseAndRecreation();
-    void registryDestructionTransfersDeferredLeaseToPluginManagerQueue();
+    void externalDestructionPinsOnlyOffendingPackage();
+    void externalDestructionBlocksUnloadDuringReentrantMetaCallDrain();
+    void registryAndManagerDestructionRetainPinnedPackage();
+    void pinnedPackageRefusesOperations_data();
+    void pinnedPackageRefusesOperations();
+    void externalDeletionDuringAcquireRejectsNewSession();
     void disableClosesSessionBeforeReleasingLease();
     void destructionClosesSessionBeforeReleasingLease();
     void closeAllIsIdempotent();
@@ -930,65 +967,206 @@ void SourceRegistryV2Test::reparentedSessionIsRejectedAndClosed()
     QCOMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 0);
 }
 
-void SourceRegistryV2Test::externalDestructionDefersLeaseReleaseAndRecreation()
+void SourceRegistryV2Test::externalDestructionPinsOnlyOffendingPackage()
 {
+    if (!isPinTestChild()) {
+        runPinTestChild();
+        return;
+    }
     RegistryHarness harness;
-    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.loadTwoValidPlugins());
     QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    QVERIFY(harness.saveAccount(QStringLiteral("office"), QStringLiteral("Office")));
+    QVERIFY(harness.saveAccount(QStringLiteral("normal"), QStringLiteral("Normal")));
+    QVERIFY(harness.saveAccount(QStringLiteral("other"), QStringLiteral("Other"), true,
+                                kSecondSourceId));
     const QString instanceId = QStringLiteral("registry-v2/home");
     IMusicSourceSessionV2 *session = harness.registry.sessionFor(instanceId);
     QVERIFY(session != nullptr);
-    int leasesSeenFromDestroyed = -1;
-    connect(session, &QObject::destroyed, this, [&] {
-        leasesSeenFromDestroyed = harness.pluginManager.plugin(kPackageId).activeLeases;
-    });
-    QSignalSpy changed(&harness.registry, &SourceRegistry::instanceChanged);
-    changed.clear();
-
-    session->setParent(nullptr);
+    auto *second = harness.registry.sessionFor(QStringLiteral("registry-v2/office"));
+    QVERIFY(second != nullptr);
+    QVERIFY(harness.registry.sessionFor(QStringLiteral("registry-v2/normal")) != nullptr);
+    QPointer<QObject> root = harness.validPluginObject();
     delete session;
-
-    QCOMPARE(leasesSeenFromDestroyed, 1);
-    QCOMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 1);
+    delete second; // repeated violations of the same loaded package coalesce
+    QVERIFY(harness.registry.closeInstance(QStringLiteral("registry-v2/normal")));
+    QCoreApplication::sendPostedEvents(&harness.pluginManager, QEvent::MetaCall);
     QVERIFY(harness.registry.sessionFor(instanceId) == nullptr);
-    QCOMPARE(changed.count(), 0);
-    QTRY_COMPARE(harness.pluginManager.plugin(kPackageId).activeLeases, 0);
-    QCOMPARE(changed.count(), 1);
+    QVERIFY(harness.registry.sessionFor(QStringLiteral("registry-v2/office")) == nullptr);
+    QVERIFY(harness.registry.sessionFor(QStringLiteral("registry-v2/normal")) == nullptr);
+    QVERIFY(harness.pluginManager.plugin(kPackageId).busyReason.contains(
+        QStringLiteral("restart"), Qt::CaseInsensitive));
+    QCOMPARE(harness.pluginManager.unload(kPackageId), PluginOperationResult::Busy);
+    QCOMPARE(harness.validPluginObject(), root.data());
+    QCOMPARE(root->property("createCount").toInt(), 3);
 
-    QVERIFY(harness.registry.sessionFor(instanceId) != nullptr);
-    QCOMPARE(harness.validPluginObject()->property("createCount").toInt(), 2);
+    // Pinning one package does not prevent another from acquiring, closing,
+    // unloading or loading again through the ordinary lifecycle.
+    const QString otherId = QStringLiteral("registry-secondary/other");
+    QVERIFY(harness.registry.sessionFor(otherId) != nullptr);
+    QVERIFY(harness.registry.closeInstance(otherId));
+    QCOMPARE(harness.pluginManager.plugin(kSecondPackageId).activeLeases, 0);
+    QVERIFY(harness.pluginManager.plugin(kSecondPackageId).busyReason.isEmpty());
+    QPointer<QObject> otherRoot = harness.pluginManager.pluginInstance(kSecondPackageId);
+    QCOMPARE(harness.pluginManager.unload(kSecondPackageId), PluginOperationResult::Success);
+    QVERIFY(otherRoot.isNull());
+    QVERIFY(harness.pluginManager.load(kSecondPackageId));
+    QVERIFY(harness.registry.sessionFor(otherId) != nullptr);
 }
 
-void SourceRegistryV2Test::registryDestructionTransfersDeferredLeaseToPluginManagerQueue()
+void SourceRegistryV2Test::externalDestructionBlocksUnloadDuringReentrantMetaCallDrain()
 {
+    if (!isPinTestChild()) {
+        runPinTestChild();
+        return;
+    }
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    IMusicSourceSessionV2 *session =
+        harness.registry.sessionFor(QStringLiteral("registry-v2/home"));
+    QVERIFY(session != nullptr);
+
+    QPointer<QObject> root = harness.validPluginObject();
+    bool unloadableDuringDestruction = true;
+    PluginOperationResult unloadDuringDestruction = PluginOperationResult::Failed;
+    // Connected after the registry observer; drain any cleanup it may have queued.
+    connect(session, &QObject::destroyed, this, [&] {
+        QCoreApplication::sendPostedEvents(&harness.pluginManager, QEvent::MetaCall);
+        unloadableDuringDestruction = harness.pluginManager.plugins().constFirst()
+                                          .toMap().value(QStringLiteral("unloadable")).toBool();
+        // On a broken implementation, observe its exposed unload capability
+        // without deliberately unmapping the destructor's return address.
+        if (!unloadableDuringDestruction) {
+            unloadDuringDestruction = harness.pluginManager.unload(kPackageId);
+        }
+    });
+
+    delete session;
+
+    QVERIFY(!unloadableDuringDestruction);
+    QCOMPARE(unloadDuringDestruction, PluginOperationResult::Busy);
+    QVERIFY(root != nullptr);
+    QCOMPARE(harness.validPluginObject(), root.data());
+}
+
+void SourceRegistryV2Test::registryAndManagerDestructionRetainPinnedPackage()
+{
+    if (!isPinTestChild()) {
+        runPinTestChild();
+        return;
+    }
     QTemporaryDir temporaryDirectory;
     QVERIFY(temporaryDirectory.isValid());
     QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
                        QSettings::IniFormat);
     TestSecretStore secretStore;
     SourceAccountStore accountStore(&settings, &secretStore);
-    PluginManager pluginManager;
-    pluginManager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR));
-    QCOMPARE(pluginManager.discover(), 1);
-    QVERIFY(pluginManager.load(kPackageId));
+    auto pluginManager = std::make_unique<PluginManager>();
+    pluginManager->addSearchPath(QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR));
+    pluginManager->addSearchPath(
+        QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_SECOND_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(pluginManager->discover(), 2);
+    QVERIFY(pluginManager->load(kPackageId));
+    QVERIFY(pluginManager->load(kSecondPackageId));
+    QPointer<QObject> root = pluginManager->pluginInstance(kPackageId);
+    QPointer<QObject> otherRoot = pluginManager->pluginInstance(kSecondPackageId);
     QVERIFY(accountStore.upsert(sourceAccount(kSourceId, QStringLiteral("home"),
                                               QStringLiteral("Home"))));
 
-    auto *registry = new SourceRegistry(&pluginManager, &accountStore);
+    auto registry = std::make_unique<SourceRegistry>(pluginManager.get(), &accountStore);
     const QString instanceId = QStringLiteral("registry-v2/home");
     IMusicSourceSessionV2 *session = registry->sessionFor(instanceId);
     QVERIFY(session != nullptr);
+    // The registry must not try to delete its already-destructing child again.
     session->setParent(nullptr);
+    // This observer runs after the registry has detected the external delete.
+    connect(session, &QObject::destroyed, this, [&] { registry.reset(); });
     delete session;
+    QVERIFY(registry == nullptr);
+    QCoreApplication::sendPostedEvents(pluginManager.get(), QEvent::MetaCall);
+    pluginManager.reset();
+    QVERIFY(root != nullptr);
+    QVERIFY(otherRoot.isNull());
+    // Calling plugin code also proves the retained root still has its library.
+    QCOMPARE(root->property("createCount").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(root, "clearEvents"));
 
-    QCOMPARE(pluginManager.plugin(kPackageId).activeLeases, 1);
-    registry->closeAll();
-    QVERIFY(registry->sessionFor(instanceId) == nullptr);
-    delete registry;
-    QCOMPARE(pluginManager.plugin(kPackageId).activeLeases, 1);
+    PluginManager replacement;
+    replacement.addSearchPath(QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(replacement.discover(), 1);
+    QVERIFY(!replacement.load(kPackageId));
+    QVERIFY(!replacement.acquire(kPackageId).isValid());
+    QVERIFY(replacement.plugin(kPackageId).busyReason.contains(
+        QStringLiteral("restart"), Qt::CaseInsensitive));
+    QVERIFY(root != nullptr);
+}
 
-    QCoreApplication::sendPostedEvents(&pluginManager, QEvent::MetaCall);
-    QCOMPARE(pluginManager.plugin(kPackageId).activeLeases, 0);
+void SourceRegistryV2Test::pinnedPackageRefusesOperations_data()
+{
+    QTest::addColumn<QString>("operation");
+    for (const char *operation : {"unload", "reload", "failure-unload", "acquire", "load"}) {
+        QTest::newRow(operation) << QString::fromLatin1(operation);
+    }
+}
+
+void SourceRegistryV2Test::pinnedPackageRefusesOperations()
+{
+    if (!isPinTestChild()) {
+        runPinTestChild();
+        return;
+    }
+    QFETCH(QString, operation);
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    auto *session = harness.registry.sessionFor(QStringLiteral("registry-v2/home"));
+    QVERIFY(session != nullptr);
+    QPointer<QObject> root = harness.validPluginObject();
+    delete session;
+    QCoreApplication::sendPostedEvents(&harness.pluginManager, QEvent::MetaCall);
+    if (operation == QStringLiteral("unload")) {
+        QCOMPARE(harness.pluginManager.unload(kPackageId), PluginOperationResult::Busy);
+    } else if (operation == QStringLiteral("reload")) {
+        QCOMPARE(harness.pluginManager.reload(kPackageId), PluginOperationResult::Busy);
+    } else if (operation == QStringLiteral("failure-unload")) {
+        QVERIFY(!harness.pluginManager.failLoadedPlugin(kPackageId, QStringLiteral("failed")));
+    } else if (operation == QStringLiteral("acquire")) {
+        QVERIFY(!harness.pluginManager.acquire(kPackageId).isValid());
+    } else {
+        QVERIFY(!harness.pluginManager.load(kPackageId));
+    }
+    QVERIFY(root != nullptr);
+    QCOMPARE(harness.validPluginObject(), root.data());
+    QCOMPARE(harness.pluginManager.plugin(kPackageId).state, PluginState::Loaded);
+    QVERIFY(harness.pluginManager.plugin(kPackageId).busyReason.contains(
+        QStringLiteral("restart"), Qt::CaseInsensitive));
+    const QVariantMap visible = harness.pluginManager.plugins().constFirst().toMap();
+    QVERIFY(!visible.value(QStringLiteral("loadable")).toBool());
+    QVERIFY(!visible.value(QStringLiteral("unloadable")).toBool());
+    QVERIFY(!visible.value(QStringLiteral("reloadable")).toBool());
+}
+
+void SourceRegistryV2Test::externalDeletionDuringAcquireRejectsNewSession()
+{
+    if (!isPinTestChild()) {
+        runPinTestChild();
+        return;
+    }
+    RegistryHarness harness;
+    QVERIFY(harness.loadValidPlugin());
+    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home")));
+    QVERIFY(harness.saveAccount(QStringLiteral("office"), QStringLiteral("Office")));
+    auto *session = harness.registry.sessionFor(QStringLiteral("registry-v2/home"));
+    QVERIFY(session != nullptr);
+    connect(&harness.pluginManager, &PluginManager::pluginChanged, this, [&] {
+        if (session != nullptr && harness.pluginManager.plugin(kPackageId).activeLeases == 2) {
+            auto *destroying = std::exchange(session, nullptr);
+            delete destroying;
+        }
+    });
+    QVERIFY(harness.registry.sessionFor(QStringLiteral("registry-v2/office")) == nullptr);
+    QCOMPARE(harness.validPluginObject()->property("createCount").toInt(), 1);
 }
 
 void SourceRegistryV2Test::disableClosesSessionBeforeReleasingLease()

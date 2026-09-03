@@ -69,6 +69,9 @@ public:
     PluginOperationResult unload(const QString &packageId);
     PluginOperationResult reload(const QString &packageId);
     PluginLease acquire(const QString &packageId);
+    // An externally destroyed borrowed session has no observable unwind boundary.
+    // Keep its loaded package alive and unavailable until process exit.
+    void pinLoadedPackage(const QString &packageId);
 
     PluginSpec plugin(const QString &packageId) const;
     QVariantList plugins() const;
