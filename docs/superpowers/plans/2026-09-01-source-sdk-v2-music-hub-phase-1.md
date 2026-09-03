@@ -869,7 +869,7 @@ void PageRepositoryTest::returnsPartialSuccessWhenOneSourceFails()
     failSource("office", SourceErrorKindV2::Network);
     succeedSource("home", samplePage());
     QTRY_COMPARE(spy.count(), 1);
-    const auto result = qvariant_cast<PageResultV2>(spy.takeFirst().at(1));
+    const auto result = qvariant_cast<PageResultV2>(spy.takeFirst().at(2));
     QCOMPARE(result.sections.size(), 1);
     QCOMPARE(result.sourceStates.value("office").state, SourcePageLoadStateV2::Failed);
 }

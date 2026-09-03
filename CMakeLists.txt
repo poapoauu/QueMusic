@@ -165,6 +165,22 @@ target_include_directories(quemusic_source_registry PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+add_library(quemusic_music_repository STATIC
+    core/music/AggregateComposer.cpp
+    core/music/AggregateComposer.h
+    core/music/PageRepository.cpp
+    core/music/PageRepository.h
+    core/music/PageCache.cpp
+    core/music/PageCache.h
+    core/music/ArtworkCache.cpp
+    core/music/ArtworkCache.h
+    core/music/MediaAssetRepository.cpp
+    core/music/MediaAssetRepository.h
+)
+target_compile_features(quemusic_music_repository PUBLIC cxx_std_17)
+target_include_directories(quemusic_music_repository PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core/music)
+target_link_libraries(quemusic_music_repository PUBLIC quemusic_source_registry Qt6::Concurrent)
+
 add_library(quemusic_source_session_registry STATIC
     core/media/SourceSessionRegistry.cpp
     core/media/SourceSessionRegistry.h
@@ -455,6 +471,38 @@ if(BUILD_TESTING)
             INPUT "${configured_manifest}"
         )
     endfunction()
+
+    # Task5 fixture shares its source with the repository contract tests.
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_page_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task5")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task5")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task5 Fixture")
+    set(QUEMUSIC_TASK5_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task5-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK5_PACKAGE_DIR "${QUEMUSIC_TASK5_PACKAGE_ROOT}/task5")
+    add_library(quemusic_page_fixture MODULE tests/tst_PageRepository.cpp)
+    target_compile_definitions(quemusic_page_fixture PRIVATE QUEMUSIC_PAGE_FIXTURE)
+    target_link_libraries(quemusic_page_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_page_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK5_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_page_fixture "${QUEMUSIC_TASK5_PACKAGE_DIR}")
+
+    foreach(task5_test IN ITEMS AggregateComposer PageRepository MusicCaches)
+        if(task5_test STREQUAL "AggregateComposer")
+            set(task5_target quemusic_aggregate_composer_test)
+        elseif(task5_test STREQUAL "PageRepository")
+            set(task5_target quemusic_page_repository_test)
+        else()
+            set(task5_target quemusic_music_caches_test)
+        endif()
+        qt_add_executable(${task5_target} tests/tst_${task5_test}.cpp)
+        target_link_libraries(${task5_target} PRIVATE
+            quemusic_music_page_model quemusic_music_repository Qt6::Test)
+        target_compile_definitions(${task5_target} PRIVATE
+            QUEMUSIC_TASK5_PACKAGES="${QUEMUSIC_TASK5_PACKAGE_ROOT}")
+        add_dependencies(${task5_target} quemusic_page_fixture)
+        add_test(NAME ${task5_target} COMMAND ${task5_target})
+        set_tests_properties(${task5_target} PROPERTIES TIMEOUT 30)
+    endforeach()
 
     set(QUEMUSIC_V2_PACKAGE_ROOT
         "${CMAKE_CURRENT_BINARY_DIR}/test-source-v2-packages")
