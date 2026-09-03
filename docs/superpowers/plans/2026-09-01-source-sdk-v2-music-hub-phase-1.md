@@ -983,7 +983,11 @@ signals:
 };
 ```
 
-The page cache key includes page, section, source scope, search text, filters and cursor. Before serialization, retain only the allowlisted media fields from `MediaItemV2`; never serialize stream URLs, request headers, secrets, cookies or tokens. `PageRepository` emits a cached result immediately, then refreshes in the background. `ArtworkCache` accepts downloaded bytes and returns a local file URL; it never stores the authenticated remote URL.
+The page cache key includes page, section, source scope, search text, filters and cursor. Use a bounded memory LRU with access-order promotion, source invalidation and disk fallback. Before serialization, retain only the allowlisted media fields from `MediaItemV2`; never serialize stream URLs, request headers, secrets, cookies or tokens. Preserve validated action restrictions in both live results and cached DTOs, including `sameSourceOnly` (boolean) and `maxBitrate` (number). If a constraint cannot safely survive the allowlist, make that action `Unavailable` with a host-owned reason rather than dropping its restriction while retaining `Available` (Ruling 11). `PageRepository` emits a cached result immediately, then refreshes in the background. `ArtworkCache` accepts downloaded bytes and returns a local file URL; it never stores the authenticated remote URL.
+
+A valid provider terminal may contain several sections, including Task10's three favorites sections. One non-cached complete PageResult counts as one query, regardless of rendered section count. Keep each returned section's overflow and continuation independent; accept and test this shape without weakening malformed-cursor or source-identity checks.
+
+**Section continuation contract (Ruling 12):** Initial queries can produce several standard sections; every section receives an independent opaque token bound to that section kind and the page/scope/search/filter/limit identity. Task7 loadMore sends the clicked section's kind and token. Continuation provider requests/terminals concern only that requested section, even if the initial response was a multi-section bundle. Retain independent per-source buffers/cursors for each initial section; consuming one section must not advance another. Test initial three-section output, one-query completion accounting, interleaved continuation of two siblings, crossing a buffered/remote boundary, and rejection of a token reused for another section.
 
 `MediaAssetRepository` routes by `sourceInstanceId`, returns cached artwork immediately, stores only downloaded bytes, and tracks provider request IDs so page changes and plugin unload can cancel them. Lyrics remain in memory for the current session unless a later cache policy explicitly permits persistence.
 
@@ -1012,11 +1016,20 @@ git commit -m "feat: aggregate page feeds across sources"
 - Create: `core/music/MediaActionRouter.cpp`
 - Create: `tests/tst_CapabilityResolver.cpp`
 - Create: `tests/tst_MediaActionRouterV2.cpp`
+- Modify: `sdk/source/v2/SourceV2Types.h`
+- Modify: `sdk/source/v2/SourceV2Types.cpp`
+- Modify: `tests/tst_SourceV2Types.cpp`
 - Modify: `CMakeLists.txt`
 
 **Interfaces:**
 - Consumes: session capability descriptors, account permissions, `MediaItemV2::availableActions` and optional provider interfaces.
 - Produces: `CapabilityResolver::resolve()` and explicit action methods on `MediaActionRouter` with no generic string-command fallback.
+
+**Contract correction (Ruling 10):** Task1's single mutable `CapabilitySetV2::actions` map cannot represent the two negotiated layers. In this task replace it with `serverActions` and `accountActions`, both keyed by `SourceActionV2`, add `serverAction()` and `accountAction()`, and retain `action()` only as a derived intersection accessor. Missing server/account entries yield `Unavailable` with explicit unknown-capability/unknown-permission reason keys, not a grant. Plugin/media omission remains `Unsupported`. Introduce one pure SDK intersection helper reused by `CapabilitySetV2::action()` and `CapabilityResolver`, so state precedence and constraint merging cannot diverge. Adapt the exact existing v2 consumers/tests; do not add a compatibility actions map. This unreleased v2 contract may change as the user authorized.
+
+The router obtains server/account layers from the live session, not editable account settings or cached QML values. A supplied item action can further restrict but never grant plugin/server/account capability. Validate the complete owning identity before dispatch; any compound playlist change must satisfy each requested action and same-instance membership. Unknown negotiated permissions must fail before provider invocation, and tests must distinguish two accounts on the same plugin. Constructor wiring, synchronous provider completion and returned host request-ID correlation must be documented for Task7.
+
+Media/playlist map arguments mean the full item shape returned by `MusicPageModel::itemAt()` (`ref` and `availableActions`), not a bare ref (Ruling 13). Parse that actual shape in router tests. Current model action keys are decimal enum strings and availability states are integers; do not assume named/string values or silently grant missing media actions. `createPlaylist(sourceInstanceId, name)` is the explicitly object-free operation. Task13 callers pass the complete item so per-object restrictions reach the resolver; a later presentation mapping must be deliberate and tested.
 
 - [ ] **Step 1: Write failing four-layer capability tests**
 
@@ -1094,6 +1107,8 @@ signals:
 
 Precedence is `Unsupported` first when a required provider interface is absent, then `Forbidden`, then `Unavailable`, then `Available`. Preserve the most specific non-empty reason and merge constraints without weakening an earlier restriction.
 
+Add tests for independently reported server/account states, missing account grants, derived `CapabilitySetV2::action()`, conflict-safe constraint merging and live capability changes after a page item was created. If an unknown constraint conflict cannot be interpreted safely, return `Unavailable` with a reason rather than choose a permissive value.
+
 - [ ] **Step 5: Run focused tests**
 
 ```bash
@@ -1106,7 +1121,8 @@ Expected: precedence, provider absence, account permissions, same-source constra
 - [ ] **Step 6: Commit**
 
 ```bash
-git add core/music/CapabilityResolver.* core/music/MediaActionRouter.* tests/tst_CapabilityResolver.cpp tests/tst_MediaActionRouterV2.cpp CMakeLists.txt
+git add core/music/CapabilityResolver.* core/music/MediaActionRouter.* sdk/source/v2/SourceV2Types.* tests/tst_SourceV2Types.cpp tests/tst_CapabilityResolver.cpp tests/tst_MediaActionRouterV2.cpp
+# Stage only this task's CMake hunks; preserve unrelated worktree changes.
 git commit -m "feat: route media actions by effective capability"
 ```
 
@@ -1229,6 +1245,8 @@ QList<PageSectionKindV2> MusicHub::sectionsForPage(MusicPageKindV2 page)
 ```
 
 `refresh(page)` starts one generation, dispatches one repository request per listed section, and merges each completed section by `sectionId` without erasing successful sibling sections. The page reaches `Ready` when every section has completed and at least one has data; all-section failure becomes `Failed`.
+
+`loadMore(pageKind, sectionId)` uses that rendered section's kind and opaque token, preserving the originating page, selected scope, search text, filters and limit (Ruling 12). Never reuse a sibling's token or the initial bundle's section kind for a different clicked section. Each continuation updates only its target section and leaves sibling rows and continuation positions unchanged.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -1418,6 +1436,7 @@ void NavidromeSourceTest::openNegotiatesExtensionsAfterPing()
     server.enqueueJson("/rest/ping.view", okResponse());
     server.enqueueJson("/rest/getOpenSubsonicExtensions.view",
                        extensionsResponse({"lyrics", "songLyrics"}));
+    server.enqueueJson("/rest/getUser.view", currentUserRolesResponse());
     session.open();
     QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
     QVERIFY(session.capabilities().action(SourceActionV2::Lyrics).state
@@ -1489,6 +1508,8 @@ QUuid NavidromeSourceSession::open()
 ```
 
 After successful ping, request `getOpenSubsonicExtensions`. A 404/unsupported extension response does not fail the whole session; it yields the conservative Subsonic capability set. Authentication failure sets `AuthenticationRequired`, network failure sets `Failed`, and success sets `Ready` and emits `capabilitiesChanged`.
+
+**Account negotiation (Ruling 10):** Also request `getUser` with `username` equal to the currently configured user. Fill `CapabilitySetV2::serverActions` from protocol/server negotiation and `accountActions` independently from verified current-user roles. This read does not require administrator privileges; never query other users or add user-management UI. Do not persist role grants into ordinary editable account parameters. Unsupported/malformed role responses leave role-dependent actions `Unavailable` without discarding otherwise usable read-page functionality; genuine authentication errors still enter `AuthenticationRequired`. Map only verified endpoint semantics, not similarly named roles. Reconnect clears both maps before negotiation. Include fake-server tests for own-user request parameters, role false, missing/invalid fields, unsupported getUser, authentication errors and independent action availability. Reference: https://opensubsonic.netlify.app/docs/endpoints/getuser/ and https://opensubsonic.netlify.app/docs/responses/user/ .
 
 - [ ] **Step 5: Update both Qt and package manifests to v2**
 
@@ -1617,6 +1638,8 @@ Mappers contain no network or session state. Every item receives stable `MediaRe
 
 Map standard sections to `getAlbumList2`, `getGenres`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `getSongsByGenre`, `getStarred2` and `search3`. `PageQueryV2.filters` uses the mutually exclusive keys `artistId`, `albumId`, `songId` or `genre` for drill-down. A top-level `Tracks` request without one of these filters returns typed `Unsupported` rather than inventing a server-wide song order. Translate offset-based endpoints to opaque provider cursors encoded as decimal offsets; reject negative or malformed cursors. Use `size=query.limit` and cap the accepted limit to `1..500`.
 
+An initial favorites query may return its three standard sections as required above. A continuation query carries the clicked section kind and that section's provider cursor; return only that requested section on continuation (Ruling 12). Keep cursors/offsets section-specific even when a shared underlying endpoint supplies several lists. A plugin must adapt whole-response transport into this typed per-section continuation contract.
+
 - [ ] **Step 6: Implement media providers**
 
 `resolveStream` uses `stream`; artwork uses `getCoverArt`; lyrics prefer `getLyricsBySongId` only when negotiated and otherwise use the compatible lyric endpoint; download uses `download`. Stream/download URLs are emitted transiently and never inserted into page metadata or disk cache.
@@ -1714,7 +1737,7 @@ Implement `star`, `unstar`, `setRating`, `getPlaylists`, `getPlaylist`, `createP
 
 For `star`/`unstar`, map track IDs to `id`, album IDs to `albumId`, and artist IDs to `artistId`. Expose rating only for tracks. Encode repeated playlist additions as `songIdToAdd`, repeated removals as `songIndexToRemove`, and queue items as repeated `id` parameters in preserved order.
 
-When the server returns an authorization error for a typed action, change only that action to `Forbidden` with reason `source.permission.<action>`, emit `capabilitiesChanged`, and keep unrelated actions available. Reconnect resets negotiated/account capability state.
+When the server returns an authorization error for a typed action, change only that action in `CapabilitySetV2::accountActions` to `Forbidden` with reason `source.permission.<action>`, emit `capabilitiesChanged`, and keep unrelated actions and the server-support layer unchanged. The derived `action()` accessor must reflect the denial. Reconnect resets both negotiated maps.
 
 - [ ] **Step 5: Emit server-confirmed typed results**
 
@@ -1923,9 +1946,11 @@ MenuItem {
     visible: model.availableActions.download.state !== "unsupported"
     enabled: model.availableActions.download.state === "available"
     text: enabled ? qsTr("下载") : qsTr("下载 · %1").arg(reasonText(reasonKey))
-    onTriggered: musicHub.actions.download(model.ref, downloadDestination)
+    onTriggered: musicHub.actions.download(model, downloadDestination)
 }
 ```
+
+The named/string availability fields above illustrate presentation rules, not the current model wire shape. Task4's actual map uses decimal action keys and integer states; bind through an explicit enum/presentation mapping and test the real data shape. Pass the whole item to the typed router (Ruling 13), preserving the media restriction layer.
 
 Apply the same state rule to favorite, rating, add-to-playlist, remove-from-playlist and bookmark actions. Source-specific actions are grouped under a heading containing `sourceDisplayName`.
 
