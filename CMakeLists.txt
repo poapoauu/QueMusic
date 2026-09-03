@@ -60,6 +60,18 @@ target_include_directories(quemusic_source_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
 )
 
+add_library(quemusic_music_page_model STATIC
+    core/music/SourceScopeStore.cpp
+    core/music/SourceScopeStore.h
+    core/music/MusicPageModel.cpp
+    core/music/MusicPageModel.h
+)
+target_compile_features(quemusic_music_page_model PUBLIC cxx_std_17)
+target_link_libraries(quemusic_music_page_model PUBLIC quemusic_source_sdk Qt6::Core)
+target_include_directories(quemusic_music_page_model PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/music
+)
+
 add_library(quemusic_plugin_core STATIC
     core/plugins/PluginManifest.cpp
     core/plugins/PluginManifest.h
@@ -255,6 +267,16 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_v2_types_test COMMAND quemusic_source_v2_types_test)
+
+    qt_add_executable(quemusic_music_page_model_test
+        tests/tst_MusicPageModel.cpp
+    )
+    target_link_libraries(quemusic_music_page_model_test PRIVATE
+        quemusic_music_page_model
+        Qt6::Qml
+        Qt6::Test
+    )
+    add_test(NAME quemusic_music_page_model_test COMMAND quemusic_music_page_model_test)
 
     qt_add_executable(quemusic_source_v2_contract_test
         tests/tst_SourceV2Contract.cpp
