@@ -185,6 +185,10 @@ target_compile_features(quemusic_music_repository PUBLIC cxx_std_17)
 target_include_directories(quemusic_music_repository PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core/music)
 target_link_libraries(quemusic_music_repository PUBLIC quemusic_source_registry Qt6::Concurrent)
 
+add_library(quemusic_music_hub STATIC core/music/MusicHub.cpp core/music/MusicHub.h)
+target_compile_features(quemusic_music_hub PUBLIC cxx_std_17)
+target_link_libraries(quemusic_music_hub PUBLIC quemusic_music_repository quemusic_music_page_model)
+
 add_library(quemusic_source_session_registry STATIC
     core/media/SourceSessionRegistry.cpp
     core/media/SourceSessionRegistry.h
@@ -475,6 +479,24 @@ if(BUILD_TESTING)
             INPUT "${configured_manifest}"
         )
     endfunction()
+
+    # Task7 fixture lives at the provider boundary of the real hub orchestration.
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task7")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task7")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task7 Fixture")
+    set(QUEMUSIC_TASK7_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task7-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK7_PACKAGE_DIR "${QUEMUSIC_TASK7_PACKAGE_ROOT}/task7")
+    add_library(quemusic_hub_fixture MODULE tests/tst_MusicHub.cpp)
+    target_compile_definitions(quemusic_hub_fixture PRIVATE QUEMUSIC_HUB_FIXTURE)
+    target_link_libraries(quemusic_hub_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_hub_fixture PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK7_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_hub_fixture "${QUEMUSIC_TASK7_PACKAGE_DIR}")
+    qt_add_executable(quemusic_music_hub_test tests/tst_MusicHub.cpp)
+    target_link_libraries(quemusic_music_hub_test PRIVATE quemusic_music_hub Qt6::Test)
+    target_compile_definitions(quemusic_music_hub_test PRIVATE QUEMUSIC_TASK7_PACKAGES="${QUEMUSIC_TASK7_PACKAGE_ROOT}")
+    add_dependencies(quemusic_music_hub_test quemusic_hub_fixture)
+    add_test(NAME quemusic_music_hub_test COMMAND quemusic_music_hub_test)
+    set_tests_properties(quemusic_music_hub_test PROPERTIES TIMEOUT 30)
 
     # Task6 fixture shares its source with the action router contract tests.
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_action_fixture)

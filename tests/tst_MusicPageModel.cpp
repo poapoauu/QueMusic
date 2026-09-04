@@ -63,7 +63,90 @@ private slots:
     void qmlRolesExposeTypedRefsAndOnlySuppliedAvailability();
     void qmlReadsPageStateAndNestedItemValues();
     void failedSourceWithoutOptionalErrorIsNotEmpty();
+    void cancellationAndContextReset();
+    void independentSectionUpdatesAfterFinish();
+    void cancellationStopsSourceLoading();
+    void scopedFailureWithoutErrorIsNotSuccessfulEmpty();
 };
+
+void MusicPageModelTest::scopedFailureWithoutErrorIsNotSuccessfulEmpty()
+{
+    MusicPageModel model(MusicPageKindV2::Recommendation);
+    const auto generation = model.beginRequest();
+    auto result = sampleResult("empty"); result.sections[0].items.clear();
+    QVERIFY(model.applyResult(generation, result)); QVERIFY(model.finishGeneration(generation, 1));
+    QVERIFY(model.beginSectionRequest(generation, "recent"));
+    result.sourceStates.insert("navidrome/home", {SourcePageLoadStateV2::Failed, {}});
+    QVERIFY(model.applySectionResult(generation, "recent", result, false));
+    QCOMPARE(model.state(), PageLoadStateV2::Failed);
+}
+
+void MusicPageModelTest::cancellationStopsSourceLoading()
+{
+    MusicPageModel model(MusicPageKindV2::Recommendation);
+    const auto generation = model.beginRequest();
+    auto result = sampleResult("accepted");
+    result.complete = false;
+    result.sourceStates.insert("navidrome/home", {SourcePageLoadStateV2::Loading, {}});
+    QVERIFY(model.applyResult(generation, result));
+    QVERIFY(model.cancelGeneration(generation));
+    QCOMPARE(model.state(), PageLoadStateV2::Ready);
+    QCOMPARE(sourceState(model, "navidrome/home")["state"].toInt(), int(SourcePageLoadStateV2::Ready));
+}
+
+void MusicPageModelTest::cancellationAndContextReset()
+{
+    MusicPageModel model(MusicPageKindV2::Search);
+    auto generation = model.beginRequest();
+    QVERIFY(model.cancelGeneration(generation));
+    QCOMPARE(model.state(), PageLoadStateV2::Idle);
+    QVERIFY(!model.applyResult(generation, sampleResult("late")));
+    generation = model.beginRequest();
+    QVERIFY(model.applyResult(generation, sampleResult("accepted")));
+    QVERIFY(model.cancelGeneration(generation));
+    QCOMPARE(model.state(), PageLoadStateV2::Ready);
+    QCOMPARE(model.rowCount(), 1);
+    generation = model.beginRequest();
+    QVERIFY(!model.resetGeneration(generation - 1));
+    QVERIFY(model.resetGeneration(generation));
+    QCOMPARE(model.rowCount(), 0);
+    QCOMPARE(model.state(), PageLoadStateV2::Idle);
+    QVERIFY(!model.applyResult(generation, sampleResult("stale")));
+}
+
+void MusicPageModelTest::independentSectionUpdatesAfterFinish()
+{
+    MusicPageModel model(MusicPageKindV2::Recommendation);
+    QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const auto generation = model.beginRequest();
+    auto first = sampleResult("first");
+    first.sections[0].hasMore = true;
+    first.sections[0].nextCursor = "cursor-a";
+    QVERIFY(model.applyResult(generation, first));
+    QVERIFY(model.applyResult(generation, sampleResult("sibling", "other")));
+    QVERIFY(model.finishGeneration(generation, 2));
+    QVERIFY(model.beginSectionRequest(generation, "recent"));
+    QVERIFY(!model.beginSectionRequest(generation, "recent"));
+    QVERIFY(model.beginSectionRequest(generation, "other"));
+    QVERIFY(model.data(model.index(0), MusicPageModel::LoadingMoreRole).toBool());
+    QVERIFY(model.applySectionFailure(generation, "recent", offlineError()));
+    QCOMPARE(model.section(0).nextCursor, "cursor-a");
+    QCOMPARE(model.section(0).items.size(), 1);
+    QVERIFY(model.beginSectionRequest(generation, "recent"));
+    auto next = sampleResult("next");
+    next.sections.append(sampleResult("must-ignore", "other").sections[0]);
+    QVERIFY(model.applySectionResult(generation, "recent", next, true));
+    QCOMPARE(model.section(0).items.size(), 2);
+    QCOMPARE(model.section(1).items[0].title, "sibling");
+    QVERIFY(model.applySectionResult(generation, "other", sampleResult("replacement", "other"), false));
+    QCOMPARE(model.section(1).items.size(), 1);
+    QCOMPARE(model.section(1).items[0].title, "replacement");
+    QVERIFY(model.beginSectionRequest(generation, "recent"));
+    QVERIFY(model.cancelGeneration(generation));
+    QVERIFY(!model.data(model.index(0), MusicPageModel::LoadingMoreRole).toBool());
+    QVERIFY(!model.applySectionResult(generation, "recent", next, true));
+    QCOMPARE(model.state(), PageLoadStateV2::Ready);
+}
 
 // Missing the settings write would lose the shared selection after restart.
 void MusicPageModelTest::sourceScopePersistsAcrossInstances()

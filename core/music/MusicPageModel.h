@@ -50,6 +50,22 @@ public:
     // PageResultV2 has no query ID: the caller must deduplicate terminal callbacks.
     bool finishGeneration(quint64 generation, int expectedSections);
 
+    // Owner-thread orchestration APIs. Reset/cancel invalidate the supplied
+    // generation (including a finished one). Reset drops context; cancel keeps
+    // accepted rows and settles Ready/Idle. Success advances the token by one;
+    // beginRequest starts a new full refresh and returns its token.
+    bool resetGeneration(quint64 generation);
+    bool cancelGeneration(quint64 generation);
+    // Independent section work is allowed after full refresh settles (completion
+    // or cancellation), using the current token.
+    // One pending operation per ID. Terminal scoped results append or replace
+    // only that ID; failure retains items/cursor. These never count full queries.
+    bool beginSectionRequest(quint64 generation, const QString &sectionId);
+    bool applySectionResult(quint64 generation, const QString &sectionId,
+                            const PageResultV2 &result, bool append);
+    bool applySectionFailure(quint64 generation, const QString &sectionId,
+                             const SourceErrorV2 &error);
+
 signals:
     void stateChanged();
     void cachedChanged();
@@ -63,9 +79,13 @@ private:
         quint64 generation = 0;
         bool cached = false;
         bool terminal = false;
+        bool loading = false;
+        QHash<QString, SourcePageStateV2> sources;
     };
 
     bool accepts(quint64 generation) const;
+    int pendingSection(quint64 generation, const QString &sectionId) const;
+    void settleSectionState();
     QMap<QString, SourcePageStateV2> mergedSourceStates() const;
     void notifyProperties(bool previousCached, const QVariantList &previousSources,
                           const QVariantMap &previousError);
