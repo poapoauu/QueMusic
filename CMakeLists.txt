@@ -166,6 +166,10 @@ target_include_directories(quemusic_source_registry PUBLIC
 )
 
 add_library(quemusic_music_repository STATIC
+    core/music/CapabilityResolver.cpp
+    core/music/CapabilityResolver.h
+    core/music/MediaActionRouter.cpp
+    core/music/MediaActionRouter.h
     core/music/AggregateComposer.cpp
     core/music/AggregateComposer.h
     core/music/PageRepository.cpp
@@ -471,6 +475,32 @@ if(BUILD_TESTING)
             INPUT "${configured_manifest}"
         )
     endfunction()
+
+    # Task6 fixture shares its source with the action router contract tests.
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_action_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task6")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task6")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task6 Fixture")
+    set(QUEMUSIC_TASK6_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task6-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK6_PACKAGE_DIR "${QUEMUSIC_TASK6_PACKAGE_ROOT}/task6")
+    add_library(quemusic_action_fixture MODULE tests/tst_MediaActionRouterV2.cpp)
+    target_compile_definitions(quemusic_action_fixture PRIVATE QUEMUSIC_ACTION_FIXTURE)
+    target_link_libraries(quemusic_action_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_action_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK6_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_action_fixture "${QUEMUSIC_TASK6_PACKAGE_DIR}")
+    qt_add_executable(quemusic_capability_resolver_test tests/tst_CapabilityResolver.cpp)
+    target_link_libraries(quemusic_capability_resolver_test PRIVATE quemusic_music_repository Qt6::Test)
+    qt_add_executable(quemusic_media_action_router_v2_test tests/tst_MediaActionRouterV2.cpp)
+    target_link_libraries(quemusic_media_action_router_v2_test PRIVATE
+        quemusic_music_repository quemusic_music_page_model Qt6::Test)
+    target_compile_definitions(quemusic_media_action_router_v2_test PRIVATE
+        QUEMUSIC_TASK6_PACKAGES="${QUEMUSIC_TASK6_PACKAGE_ROOT}")
+    add_dependencies(quemusic_media_action_router_v2_test quemusic_action_fixture)
+    foreach(task6_target IN ITEMS quemusic_capability_resolver_test quemusic_media_action_router_v2_test)
+        add_test(NAME ${task6_target} COMMAND ${task6_target})
+        set_tests_properties(${task6_target} PROPERTIES TIMEOUT 30)
+    endforeach()
 
     # Task5 fixture shares its source with the repository contract tests.
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_page_fixture)

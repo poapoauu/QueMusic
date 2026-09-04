@@ -89,12 +89,16 @@ struct SourceDescriptorV2 {
     QHash<SourceActionV2, ActionAvailabilityV2> declaredActions;
 };
 
+// Layers are ordered from least to most object-specific. Unknown constraints
+// fail closed; only sameSourceOnly (bool) and maxBitrate (finite >= 0) are understood.
+ActionAvailabilityV2 intersectActionAvailabilityV2(const QList<ActionAvailabilityV2> &layers);
+
 struct CapabilitySetV2 {
-    QHash<SourceActionV2, ActionAvailabilityV2> actions;
-    ActionAvailabilityV2 action(SourceActionV2 key) const
-    {
-        return actions.value(key);
-    }
+    QHash<SourceActionV2, ActionAvailabilityV2> serverActions;
+    QHash<SourceActionV2, ActionAvailabilityV2> accountActions;
+    ActionAvailabilityV2 serverAction(SourceActionV2 key) const;
+    ActionAvailabilityV2 accountAction(SourceActionV2 key) const;
+    ActionAvailabilityV2 action(SourceActionV2 key) const;
 };
 
 struct SourceScopeV2 {

@@ -9,7 +9,7 @@ class SourceV2TypesTest : public QObject {
 private slots:
     void mediaIdentityIncludesSourceInstance();
     void availabilityPreservesReasonAndConstraints();
-    void capabilityLookupDefaultsToUnsupported();
+    void negotiatedLayersRequireExplicitGrants();
     void pageQueryDefaultsToAggregateRecommendations();
 };
 
@@ -36,15 +36,25 @@ void SourceV2TypesTest::availabilityPreservesReasonAndConstraints()
     QCOMPARE(restored, value);
 }
 
-void SourceV2TypesTest::capabilityLookupDefaultsToUnsupported()
+void SourceV2TypesTest::negotiatedLayersRequireExplicitGrants()
 {
     CapabilitySetV2 capabilities;
-    capabilities.actions.insert(SourceActionV2::Play,
+    capabilities.serverActions.insert(SourceActionV2::Play,
                                 {AvailabilityV2::Available, {}, {}});
-
+    QCOMPARE(capabilities.serverAction(SourceActionV2::Play).state, AvailabilityV2::Available);
+    QCOMPARE(capabilities.accountAction(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+    QCOMPARE(capabilities.accountAction(SourceActionV2::Play).reasonKey, QString("source.permission.unknown"));
+    QCOMPARE(capabilities.action(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+    capabilities.accountActions.insert(SourceActionV2::Play, {AvailabilityV2::Available, {}, {}});
     QCOMPARE(capabilities.action(SourceActionV2::Play).state, AvailabilityV2::Available);
     QCOMPARE(capabilities.action(SourceActionV2::Download).state,
-             AvailabilityV2::Unsupported);
+             AvailabilityV2::Unavailable);
+    QCOMPARE(capabilities.serverAction(SourceActionV2::Download).reasonKey, QString("source.capability.unknown"));
+    capabilities.accountActions[SourceActionV2::Play] = {AvailabilityV2::Forbidden, "account.denied", {}};
+    QCOMPARE(capabilities.action(SourceActionV2::Play).reasonKey, QString("account.denied"));
+    capabilities.serverActions[SourceActionV2::Play] = {AvailabilityV2::Available, {}, {{"maxBitrate", 128}}};
+    capabilities.accountActions[SourceActionV2::Play] = {AvailabilityV2::Available, {}, {{"maxBitrate", 256}}};
+    QCOMPARE(capabilities.action(SourceActionV2::Play).constraints.value("maxBitrate").toDouble(), 128.0);
 }
 
 void SourceV2TypesTest::pageQueryDefaultsToAggregateRecommendations()
