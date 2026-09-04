@@ -47,6 +47,7 @@ public:
     bool enableInstance(const QString &sourceInstanceId);
     bool disableInstance(const QString &sourceInstanceId);
     bool closeInstance(const QString &sourceInstanceId);
+    bool configurationChanged(const QString &sourceInstanceId);
     void closeAll();
 
 signals:

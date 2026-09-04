@@ -100,7 +100,8 @@ SourceSettingsValidationV2 validate(const SettingsSchemaV2 &schema, const QVaria
         failure.errorKey = QString::fromLatin1(key);
         return failure; // Do not return partial values on failure.
     };
-    QSet<QString> sections, ids;
+    QSet<QString> sections, ids, actions;
+    QHash<QString, const SettingsFieldV2 *> fields;
     for (const auto &section : schema) {
         if (!isSafeSourceSettingsIdV2(section.id) || sections.contains(section.id))
             return fail("source.settings.invalidSchema");
@@ -109,12 +110,43 @@ SourceSettingsValidationV2 validate(const SettingsSchemaV2 &schema, const QVaria
             if (!isSafeSourceSettingsIdV2(f.id) || ids.contains(f.id) || !validField(f))
                 return fail("source.settings.invalidSchema");
             ids.insert(f.id);
+            fields.insert(f.id, &f);
+        }
+        for (const auto &action : section.actions) {
+            if (!isSafeSourceSettingsIdV2(action.id) || actions.contains(action.id))
+                return fail("source.settings.invalidSchema");
+            actions.insert(action.id);
+        }
+    }
+    for (const auto *f : fields) {
+        if (!f->visibleWhen) continue;
+        const auto &condition = *f->visibleWhen;
+        const auto *target = fields.value(condition.fieldId);
+        if (!target || target == f || secretField(*target)
+            || (condition.comparison != SettingsComparisonV2::Equal
+                && condition.comparison != SettingsComparisonV2::NotEqual))
+            return fail("source.settings.invalidSchema");
+        const int c = category(condition.value);
+        bool compatible = stringField(target->type) ? c == 1
+            : target->type == SettingsFieldTypeV2::Boolean ? c == 2
+            : target->type == SettingsFieldTypeV2::Integer ? c == 3 : false;
+        if (target->type == SettingsFieldTypeV2::Choice)
+            for (const auto &choice : target->choices) compatible |= c != 0 && category(choice) == c;
+        if (!compatible) return fail("source.settings.invalidSchema");
+        QSet<QString> path;
+        auto *node = f;
+        while (node && node->visibleWhen) {
+            if (path.contains(node->id)) return fail("source.settings.invalidSchema");
+            path.insert(node->id);
+            node = fields.value(node->visibleWhen->fieldId);
         }
     }
     for (auto it = draft.cbegin(); it != draft.cend(); ++it)
         if (!ids.contains(it.key())) return fail("source.settings.unknownField");
+    const auto publicValues = sourceSettingsPublicValuesV2(schema, draft, previous);
     for (const auto &section : schema) {
-        for (const auto &f : section.fields) {
+        for (auto f : section.fields) {
+            f.required = f.required && sourceSettingsFieldVisibleV2(f, publicValues);
             if (secretField(f)) {
                 result.secretFieldIds.append(f.id);
                 if (f.required) result.requiredSecretFieldIds.append(f.id);
@@ -149,6 +181,30 @@ SourceSettingsValidationV2 validate(const SettingsSchemaV2 &schema, const QVaria
         return fail("source.settings.invalidSecretEnvelope");
     return result;
 }
+}
+
+QVariantMap sourceSettingsPublicValuesV2(const SettingsSchemaV2 &schema,
+    const QVariantMap &draft, const QVariantMap &previous)
+{
+    QVariantMap values;
+    for (const auto &section : schema) for (const auto &f : section.fields) {
+        if (secretField(f)) continue;
+        const auto value = draft.contains(f.id) ? draft.value(f.id)
+            : previous.contains(f.id) ? previous.value(f.id) : f.defaultValue;
+        if (value.isValid()) values.insert(f.id, value);
+    }
+    return values;
+}
+
+bool sourceSettingsFieldVisibleV2(const SettingsFieldV2 &field, const QVariantMap &values)
+{
+    if (!field.visibleWhen) return true;
+    const auto &condition = *field.visibleWhen;
+    const auto value = values.value(condition.fieldId);
+    if (!value.isValid()) return false;
+    const bool equal = category(value) == category(condition.value) && value == condition.value;
+    return condition.comparison == SettingsComparisonV2::Equal ? equal
+        : condition.comparison == SettingsComparisonV2::NotEqual && !equal;
 }
 
 QString validateSourceSettingsDraftV2(const SettingsSchemaV2 &schema, const QVariantMap &draft)

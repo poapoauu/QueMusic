@@ -196,6 +196,21 @@ struct StreamDescriptorV2 {
     bool seekable = true;
 };
 
+enum class SettingsComparisonV2 { Equal, NotEqual };
+struct SettingsVisibilityConditionV2 {
+    QString fieldId;
+    SettingsComparisonV2 comparison = SettingsComparisonV2::Equal;
+    QVariant value;
+};
+struct SettingsActionDescriptorV2 {
+    QString id;
+    QString labelKey;
+    bool requiresConfirmation = false;
+};
+struct SettingsActionCapabilitiesV2 {
+    QHash<QString, ActionAvailabilityV2> serverActions;
+    QHash<QString, ActionAvailabilityV2> accountActions;
+};
 struct SettingsFieldV2 {
     QString id;
     QString labelKey;
@@ -205,12 +220,14 @@ struct SettingsFieldV2 {
     QVariant defaultValue;
     QVariantList choices;
     QVariantMap constraints;
+    std::optional<SettingsVisibilityConditionV2> visibleWhen;
 };
 
 struct SettingsSectionV2 {
     QString id;
     QString titleKey;
     QList<SettingsFieldV2> fields;
+    QList<SettingsActionDescriptorV2> actions;
 };
 using SettingsSchemaV2 = QList<SettingsSectionV2>;
 

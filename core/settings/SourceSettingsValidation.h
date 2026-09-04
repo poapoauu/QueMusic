@@ -15,6 +15,9 @@ struct SourceSettingsValidationV2 {
 
 // Checks the complete schema and supplied draft, without requiring omitted fields.
 QString validateSourceSettingsDraftV2(const SettingsSchemaV2 &schema, const QVariantMap &draft);
+QVariantMap sourceSettingsPublicValuesV2(const SettingsSchemaV2 &schema,
+    const QVariantMap &draft, const QVariantMap &previous = {});
+bool sourceSettingsFieldVisibleV2(const SettingsFieldV2 &field, const QVariantMap &values);
 SourceSettingsValidationV2 validateSourceSettingsV2(
     const SettingsSchemaV2 &schema, const QVariantMap &draft,
     const QVariantMap &previousParameters = {}, const QStringList &configuredSecretFieldIds = {},

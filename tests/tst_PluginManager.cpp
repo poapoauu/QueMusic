@@ -35,6 +35,9 @@ private slots:
     void failedUnloadExposesRetryCapability();
     void destructionReleasesOwnedPluginLoaders();
     void rejectsLoadWhilePackageOwnsLoader();
+    void healthyLeasesOutliveFacadeAndReleaseLastRoot();
+    void leaseReleaseDoesNotNotifyPartlyDestroyedFacade();
+    void releaseObserverMayDestroyFacade();
 };
 
 namespace {
@@ -510,6 +513,78 @@ void PluginManagerTest::rejectsLoadWhilePackageOwnsLoader()
     QVERIFY(manager.load(packageId));
     QVERIFY(!manager.load(packageId));
     QCOMPARE(manager.plugin(packageId).state, PluginState::Loaded);
+}
+
+void PluginManagerTest::healthyLeasesOutliveFacadeAndReleaseLastRoot()
+{
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture-v2");
+    auto manager = std::make_unique<PluginManager>();
+    manager->addSearchPath(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(manager->discover(), 1); QVERIFY(manager->load(packageId));
+    QPointer<QObject> root = manager->pluginInstance(packageId);
+    auto first = manager->acquire(packageId);
+    auto last = manager->acquire(packageId);
+    auto copy = last;
+    QCOMPARE(manager->plugin(packageId).activeLeases, 2);
+    manager.reset();
+    // No session or plugin stack in RED; inspect QPointer before invoking code.
+    QVERIFY2(root, "Callable leases must keep the root after facade destruction");
+    QCOMPARE(root->property("sourceSdkAbi").toInt(), 2);
+    first = {}; last = {};
+    QVERIFY(root);
+    copy = {};
+    QVERIFY2(root.isNull(), "The last healthy lease must actually destroy the root, not permanently pin it");
+    PluginManager replacement;
+    replacement.addSearchPath(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(replacement.discover(), 1); QVERIFY(replacement.load(packageId));
+    QCOMPARE(replacement.reload(packageId), PluginOperationResult::Success);
+    QCOMPARE(replacement.unload(packageId), PluginOperationResult::Success);
+}
+
+void PluginManagerTest::leaseReleaseDoesNotNotifyPartlyDestroyedFacade()
+{
+    const QString firstId = QStringLiteral("org.quemusic.source.fixture");
+    const QString secondId = QStringLiteral("org.quemusic.source.fixture-v2");
+    auto manager = std::make_unique<PluginManager>();
+    manager->addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
+    manager->addSearchPath(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(manager->discover(), 2);
+    QVERIFY(manager->load(firstId)); QVERIFY(manager->load(secondId));
+    auto lease = manager->acquire(secondId);
+    QPointer<QObject> secondRoot = manager->pluginInstance(secondId);
+    bool destroying = false;
+    int lateNotifications = 0;
+    QObject observer;
+    connect(manager.get(), &PluginManager::pluginsChanged, &observer, [&] {
+        if (destroying) ++lateNotifications;
+    });
+    connect(manager->pluginInstance(firstId), &QObject::destroyed, &observer, [&] {
+        destroying = true;
+        lease = {};
+    });
+    manager.reset();
+    QVERIFY(destroying);
+    QCOMPARE(lateNotifications, 0);
+    QVERIFY(secondRoot.isNull());
+}
+
+void PluginManagerTest::releaseObserverMayDestroyFacade()
+{
+    const QString packageId = QStringLiteral("org.quemusic.source.fixture-v2");
+    auto manager = std::make_unique<PluginManager>();
+    manager->addSearchPath(QStringLiteral(QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR));
+    QCOMPARE(manager->discover(), 1); QVERIFY(manager->load(packageId));
+    auto lease = manager->acquire(packageId);
+    QPointer<QObject> root = manager->pluginInstance(packageId);
+    QObject observer;
+    bool retainedDuringRelease = false;
+    connect(manager.get(), &PluginManager::pluginsChanged, &observer, [&] {
+        manager.reset();
+        retainedDuringRelease = !root.isNull();
+    });
+    lease = {};
+    QVERIFY2(retainedDuringRelease, "A release notification must retain its callable loader across facade deletion");
+    QVERIFY(root.isNull());
 }
 
 QTEST_MAIN(PluginManagerTest)

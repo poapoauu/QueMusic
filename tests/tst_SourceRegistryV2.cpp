@@ -134,6 +134,9 @@ public:
         case 2:
             emit actionCompleted(requestId, {});
             break;
+        case 4:
+            emit settingsActionCompleted(requestId, "diagnose");
+            break;
         default:
             emit requestFailed(requestId, {});
             break;
@@ -455,6 +458,11 @@ class SourceRegistryV2Test : public QObject {
     Q_OBJECT
 
 private slots:
+    void configurationNotificationWithoutSessionAndAfterRemoval();
+    void configurationReplacesOldSession();
+    void configurationInvalidatesReentrantCreation();
+    void storedForeignPackageRejected();
+    void ownerDeletionInsideClose();
     void twoAccountsCreateDistinctStableInstances();
     void slashContainingAccountIdHasUnambiguousIdentity();
     void twoLoadedSourcePackagesMapToTheirOwnAccounts();
@@ -485,6 +493,65 @@ private slots:
     void destructionClosesSessionBeforeReleasingLease();
     void closeAllIsIdempotent();
 };
+
+template<class Registry>
+auto configurationChanged(Registry &r, const QString &id, int)
+    -> decltype(r.configurationChanged(id)) { return r.configurationChanged(id); }
+template<class Registry>
+bool configurationChanged(Registry &, const QString &, long) { return false; }
+
+void SourceRegistryV2Test::configurationNotificationWithoutSessionAndAfterRemoval()
+{
+    RegistryHarness h; QSignalSpy changed(&h.registry, &SourceRegistry::instanceChanged);
+    QVERIFY(configurationChanged(h.registry, "registry-v2/missing", 0)); QCOMPARE(changed.count(), 1);
+    QVERIFY(!configurationChanged(h.registry, "missing", 0));
+    QVERIFY(!configurationChanged(h.registry, "/missing", 0));
+    QVERIFY(!configurationChanged(h.registry, "registry-v2/", 0));
+    QVERIFY(h.saveAccount("home", "Home")); QVERIFY(h.accountStore.remove(kSourceId, "home"));
+    QVERIFY(configurationChanged(h.registry, "registry-v2/home", 0)); QCOMPARE(changed.count(), 2);
+}
+void SourceRegistryV2Test::configurationReplacesOldSession()
+{
+    RegistryHarness h; QVERIFY(h.loadValidPlugin()); QVERIFY(h.saveAccount("home", "Before"));
+    QPointer<IMusicSourceSessionV2> old = h.registry.sessionFor("registry-v2/home"); QVERIFY(old);
+    QVERIFY(h.saveAccount("home", "After"));
+    QVERIFY(configurationChanged(h.registry, "registry-v2/home", 0)); QVERIFY(old.isNull());
+    QCOMPARE(h.pluginManager.plugin(kPackageId).activeLeases, 0);
+    QVERIFY(h.registry.sessionFor("registry-v2/home"));
+    QCOMPARE(h.validPluginObject()->property("lastConfiguration").toMap().value("displayName").toString(), QString("After"));
+}
+void SourceRegistryV2Test::configurationInvalidatesReentrantCreation()
+{
+    RegistryHarness h; QVERIFY(h.loadValidPlugin()); QVERIFY(h.saveAccount("home", "Home"));
+    bool notified = false;
+    connect(&h.pluginManager, &PluginManager::pluginsChanged, this, [&] {
+        if (!notified && h.pluginManager.plugin(kPackageId).activeLeases > 0) {
+            notified = true; QVERIFY(configurationChanged(h.registry, "registry-v2/home", 0));
+        }
+    });
+    QVERIFY(!h.registry.sessionFor("registry-v2/home")); QVERIFY(notified);
+    QCOMPARE(h.pluginManager.plugin(kPackageId).activeLeases, 0);
+}
+void SourceRegistryV2Test::storedForeignPackageRejected()
+{
+    RegistryHarness h; QVERIFY(h.loadValidPlugin());
+    SourceAccountSaveV2 r{"org.example.foreign", kSourceId, "home", "Home", true, 1, {}, {}};
+    QVERIFY(h.accountStore.saveValidatedV2(r));
+    QVERIFY(!h.registry.sessionFor("registry-v2/home"));
+    QCOMPARE(h.validPluginObject()->property("createCount").toInt(), 0);
+}
+void SourceRegistryV2Test::ownerDeletionInsideClose()
+{
+    RegistryHarness h; QVERIFY(h.loadValidPlugin()); QVERIFY(h.saveAccount("home", "Home"));
+    auto registry = std::make_unique<SourceRegistry>(&h.pluginManager, &h.accountStore);
+    QPointer<IMusicSourceSessionV2> session = registry->sessionFor("registry-v2/home"); QVERIFY(session);
+    connect(session, &IMusicSourceSessionV2::stateChanged, this, [&](SourceSessionStateV2 state) {
+        if (state == SourceSessionStateV2::Closing) registry.reset();
+    });
+    QVERIFY(configurationChanged(*registry, "registry-v2/home", 0));
+    QVERIFY(!registry); QVERIFY(session.isNull());
+    QCOMPARE(h.pluginManager.plugin(kPackageId).activeLeases, 0);
+}
 
 void SourceRegistryV2Test::twoAccountsCreateDistinctStableInstances()
 {
@@ -814,7 +881,7 @@ void SourceRegistryV2Test::terminalSignalsRemoveRequestsAndCloseCancelsFirst()
              IMusicSourceSessionV2::staticMetaObject.indexOfSignal("requestStarted(QUuid)"));
 
     QStringList completedRequests;
-    for (int terminalSignal = 0; terminalSignal < 4; ++terminalSignal) {
+    for (int terminalSignal = 0; terminalSignal < 5; ++terminalSignal) {
         const QString requestId = startObservableRequest(session);
         QVERIFY(!requestId.isEmpty());
         completedRequests.append(requestId);

@@ -170,6 +170,16 @@ target_include_directories(quemusic_source_registry PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+add_library(quemusic_plugin_settings STATIC
+    core/settings/PluginSettingsController.h
+    core/settings/PluginSettingsController.cpp
+    core/settings/PluginSettingsOperation.h
+    core/settings/PluginSettingsOperation.cpp
+    core/settings/SettingsSchemaPresentation.h
+    core/settings/SettingsSchemaPresentation.cpp
+)
+target_link_libraries(quemusic_plugin_settings PUBLIC quemusic_source_registry)
+
 add_library(quemusic_music_repository STATIC
     core/music/CapabilityResolver.cpp
     core/music/CapabilityResolver.h
@@ -493,6 +503,29 @@ if(BUILD_TESTING)
             INPUT "${configured_manifest}"
         )
     endfunction()
+
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.settings-fixture")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "settings-fixture")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Settings Fixture")
+    set(QUEMUSIC_SETTINGS_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-settings-packages/$<CONFIG>")
+    set(QUEMUSIC_SETTINGS_PACKAGE_DIR "${QUEMUSIC_SETTINGS_PACKAGE_ROOT}/settings-fixture")
+    add_library(quemusic_settings_fixture MODULE
+        tests/fixtures/SettingsV2FixturePlugin.cpp tests/fixtures/SettingsV2FixturePlugin.h)
+    target_link_libraries(quemusic_settings_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_settings_fixture PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_SETTINGS_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_settings_fixture "${QUEMUSIC_SETTINGS_PACKAGE_DIR}")
+    qt_add_executable(quemusic_plugin_settings_operation_test tests/tst_PluginSettingsOperation.cpp)
+    target_link_libraries(quemusic_plugin_settings_operation_test PRIVATE quemusic_plugin_settings Qt6::Test)
+    target_compile_definitions(quemusic_plugin_settings_operation_test PRIVATE QUEMUSIC_SETTINGS_PACKAGES="${QUEMUSIC_SETTINGS_PACKAGE_ROOT}")
+    add_dependencies(quemusic_plugin_settings_operation_test quemusic_settings_fixture)
+    add_test(NAME quemusic_plugin_settings_operation_test COMMAND quemusic_plugin_settings_operation_test)
+    qt_add_executable(quemusic_plugin_settings_controller_test tests/tst_PluginSettingsController.cpp)
+    target_link_libraries(quemusic_plugin_settings_controller_test PRIVATE quemusic_plugin_settings Qt6::Test)
+    target_compile_definitions(quemusic_plugin_settings_controller_test PRIVATE
+        QUEMUSIC_SETTINGS_PACKAGES="${QUEMUSIC_SETTINGS_PACKAGE_ROOT}"
+        QUEMUSIC_NO_SETTINGS_PACKAGE="$<TARGET_FILE_DIR:quemusic_fake_v2_source_fixture>")
+    add_dependencies(quemusic_plugin_settings_controller_test quemusic_settings_fixture quemusic_fake_v2_source_fixture)
+    add_test(NAME quemusic_plugin_settings_controller_test COMMAND quemusic_plugin_settings_controller_test)
 
     # Task7 fixture lives at the provider boundary of the real hub orchestration.
     set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task7")
@@ -1155,6 +1188,7 @@ target_link_libraries(${PROJECT_NAME}
         quemusic_media_bridge
         quemusic_source_account_store
         z
+        quemusic_plugin_settings
     PUBLIC QWindowKit::Quick
 )
 # Windows SMTC 互操作使用 RoGetActivationFactory / RoActivateInstance，需要 runtimeobject 导入库；

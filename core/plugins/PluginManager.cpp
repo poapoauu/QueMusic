@@ -24,7 +24,7 @@ auto &pinnedPackages()
     // Intentionally never destroyed, including during static teardown: a pin
     // owns the loader/root until the OS reclaims the process. Keying by the
     // library coalesces violations and also protects replacement managers.
-    static auto *packages = new std::map<QString, std::unique_ptr<QPluginLoader>>;
+    static auto *packages = new std::map<QString, std::shared_ptr<QPluginLoader>>;
     return *packages;
 }
 
@@ -72,7 +72,10 @@ QString hostPluginArchitecture()
 }
 
 struct PluginLease::State {
+    std::shared_ptr<QPluginLoader> loader;
+    QString libraryPath;
     std::function<void()> release;
+    std::function<void()> notifyPin;
 
     ~State()
     {
@@ -85,7 +88,7 @@ struct PluginLease::State {
 struct PluginManager::Entry {
     PluginManifest manifest;
     PluginSpec spec;
-    std::unique_ptr<QPluginLoader> loader;
+    std::shared_ptr<QPluginLoader> loader;
     QObject *instance = nullptr;
     QString libraryPath;
 
@@ -105,6 +108,17 @@ bool PluginLease::isValid() const
     return m_state != nullptr;
 }
 
+void PluginLease::pinLoadedPackage() const
+{
+    // Notifications can delete the caller and release its lease reentrantly.
+    const auto state = m_state;
+    if (state && state->loader
+        && pinnedPackages().emplace(state->libraryPath, state->loader).second
+        && state->notifyPin) {
+        state->notifyPin();
+    }
+}
+
 PluginManager::PluginManager(QObject *parent)
     : QObject(parent)
 {
@@ -113,11 +127,9 @@ PluginManager::PluginManager(QObject *parent)
 
 PluginManager::~PluginManager()
 {
-    for (const auto &entry : m_entries) {
-        if (!entry->isPinned() && entry->loader != nullptr && entry->loader->isLoaded()) {
-            entry->loader->unload();
-        }
-    }
+    *m_callable = false;
+    // Entries and callable leases share the loader. Its final healthy owner
+    // unloads it; R7 alone transfers an additional process-lifetime reference.
 }
 
 void PluginManager::addSearchPath(const QString &path)
@@ -210,7 +222,10 @@ bool PluginManager::load(const QString &packageId)
         return false;
     }
 
-    auto loader = std::make_unique<QPluginLoader>();
+    auto loader = std::shared_ptr<QPluginLoader>(new QPluginLoader, [](QPluginLoader *loader) {
+        if (loader->isLoaded()) loader->unload();
+        delete loader;
+    });
     loader->setLoadHints({});
     loader->setFileName(entry->manifest.libraryAbsolutePath());
     if (entry->manifest.category() == PluginCategory::Source) {
@@ -331,11 +346,19 @@ PluginLease PluginManager::acquire(const QString &packageId)
 
     ++entry->spec.activeLeases;
     const QPointer<PluginManager> manager(this);
+    const std::weak_ptr<bool> callable = m_callable;
     auto state = std::make_shared<PluginLease::State>();
-    state->release = [manager, packageId] {
-        if (manager != nullptr) {
+    state->loader = entry->loader;
+    state->libraryPath = entry->libraryPath;
+    state->release = [manager, callable, packageId] {
+        const auto live = callable.lock();
+        if (live && *live && manager != nullptr) {
             manager->releaseLease(packageId);
         }
+    };
+    state->notifyPin = [manager, callable, packageId] {
+        const auto live = callable.lock();
+        if (live && *live && manager != nullptr) emit manager->pluginChanged(packageId);
     };
     emit pluginChanged(packageId);
     // An existing session can be externally deleted by an acquisition observer.

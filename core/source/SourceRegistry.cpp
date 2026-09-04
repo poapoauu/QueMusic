@@ -158,6 +158,8 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     if (!loadedV2PluginForSource(stored->sourceId, &packageId, &plugin)) {
         return nullptr;
     }
+    if (!stored->pluginPackageId.isEmpty() && stored->pluginPackageId != packageId)
+        return nullptr;
     if (!reservation->isCurrent()) {
         return nullptr;
     }
@@ -250,6 +252,10 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
                                                 const SourceErrorV2 &) {
                 forgetRequest(instanceId, sessionIdentity, requestId);
             });
+    connect(session, &IMusicSourceSessionV2::settingsActionCompleted, this,
+            [this, instanceId, sessionIdentity](const QUuid &requestId, const QString &) {
+                forgetRequest(instanceId, sessionIdentity, requestId);
+            });
     connect(session, &QObject::destroyed, this, [this, instanceId, sessionIdentity] {
         handleExternalDestruction(instanceId, sessionIdentity);
     });
@@ -325,14 +331,33 @@ bool SourceRegistry::disableInstance(const QString &instanceId)
     if (!m_accounts->setEnabled(account->sourceId, account->accountId, false)) {
         return false;
     }
+    const QPointer<SourceRegistry> guard(this);
     closeEntry(instanceId, false);
-    emit instanceChanged(instanceId);
+    if (guard) emit guard->instanceChanged(instanceId);
     return true;
 }
 
 bool SourceRegistry::closeInstance(const QString &instanceId)
 {
     return closeEntry(instanceId, true);
+}
+
+bool SourceRegistry::configurationChanged(const QString &instanceId)
+{
+    const auto separator = instanceId.indexOf('/');
+    if (separator <= 0 || separator == instanceId.size() - 1 || m_destroying)
+        return false;
+    if (m_closingInstances.contains(instanceId)) {
+        invalidateInstanceCreation(instanceId);
+        return true;
+    }
+    const QPointer<SourceRegistry> guard(this);
+    closeEntry(instanceId, false);
+    if (!guard) return true;
+    m_closingInstances.insert(instanceId);
+    emit instanceChanged(instanceId);
+    if (guard) guard->m_closingInstances.remove(instanceId);
+    return true;
 }
 
 void SourceRegistry::closeAll()
@@ -496,9 +521,13 @@ bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
 
     m_closingInstances.insert(instanceId);
     SessionEntry entry = m_sessions.take(instanceId);
+    const QPointer<SourceRegistry> guard(this);
     const QPointer<IMusicSourceSessionV2> session = entry.session;
     if (session != nullptr) {
         QObject::disconnect(session, nullptr, this, nullptr);
+        // A callback may destroy the registry inside cancel/close. Keep this
+        // session and its callable lease alive until those invocations unwind.
+        session->setParent(nullptr);
         const QSet<QUuid> requests = entry.activeRequests;
         for (const QUuid &requestId : requests) {
             if (session == nullptr) {
@@ -508,10 +537,11 @@ bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
         }
         if (session != nullptr) {
             session->close();
-            delete session;
+            if (session) delete session;
         }
     }
     entry.lease = {};
+    if (!guard) return true;
     m_closingInstances.remove(instanceId);
     if (notify) {
         emit instanceChanged(instanceId);
@@ -526,10 +556,12 @@ void SourceRegistry::closeAll(bool notify)
         return;
     }
     m_closingAll = true;
+    const QPointer<SourceRegistry> guard(this);
     QStringList instanceIds = m_sessions.keys();
     std::sort(instanceIds.begin(), instanceIds.end());
     for (const QString &instanceId : instanceIds) {
         closeEntry(instanceId, notify);
+        if (!guard) return;
     }
     if (!m_destroying) {
         m_closingAll = false;

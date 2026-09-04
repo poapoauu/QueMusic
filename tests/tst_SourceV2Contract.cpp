@@ -27,11 +27,12 @@ class FakeMusicSourceSessionV2 final : public IMusicSourceSessionV2,
                                        public IPlaylistProviderV2,
                                        public IDownloadProviderV2,
                                        public IPlayQueueProviderV2,
-                                       public IBookmarkProviderV2 {
+                                       public IBookmarkProviderV2,
+                                       public ISettingsActionProviderV2 {
     Q_OBJECT
     Q_INTERFACES(IPageProviderV2 IFavoriteProviderV2 IPlaybackProviderV2 IRatingProviderV2
                      IScrobbleProviderV2 IPlaylistProviderV2 IDownloadProviderV2
-                         IPlayQueueProviderV2 IBookmarkProviderV2)
+                         IPlayQueueProviderV2 IBookmarkProviderV2 ISettingsActionProviderV2)
 
 public:
     using IMusicSourceSessionV2::IMusicSourceSessionV2;
@@ -89,6 +90,12 @@ public:
         return nextRequestId();
     }
     QUuid deleteBookmark(const MediaRefV2 &) override { return nextRequestId(); }
+    SettingsActionCapabilitiesV2 settingsCapabilities() const override { return {}; }
+    QUuid runSettingsAction(const QString &action) override {
+        const auto id = nextRequestId();
+        QTimer::singleShot(0, this, [this, id, action] { emit settingsActionCompleted(id, action); });
+        return id;
+    }
 
 private:
     QUuid nextRequestId()
@@ -204,6 +211,8 @@ void SourceV2ContractTest::discoversOptionalProvidersByInterface()
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(&session));
     QVERIFY(qobject_cast<IPlayQueueProviderV2 *>(&session));
     QVERIFY(qobject_cast<IBookmarkProviderV2 *>(&session));
+    QVERIFY(qobject_cast<ISettingsActionProviderV2 *>(&session));
+    QVERIFY(!qobject_cast<IPluginSettingsProviderV2 *>(&session));
 }
 
 void SourceV2ContractTest::startsEveryAsynchronousRequestOnBaseSession()
@@ -249,6 +258,7 @@ void SourceV2ContractTest::startsEveryAsynchronousRequestOnBaseSession()
         bookmarks->fetchBookmarks(),
         bookmarks->createBookmark(media, 1000, QStringLiteral("note")),
         bookmarks->deleteBookmark(media),
+        session.runSettingsAction(QStringLiteral("diagnose")),
     };
 
     QCOMPARE(started.count(), requestIds.size());
@@ -263,6 +273,11 @@ void SourceV2ContractTest::startsEveryAsynchronousRequestOnBaseSession()
 void SourceV2ContractTest::returnsCompletionsThroughBaseSessionSignals()
 {
     FakeMusicSourceSessionV2 session;
+    QSignalSpy settingsDone(&session, &IMusicSourceSessionV2::settingsActionCompleted);
+    const auto settingsId = qobject_cast<ISettingsActionProviderV2 *>(&session)->runSettingsAction("diagnose");
+    QTRY_COMPARE(settingsDone.count(), 1);
+    QCOMPARE(settingsDone[0][0].toUuid(), settingsId);
+    QCOMPARE(settingsDone[0][1].toString(), QString("diagnose"));
     QSignalSpy pageReady(&session, &IMusicSourceSessionV2::pageReady);
     auto *pageProvider = qobject_cast<IPageProviderV2 *>(&session);
 

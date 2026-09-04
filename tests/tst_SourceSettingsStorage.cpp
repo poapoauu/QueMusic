@@ -72,6 +72,15 @@ SettingsSchemaV2 credentials()
                    field("token", SettingsFieldTypeV2::Secret, true),
                    field("folder", SettingsFieldTypeV2::Directory)});
 }
+// Exercise the requested consumer API even before its declaration exists.
+template<class Store>
+auto draftConfiguration(Store &store, const SourceAccountSaveV2 &r, QString *error, int)
+    -> decltype(store.configurationForDraftV2(r, error))
+{ return store.configurationForDraftV2(r, error); }
+template<class Store>
+std::optional<SourceConfigurationV2> draftConfiguration(Store &, const SourceAccountSaveV2 &,
+                                                       QString *, long)
+{ return std::nullopt; }
 }
 
 class SourceSettingsStorageTest : public QObject {
@@ -94,7 +103,108 @@ private slots:
     void failuresRollBack();
     void metadataFailureCleansNewSecret();
     void identityAndLegacyRestrictions();
+    void draftConfigurationDoesNotPersist();
+    void draftConfigurationWithoutBackendAndInvalidInput();
+    void draftConfigurationPreservesRaw();
+    void visibilityPreservesHiddenAndRequiresVisible();
+    void invalidVisibilityAndActions();
 };
+
+void SourceSettingsStorageTest::visibilityPreservesHiddenAndRequiresVisible()
+{
+    Fixture f;
+    auto active = field("active", SettingsFieldTypeV2::Boolean);
+    active.defaultValue = false;
+    auto password = field("password", SettingsFieldTypeV2::Secret, true);
+    password.visibleWhen = SettingsVisibilityConditionV2{"active", SettingsComparisonV2::Equal, true};
+    auto folder = field("folder", SettingsFieldTypeV2::Directory, true);
+    folder.visibleWhen = password.visibleWhen;
+    auto r = request(schema({active, password, folder})); QString error;
+    QVERIFY2(f.store.saveValidatedV2(r, &error), qPrintable(error));
+    QCOMPARE(f.secrets.calls(), 0);
+    r.draft = {{"active", true}};
+    QVERIFY(!f.store.saveValidatedV2(r, &error));
+    QCOMPARE(error, QString("source.settings.requiredField"));
+    r.draft = {{"active", true}, {"password", "keep"}, {"folder", "/keep"}};
+    QVERIFY(f.store.saveValidatedV2(r));
+    auto ref = f.reference(); f.secrets.resetCalls();
+    r.draft = {{"active", false}, {"password", ""}};
+    QVERIFY(f.store.saveValidatedV2(r)); QCOMPARE(f.secrets.calls(), 0);
+    QCOMPARE(f.reference(), ref); QCOMPARE(f.account()->parameters.value("folder").toString(), QString("/keep"));
+    r.draft.insert("folder", 4); QVERIFY(!f.store.saveValidatedV2(r));
+    folder.visibleWhen->comparison = SettingsComparisonV2::NotEqual;
+    // A missing comparison value is invisible even for NotEqual.
+    active.defaultValue.clear();
+    QVERIFY(validateSourceSettingsV2(schema({active, folder}), {}).errorKey.isEmpty());
+}
+void SourceSettingsStorageTest::invalidVisibilityAndActions()
+{
+    auto active = field("active", SettingsFieldTypeV2::Boolean);
+    auto folder = field("folder", SettingsFieldTypeV2::Directory);
+    folder.visibleWhen = SettingsVisibilityConditionV2{"active", SettingsComparisonV2::Equal, true};
+    auto expectInvalid = [](const SettingsSchemaV2 &s) {
+        return validateSourceSettingsDraftV2(s, {}) == "source.settings.invalidSchema";
+    };
+    auto bad = folder; bad.visibleWhen->fieldId = "missing"; QVERIFY(expectInvalid(schema({active, bad})));
+    bad.visibleWhen->fieldId = "folder"; QVERIFY(expectInvalid(schema({active, bad})));
+    bad = folder; bad.visibleWhen->value = "true"; QVERIFY(expectInvalid(schema({active, bad})));
+    bad = folder; bad.visibleWhen->comparison = SettingsComparisonV2(99); QVERIFY(expectInvalid(schema({active, bad})));
+    auto secret = field("active", SettingsFieldTypeV2::Secret); QVERIFY(expectInvalid(schema({secret, folder})));
+    active.visibleWhen = SettingsVisibilityConditionV2{"folder", SettingsComparisonV2::Equal, QString("a")};
+    QVERIFY(expectInvalid(schema({active, folder})));
+    auto s = schema({}); s[0].actions = {{"../bad", "action", false}}; QVERIFY(expectInvalid(s));
+    s[0].actions = {{"diagnose", "action", false}};
+    s.append({"second", {}, {}, {{"diagnose", "other", true}}}); QVERIFY(expectInvalid(s));
+}
+
+void SourceSettingsStorageTest::draftConfigurationDoesNotPersist()
+{
+    Fixture f;
+    auto r = request(credentials(), {{"password", "first"}, {"token", "second"}, {"folder", "/a"}});
+    QVERIFY(f.store.saveValidatedV2(r));
+    const auto keys = f.settings.allKeys();
+    const auto reference = f.reference();
+    f.secrets.resetCalls();
+    r.draft = {{"password", "new"}};
+    QString error;
+    auto config = draftConfiguration(f.store, r, &error, 0);
+    QVERIFY2(config.has_value(), qPrintable(error));
+    QCOMPARE(config->sourceInstanceId, QString("example/home/office"));
+    QCOMPARE(config->parameters, QVariantMap({{"folder", "/a"}}));
+    QCOMPARE(*decodeSourceSecretsV2(config->secret), SourceNamedSecretsV2({{"password", "new"}, {"token", "second"}}));
+    QCOMPARE(f.settings.allKeys(), keys); QCOMPARE(f.reference(), reference);
+    QCOMPARE(f.secrets.writes, 0); QCOMPARE(f.secrets.removes, 0); QCOMPARE(f.secrets.reads, 1);
+    r.draft.clear(); f.secrets.resetCalls();
+    config = draftConfiguration(f.store, r, &error, 0);
+    QVERIFY(config); QCOMPARE(config->secret, f.secrets.values.value(reference));
+    QCOMPARE(f.secrets.reads, 1); QCOMPARE(f.secrets.writes, 0); QCOMPARE(f.secrets.removes, 0);
+    f.secrets.resetCalls(); QVERIFY(f.store.saveValidatedV2(r)); QCOMPARE(f.secrets.calls(), 0);
+}
+void SourceSettingsStorageTest::draftConfigurationWithoutBackendAndInvalidInput()
+{
+    Fixture f; SourceAccountStore store(&f.settings, nullptr); QString error;
+    auto r = request(schema({field("folder", SettingsFieldTypeV2::Directory, true)}), {{"folder", "/draft"}});
+    auto config = draftConfiguration(store, r, &error, 0);
+    QVERIFY(config); QVERIFY(config->secret.isEmpty());
+    QVERIFY(f.settings.allKeys().isEmpty()); QVERIFY(!QFile::exists(f.settings.fileName()));
+    r.draft.clear(); QVERIFY(!draftConfiguration(f.store, r, &error, 0));
+    QCOMPARE(error, QString("source.settings.requiredField"));
+    r.draft = {{"folder", QVariantMap{{"private", "secret"}}}};
+    QVERIFY(!draftConfiguration(f.store, r, &error, 0));
+    QCOMPARE(error, QString("source.settings.invalidValue"));
+    QCOMPARE(f.secrets.calls(), 0); QVERIFY(f.settings.allKeys().isEmpty());
+}
+void SourceSettingsStorageTest::draftConfigurationPreservesRaw()
+{
+    Fixture f;
+    QVERIFY(f.store.upsert({"example", "home/office", "Home", {}, "raw-password"}));
+    f.secrets.resetCalls(); const auto keys = f.settings.allKeys(); QString error;
+    auto r = request(schema({field("password", SettingsFieldTypeV2::Secret, true)}));
+    auto config = draftConfiguration(f.store, r, &error, 0);
+    QVERIFY(config); QCOMPARE(config->secret, QByteArray("raw-password"));
+    QCOMPARE(f.secrets.reads, 1); QCOMPARE(f.secrets.writes, 0); QCOMPARE(f.secrets.removes, 0);
+    QCOMPARE(f.settings.allKeys(), keys); QCOMPARE(f.account()->recordVersion, 1);
+}
 
 void SourceSettingsStorageTest::envelopeRoundtripAndExplicitLegacy()
 {

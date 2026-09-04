@@ -77,6 +77,16 @@ public:
     virtual SettingsSchemaV2 settingsSchema() const = 0;
 };
 
+class ISettingsActionProviderV2 {
+public:
+    virtual ~ISettingsActionProviderV2() = default;
+    virtual SettingsActionCapabilitiesV2 settingsCapabilities() const = 0;
+    virtual QUuid runSettingsAction(const QString &actionId) = 0;
+};
+
+#define QUEMUSIC_SETTINGS_ACTION_PROVIDER_V2_IID "org.quemusic.source.SettingsActionProvider/2.0"
+Q_DECLARE_INTERFACE(ISettingsActionProviderV2, QUEMUSIC_SETTINGS_ACTION_PROVIDER_V2_IID)
+
 #define QUEMUSIC_PAGE_PROVIDER_V2_IID "org.quemusic.source.PageProvider/2.0"
 #define QUEMUSIC_PLAYBACK_PROVIDER_V2_IID "org.quemusic.source.PlaybackProvider/2.0"
 #define QUEMUSIC_FAVORITE_PROVIDER_V2_IID "org.quemusic.source.FavoriteProvider/2.0"

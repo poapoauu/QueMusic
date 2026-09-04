@@ -64,6 +64,8 @@ public:
     bool upsert(const SourceAccount &account, bool enabled = true, QString *error = nullptr);
     // Errors are host-owned keys; never contain draft values or backend diagnostics.
     bool saveValidatedV2(const SourceAccountSaveV2 &request, QString *error = nullptr);
+    std::optional<SourceConfigurationV2> configurationForDraftV2(
+        const SourceAccountSaveV2 &request, QString *error = nullptr);
     bool setEnabled(const QString &sourceId, const QString &accountId, bool enabled,
                     QString *error = nullptr);
     bool remove(const QString &sourceId, const QString &accountId, QString *error = nullptr);
@@ -76,6 +78,18 @@ public:
     QString secretReference(const QString &sourceId, const QString &accountId) const;
 
 private:
+    struct PreparedV2 {
+        QString group;
+        QVariantMap previousValues;
+        QString oldReference;
+        QString format;
+        QStringList configured;
+        QVariantMap parameters;
+        QByteArray secret;
+        bool rotating = false;
+    };
+    std::optional<PreparedV2> prepareV2(const SourceAccountSaveV2 &request,
+                                      bool resolveUnchanged, QString *error);
     QString groupFor(const QString &sourceId, const QString &accountId) const;
     QString legacyEncodedGroupFor(const QString &sourceId, const QString &accountId) const;
     QString legacyRawGroupFor(const QString &sourceId, const QString &accountId) const;

@@ -26,5 +26,6 @@ signals:
     void pageReady(QUuid requestId, PageResultV2 result);
     void streamReady(QUuid requestId, StreamDescriptorV2 stream);
     void actionCompleted(QUuid requestId, ActionResultV2 result);
+    void settingsActionCompleted(QUuid requestId, QString actionId);
     void requestFailed(QUuid requestId, SourceErrorV2 error);
 };
