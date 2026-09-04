@@ -1303,6 +1303,39 @@ git commit -m "feat: expose unified music hub to qml"
 
 ### Task 8: 用声明式 schema 重做插件设置与多实例账号管理
 
+#### Task 8a: 通用配置与命名凭据的存储前置（先独立实现和审查）
+
+Task8 分为 8a 存储、8b 控制器/会话生命周期、8c QML 三个顺序审查单元；不改 Task9–14 编号。只有三个单元都完成才记 Task8 complete。下面旧控制器示例的 legacy upsert 调用仅为历史草图，必须由本节的 v2 保存路径替代；不得直接照抄。8b/8c 在派发前补齐显示条件、声明动作、Registry 重配置通知和确切 QML 接口，不属于8a。
+
+**8a Files (exclusive write scope):**
+- Create: `sdk/source/v2/SourceSecretsV2.h`, `sdk/source/v2/SourceSecretsV2.cpp`
+- Create: `core/settings/SourceSettingsValidation.h`, `core/settings/SourceSettingsValidation.cpp`
+- Modify: `core/media/SourceAccountStore.h`, `core/media/SourceAccountStore.cpp`
+- Create: `tests/tst_SourceSettingsStorage.cpp`
+- Modify: `tests/tst_SourceAccountStore.cpp` only if required for directly related legacy regression coverage
+- Modify: `CMakeLists.txt` only scoped source/link additions and new `quemusic_source_settings_storage_test` target
+
+**8a contracts:**
+1. Retain legacy `upsert(SourceAccount,...)` restrictions (only string serverUrl/username parameters). Add a distinctly named schema-aware v2 saving API; do not permit arbitrary QVariantMap persistence through the old API.
+2. V2 input includes package ID, source/account identity, display name, enabled state, schema and draft. Derive instance ID from sourceId/accountId; reject empty package/account/source and slash-containing source. Match and preserve existing encoded/legacy record groups and account/credential identities. Metadata record v2 stores pluginPackageId and positive configuration version separately from record format version. Existing record v1 remains readable, no eager migration.
+3. Pure validation/splitting in host code checks unique safe section/field IDs (ASCII letters/digits/dot/underscore/hyphen, nonempty, no slash), recognized field enums, exact primitive value types, required fields, choices and constraints. Text/Secret/Url/Directory take QString; Boolean takes bool; Integer takes finite integral numeric value in the JSON safe-integer range (not bool/numeric string). Choice uses declared nonempty scalar choices of QString/bool/safe integer with exact type category matching. URL must be absolute http(s), have host and no embedded userinfo; Directory is a path string, no filesystem access in validation. Allow min/max for Integer and minLength/maxLength/pattern for string fields; invalid bounds/patterns, unknown constraints, unknown draft fields and nonprimitive values fail closed with host-owned error keys, never value-bearing diagnostics. Do not persist secret defaults. Ordinary missing fields on edit retain stored values; create may use valid non-secret defaults.
+4. `type == Secret` is always secret regardless of flag. Other `secret == true` fields must be string-valued field types (Text/Url/Directory); unsupported combinations reject the schema. Values classified secret never enter ordinary parameters. Require the controller to serialize only validated public schema metadata later; no QML here.
+5. Add pure SDK named-secret envelope helpers using `QMap<QString,QByteArray>`: prefix `QueMusic.SourceSecrets/2\n` followed by compact JSON object mapping safe field IDs to canonical base64 strings. Strict decode rejects malformed prefix payload, invalid keys/base64, nonstring JSON values, duplicate keys and oversize envelope (>1MiB). Duplicate JSON keys must not silently win. Empty envelope/map is valid. This is an encoding, NOT encryption; bytes only belong in the existing secure store or C++ session configuration. No provider signature change. Legacy raw secret input is distinguished explicitly, never treated as an envelope after malformed-marker detection. Helpers must be independent of application classes.
+6. New v2 saves write nonempty supplied string secret values as UTF-8 bytes into that envelope via ISecretStore. On editing, omitted or empty secret fields preserve previous credentials; a metadata-only edit keeps the EXACT secret reference and makes ZERO secure-store read/write/remove calls. Partial secret edits read/merge securely in C++ and rotate only after all validation. Existing raw secret can map to the sole declared secret field; multiple fields + legacy raw requires explicit re-entry of all required credentials (do not guess a destination). If all declared credentials are replaced, do not require reading the previous secret. Never leak raw/backend error detail to v2 callers.
+7. Metadata v2 may store configuredSecretFieldIds, never values, enabling per-field indicators without reading credentials. A v1 reference can be preserved on metadata-only editing when exactly one secret field gives unambiguous required-field/indicator semantics; do not migrate/rewrite bytes on such edit. Persist an explicit raw-vs-envelope format marker when preserving raw under record v2, so future partial edits know how to interpret it. Incompatible schema changes to existing secret IDs/format must return a host-owned re-entry-required error, not silently drop or expose credentials.
+8. New accounts whose schema has no configured/required secrets work with nullptr or unavailable secure store; record v2 permits empty reference. Read/sourceAccount, setEnabled and remove must support those accounts without invoking secure store. V1's existing requirement for reference remains unchanged. Accounts requiring credentials still fail safely when secure backend is absent.
+9. Validate all draft/schema before storage IO. Persist metadata and credential reference with existing rollback guarantees; preserve old metadata/reference if writing new secret or metadata fails, clean up new secrets on failure; retain established old-secret cleanup failure handling. Removal restores metadata on secure cleanup failure. Do not widen QSettings path injection or accidentally rewrite another source/account. Tests use temporary INI and fake stores only, never user's Keychain/settings/NAS.
+10. Host validation outputs contain separated public parameters and only newly supplied secret updates, with explicit preservation intent; no QObject or live plugin pointer retention. Document final API for Task8b/9 consumers in report. Existing SourceRegistry can continue passing SourceAccount.secret bytes unchanged; Task9 explicitly decodes named credentials with SDK helper and handles single-field legacy raw.
+
+**8a TDD and verification:**
+- First add failing tests for generic directory/bool/integer/choice roundtrip, invalid/unknown/secret-looking draft rejection, Secret-type flag mismatch safety, missing required fields, schema/constraint validation, envelope roundtrip/malformed/duplicate-key/size guards, no-secret account lifecycle without backend, two-secret creation/partial-update preservation, empty-edit same reference + zero secure calls, legacy raw single-field preservation/multi-field ambiguity, and write/cleanup failure rollback.
+- Ensure preexisting legacy arbitrary-parameter rejection and encoded slash-bearing account IDs still pass. Inspect actual existing fake/test conventions and reuse them where appropriate.
+- Run new focused target plus account-store and source-registry targets selected by actual CTest names; run full build and full suite once when implementation is green. Use Qt/CMake already configured in build/bridge, timeouts30–45, local fixtures only. Local-listener tests may need scoped sandbox escalation.
+- Self-review and commit only owned files/hunks. Never stage all CMake/user changes.
+- Report RED/GREEN commands, exact output summaries, API/wire contract, changed paths, commit IDs and concerns to controller. Do not implement controller, schema visibility/actions, Registry refresh API, QML, Navidrome changes or app registration in8a.
+
+#### Task 8b/8c: 通用控制器与界面（8a审查通过后细化）
+
 **Files:**
 - Create: `core/settings/PluginSettingsController.h`
 - Create: `core/settings/PluginSettingsController.cpp`
