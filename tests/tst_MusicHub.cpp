@@ -344,6 +344,27 @@ private slots:
         QCOMPARE(h.requests("office").size(), 1);
         QCOMPARE(h.hub->searchResults()->itemAt(0, 0)["ref"].toMap()["accountId"].toString(), "office");
     }
+    void retainedRowsCancelDuringRefreshDataChanged()
+    {
+        HubHarness h; QVERIFY(h.init()); h.hub->setSelectedSourceInstanceId("task7/home");
+        h.hub->search("accepted");
+        auto *model = h.hub->searchResults();
+        QTRY_COMPARE(model->state(), PageLoadStateV2::Ready);
+        const auto accepted = model->itemAt(0, 0);
+        const int before = h.requests().size();
+        bool cancelled = false;
+        connect(model, &MusicPageModel::dataChanged, h.hub.get(), [&] {
+            // invalidate() also notifies rows; cached identifies beginRequest's
+            // retained-row notification, before any provider can be dispatched.
+            if (!cancelled && model->cached()) { cancelled = true; h.hub->cancel(3); }
+        });
+        h.hub->refresh(3);
+        QVERIFY(cancelled);
+        QCOMPARE(model->state(), PageLoadStateV2::Ready);
+        QCOMPARE(model->itemAt(0, 0), accepted);
+        QCoreApplication::processEvents();
+        QCOMPARE(h.requests().size(), before);
+    }
     void queuedAssetSuccessCanStillBeCancelled()
     {
         HubHarness h; QVERIFY(h.init());
@@ -367,26 +388,81 @@ private slots:
         QVERIFY(h.hub->categoryContext().isEmpty());
         QCOMPARE(h.hub->category()->state(), PageLoadStateV2::Idle);
     }
-    void partialAndAllFailuresFinishAfterEveryQuery()
+    void initialPartialFailureRetriesOnlyItsSection()
     {
         HubHarness h; QVERIFY(h.init()); h.hub->setSelectedSourceInstanceId("task7/home");
         h.session()->setProperty("hold", true); h.hub->activatePage(0);
         QTRY_COMPARE(h.requests().size(), 5);
         const auto requests = h.requests();
+        auto *repo = h.hub->findChild<PageRepository *>(); QVERIFY(repo);
+        QSignalSpy failed(repo, &PageRepository::pageFailed);
         emit h.session()->requestFailed(requests[0].toMap()["id"].toUuid(), {SourceErrorKindV2::Network});
+        QTRY_COMPARE(failed.size(), 1);
+        emit repo->pageFailed(failed[0][0].toUuid(), failed[0][1].toULongLong(), {SourceErrorKindV2::Network});
         PageSectionV2 section; section.sectionId = "success"; section.kind = PageSectionKindV2::FrequentlyPlayed;
+        section.hasMore = true; section.nextCursor = "sibling-provider-cursor";
         MediaItemV2 song; song.ref = {"task7", "task7/home", "home", MediaEntityTypeV2::Track, "one"};
         song.title = "accepted"; section.items = {song};
         emit h.session()->pageReady(requests[1].toMap()["id"].toUuid(), {{section}, {}, false, true});
         for (int i : {2, 3}) emit h.session()->pageReady(requests[i].toMap()["id"].toUuid(), {});
-        QTRY_COMPARE(h.hub->recommendation()->rowCount(), 1);
+        QTRY_VERIFY(rowFor(h.hub->recommendation(), PageSectionKindV2::FrequentlyPlayed) >= 0);
         QCOMPARE(h.hub->recommendation()->state(), PageLoadStateV2::Loading);
         emit h.session()->pageReady(requests[4].toMap()["id"].toUuid(), {});
         QTRY_COMPARE(h.hub->recommendation()->state(), PageLoadStateV2::Ready);
         QCOMPARE(h.hub->recommendation()->error().kind, SourceErrorKindV2::Network);
-        h.session()->setProperty("hold", false); h.session()->setProperty("fail", true);
+        auto *model = h.hub->recommendation();
+        const int target = rowFor(model, PageSectionKindV2::RecentlyPlayed);
+        QVERIFY2(target >= 0, "First-load failed query must expose a retryable section");
+        QCOMPARE(model->rowCount(), 2);
+        const auto targetId = model->section(target).sectionId;
+        QVERIFY(!model->data(model->index(target), MusicPageModel::ErrorRole).toMap().isEmpty());
+        const int sibling = rowFor(model, PageSectionKindV2::FrequentlyPlayed);
+        const auto siblingItem = model->itemAt(sibling, 0);
+        const auto siblingCursor = model->section(sibling).nextCursor;
+        h.hub->retrySection(0, targetId); h.hub->retrySection(0, targetId);
+        QTRY_COMPARE(h.requests().size(), 6);
+        const auto retry = h.requests().last().toMap();
+        QCOMPARE(retry["section"].toInt(), int(PageSectionKindV2::RecentlyPlayed));
+        QCOMPARE(retry["scope"].toString(), "task7/home");
+        QVERIFY(retry["cursor"].toString().isEmpty());
+        auto recovered = section;
+        recovered.sectionId = "provider-recovered"; recovered.kind = PageSectionKindV2::RecentlyPlayed;
+        recovered.nextCursor = "retry-provider-cursor";
+        emit h.session()->pageReady(retry["id"].toUuid(), {{recovered}, {}, false, true});
+        QTRY_COMPARE(model->section(target).items.size(), 1);
+        QCOMPARE(model->section(target).sectionId, targetId);
+        QVERIFY(model->data(model->index(target), MusicPageModel::ErrorRole).toMap().isEmpty());
+        QVERIFY(model->errorMap().isEmpty());
+        QCOMPARE(model->itemAt(sibling, 0), siblingItem);
+        QCOMPARE(model->section(sibling).nextCursor, siblingCursor);
+        h.hub->loadMore(0, targetId);
+        QTRY_COMPARE(h.requests().size(), 7);
+        QCOMPARE(h.requests().last().toMap()["cursor"].toString(), "retry-provider-cursor");
+        recovered.hasMore = false; recovered.nextCursor.clear();
+        emit h.session()->pageReady(h.requests().last().toMap()["id"].toUuid(), {{recovered}, {}, false, true});
+        QTRY_COMPARE(model->section(target).items.size(), 2);
+        QCOMPARE(model->section(sibling).nextCursor, siblingCursor);
+    }
+    void initialAllFailuresHaveTargetedRetry()
+    {
+        HubHarness h; QVERIFY(h.init()); h.hub->setSelectedSourceInstanceId("task7/home");
+        h.session()->setProperty("fail", true);
         h.hub->activatePage(2); QTRY_COMPARE(h.hub->favorites()->state(), PageLoadStateV2::Failed);
-        QCOMPARE(h.hub->favorites()->rowCount(), 0);
+        QCOMPARE(h.hub->favorites()->rowCount(), 4);
+        const int favorite = rowFor(h.hub->favorites(), PageSectionKindV2::FavoriteTracks);
+        QVERIFY(favorite >= 0);
+        const auto favoriteId = h.hub->favorites()->section(favorite).sectionId;
+        const int beforeRetry = h.requests().size();
+        h.session()->setProperty("fail", false);
+        h.hub->retrySection(2, favoriteId);
+        QTRY_COMPARE(h.hub->favorites()->state(), PageLoadStateV2::Ready);
+        QCOMPARE(h.requests().size(), beforeRetry + 1);
+        QCOMPARE(h.requests().last().toMap()["section"].toInt(), int(PageSectionKindV2::FavoriteTracks));
+        QCOMPARE(h.hub->favorites()->section(favorite).items.size(), 1);
+        QCOMPARE(h.hub->favorites()->section(favorite).sectionId, favoriteId);
+        QCOMPARE(h.hub->favorites()->rowCount(), 4);
+        QVERIFY(h.hub->favorites()->data(h.hub->favorites()->index(favorite), MusicPageModel::ErrorRole).toMap().isEmpty());
+        QVERIFY(!h.hub->favorites()->errorMap().isEmpty()); // Remaining failed queries retain diagnostics.
     }
 };
 QTEST_GUILESS_MAIN(MusicHubTest)

@@ -268,10 +268,37 @@ struct MusicHub::Impl {
         if (!request.sectionId.isEmpty()) {
             if (!terminal) return;
             if (failure) page.model->applySectionFailure(generation, request.sectionId, *failure);
-            else page.model->applySectionResult(generation, request.sectionId, result, request.append);
+            else {
+                // A failed initial query has a host ID before the provider has
+                // supplied a row ID. Keep that rendered identity on retry and
+                // continuation; repository validates unique typed section kinds.
+                auto scoped = result;
+                scoped.sections.clear();
+                for (auto section : result.sections) {
+                    if (section.kind != request.query.section) continue;
+                    section.sectionId = request.sectionId;
+                    scoped.sections.append(section);
+                }
+                page.model->applySectionResult(generation, request.sectionId, scoped, request.append);
+            }
             return;
         }
-        if (failure) page.model->applyFailure(generation, *failure);
+        if (failure) {
+            PageSectionV2 section;
+            section.kind = request.query.section;
+            section.sectionId = "music.queryFailure." + QString::number(int(section.kind));
+            section.titleKey = "music.section.failed";
+            QSet<QString> existingIds;
+            bool existingKind = false;
+            for (int i = 0; i < page.model->rowCount(); ++i) {
+                const auto existing = page.model->section(i);
+                existingIds.insert(existing.sectionId);
+                if (existing.kind == section.kind) { section = existing; existingKind = true; break; }
+            }
+            if (!existingKind) while (existingIds.contains(section.sectionId)) section.sectionId += '#';
+            page.origins.insert(section.sectionId, request.query);
+            page.model->applyQueryFailure(generation, section, *failure);
+        }
         else {
             for (const auto &section : result.sections) {
                 auto origin = request.query; origin.section = section.kind; origin.cursor.clear();

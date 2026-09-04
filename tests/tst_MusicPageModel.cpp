@@ -67,7 +67,33 @@ private slots:
     void independentSectionUpdatesAfterFinish();
     void cancellationStopsSourceLoading();
     void scopedFailureWithoutErrorIsNotSuccessfulEmpty();
+    void refreshDataChangedCannotOverwriteNewContext();
 };
+
+void MusicPageModelTest::refreshDataChangedCannotOverwriteNewContext()
+{
+    MusicPageModel model(MusicPageKindV2::Search);
+    const auto initial = model.beginRequest();
+    QVERIFY(model.applyResult(initial, sampleResult("old")));
+    QVERIFY(model.finishGeneration(initial, 1));
+    const auto interrupted = initial + 1;
+    quint64 replacement = 0;
+    bool replaced = false;
+    connect(&model, &MusicPageModel::dataChanged, &model, [&] {
+        if (replaced) return;
+        replaced = true;
+        QVERIFY(model.resetGeneration(interrupted));
+        replacement = model.beginRequest();
+        QVERIFY(model.finishGeneration(replacement, 0));
+    });
+    const auto returned = model.beginRequest();
+    QVERIFY(replaced);
+    QCOMPARE(model.state(), PageLoadStateV2::Empty);
+    QCOMPARE(model.rowCount(), 0);
+    QCOMPARE(returned, interrupted);
+    QVERIFY(!model.applyResult(interrupted, sampleResult("late")));
+    QVERIFY(model.finishGeneration(replacement, 0));
+}
 
 void MusicPageModelTest::scopedFailureWithoutErrorIsNotSuccessfulEmpty()
 {

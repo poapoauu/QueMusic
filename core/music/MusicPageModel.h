@@ -39,10 +39,17 @@ public:
     quint64 beginRequest();
     bool applyResult(quint64 generation, const PageResultV2 &result);
     bool applyFailure(quint64 generation, const SourceErrorV2 &error);
+    // Hub full-query failure: counts exactly one terminal and retains a terminal
+    // error row (or existing cached items) with a stable section ID for retry.
+    // Its row-owned error is cleared by successful scoped replacement. Legacy
+    // applyFailure remains a page-wide failure without a section identity.
+    bool applyQueryFailure(quint64 generation, const PageSectionV2 &section,
+                           const SourceErrorV2 &error);
 
     // expectedSections is the total number of standard-section queries for this
     // generation, NOT the number of source instances, emissions or displayed rows.
-    // Each query delivers exactly one non-cached complete result OR applyFailure;
+    // Each query delivers exactly one non-cached complete result OR one of
+    // applyFailure/applyQueryFailure;
     // an empty final result counts too. Cached/incomplete results do not count.
     // Call after terminal callbacks (or with zero queries). False means stale,
     // invalid count, or still pending. Only an exact count match sets a terminal
@@ -81,6 +88,7 @@ private:
         bool terminal = false;
         bool loading = false;
         QHash<QString, SourcePageStateV2> sources;
+        std::optional<SourceErrorV2> queryError;
     };
 
     bool accepts(quint64 generation) const;

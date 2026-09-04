@@ -159,6 +159,7 @@ bool MusicPageModel::applySectionResult(quint64 generation, const QString &id,
     auto &row = m_rows[i];
     row.loading = false;
     row.errors.clear();
+    row.queryError.reset();
     row.sources = result.sourceStates;
     bool allFailed = !result.sourceStates.isEmpty();
     for (auto it = result.sourceStates.cbegin(); it != result.sourceStates.cend(); ++it) {
@@ -281,6 +282,8 @@ SourceErrorV2 MusicPageModel::error() const
 {
     if (m_requestError)
         return *m_requestError;
+    for (const auto &row : m_rows)
+        if (row.queryError) return *row.queryError;
     const auto states = mergedSourceStates();
     for (const auto &state : states) {
         if (state.error)
@@ -293,6 +296,8 @@ QVariantMap MusicPageModel::errorMap() const
 {
     if (m_requestError)
         return errorToMap(*m_requestError);
+    for (const auto &row : m_rows)
+        if (row.queryError) return errorToMap(*row.queryError);
     const auto states = mergedSourceStates();
     for (const auto &state : states) {
         if (state.error)
@@ -306,7 +311,7 @@ quint64 MusicPageModel::beginRequest()
     const bool previousCached = cached();
     const auto previousSources = sourceStates();
     const auto previousError = errorMap();
-    ++m_generation;
+    const auto generation = ++m_generation;
     m_completedSections = 0;
     m_successfulSections = 0;
     m_finished = false;
@@ -318,13 +323,21 @@ quint64 MusicPageModel::beginRequest()
         row.cached = true;
         row.loading = false;
     }
-    if (!m_rows.isEmpty()) emit dataChanged(index(0), index(m_rows.size() - 1), {LoadingMoreRole});
     const bool stateChanges = m_state != PageLoadStateV2::Loading;
     m_state = PageLoadStateV2::Loading;
-    notifyProperties(previousCached, previousSources, previousError);
+    // Commit the entire new state before notifying retained rows. Observers may
+    // cancel or start a different context at any notification boundary.
+    if (!m_rows.isEmpty()) emit dataChanged(index(0), index(m_rows.size() - 1), {LoadingMoreRole});
+    if (!accepts(generation)) return generation;
+    if (previousCached != cached()) emit cachedChanged();
+    if (!accepts(generation)) return generation;
+    if (previousSources != sourceStates()) emit sourceStatesChanged();
+    if (!accepts(generation)) return generation;
+    if (previousError != errorMap()) emit errorChanged();
+    if (!accepts(generation)) return generation;
     if (stateChanges)
         emit stateChanged();
-    return m_generation;
+    return generation;
 }
 
 bool MusicPageModel::accepts(quint64 generation) const
@@ -401,6 +414,34 @@ bool MusicPageModel::applyFailure(quint64 generation, const SourceErrorV2 &error
     return true;
 }
 
+bool MusicPageModel::applyQueryFailure(quint64 generation, const PageSectionV2 &section,
+                                      const SourceErrorV2 &error)
+{
+    if (!accepts(generation) || section.sectionId.isEmpty()) return false;
+    const auto previousError = errorMap();
+    int position = 0;
+    while (position < m_rows.size() && m_rows[position].section.sectionId != section.sectionId) ++position;
+    const bool insert = position == m_rows.size();
+    Row row = insert ? Row{} : m_rows[position];
+    if (insert) row.section = section;
+    row.generation = generation;
+    row.terminal = true;
+    row.loading = false;
+    row.queryError = error;
+    row.errors.insert(QString(), errorToMap(error));
+    ++m_completedSections; // Not a successful query, and never also applyFailure.
+    if (insert) {
+        beginInsertRows({}, position, position);
+        m_rows.append(row);
+        endInsertRows();
+    } else {
+        m_rows[position] = row;
+        emit dataChanged(index(position), index(position));
+    }
+    if (generation == m_generation && previousError != errorMap()) emit errorChanged();
+    return true;
+}
+
 bool MusicPageModel::finishGeneration(quint64 generation, int expectedSections)
 {
     if (generation == 0 || generation != m_generation || expectedSections < 0
@@ -426,6 +467,7 @@ bool MusicPageModel::finishGeneration(quint64 generation, int expectedSections)
     m_emptyCached = false;
     m_previewSourceStates.clear();
     const bool failed = m_requestError.has_value()
+        || std::any_of(m_rows.cbegin(), m_rows.cend(), [](const Row &row) { return row.queryError.has_value(); })
         || std::any_of(m_terminalSourceStates.cbegin(), m_terminalSourceStates.cend(), [](const auto &source) {
             return source.state == SourcePageLoadStateV2::Failed;
         });
