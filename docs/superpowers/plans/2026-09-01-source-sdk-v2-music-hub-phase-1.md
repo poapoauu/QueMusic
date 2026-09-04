@@ -1555,6 +1555,8 @@ signals:
 
 For every request generate a fresh random salt, compute the existing Subsonic token, append `u`, `t`, `s`, `v=1.16.1`, `c=QueMusic` and `f=json`, and redact `t`, `s`, passwords and cookies from errors and logs. Keep base URLs with a path prefix working.
 
+**Credential input from Task8a:** Decode the shared SDK named-secret envelope in C++ and obtain the schema-declared `password` bytes before computing the token; do not hash the whole envelope as if it were a password. Explicitly support existing single-field legacy raw credentials without rewriting their stored record merely on open. Malformed/unknown envelope formats or missing required named credentials fail before sending a network request, with a host-safe configuration/authentication reason. No credential/envelope bytes in settings models, logs, query error strings or ordinary account parameters. Add fixtures proving legacy raw and named password produce equivalent authentication tokens for the same salt, plus malformed/missing-field early rejection. Use Task8a's SDK helpers rather than duplicate the wire parser.
+
 Parse Subsonic error code 40 as authentication, code 50 as authorization, code 70 as not found and unsupported endpoint responses as unsupported. Preserve HTTP status separately and expose only sanitized detail.
 
 - [ ] **Step 4: Implement v2 plugin metadata, settings schema and open handshake**
