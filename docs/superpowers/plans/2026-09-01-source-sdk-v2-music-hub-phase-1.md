@@ -1334,7 +1334,135 @@ Task8 分为 8a 存储、8b 控制器/会话生命周期、8c QML 三个顺序�
 - Self-review and commit only owned files/hunks. Never stage all CMake/user changes.
 - Report RED/GREEN commands, exact output summaries, API/wire contract, changed paths, commit IDs and concerns to controller. Do not implement controller, schema visibility/actions, Registry refresh API, QML, Navidrome changes or app registration in8a.
 
-#### Task 8b/8c: 通用控制器与界面（8a审查通过后细化）
+#### Task 8b: 通用设置控制器、临时会话与配置失效通知
+
+本节取代旧 Task8 的控制器伪代码；8a 已完成。仅实现本节，不修改 QML 或应用入口。Task8c 消费以下明确接口。所有新原生 ABI 仍属未发布 v2，不增加兼容层。
+
+**Files:**
+- Create: `core/settings/PluginSettingsController.h/.cpp` (public snapshots/selection/CRUD/plugin actions)
+- Create: `core/settings/PluginSettingsOperation.h/.cpp` (owned ephemeral open/action lifecycle)
+- Create: `core/settings/SettingsSchemaPresentation.h/.cpp` (validate/detach/serialize public schema and visibility)
+- Modify: `core/settings/SourceSettingsValidation.h/.cpp` (typed visibility/action schema validation)
+- Modify: `core/media/SourceAccountStore.h/.cpp` (shared nonpersisting draft configuration preparation)
+- Modify: `core/source/SourceRegistry.h/.cpp` (post-save/remove invalidation and package identity check)
+- Modify: `sdk/source/v2/SourceV2Types.h`, `sdk/source/v2/ISourceProvidersV2.h`, `sdk/source/v2/IMusicSourceSessionV2.h`
+- Create: `tests/fixtures/SettingsV2FixturePlugin.h/.cpp` (buildable local native plugin with controllable synchronous/asynchronous behavior)
+- Create: `tests/tst_PluginSettingsController.cpp`, `tests/tst_PluginSettingsOperation.cpp`
+- Modify: `tests/tst_SourceSettingsStorage.cpp`, `tests/tst_SourceRegistryV2.cpp`, `tests/tst_SourceV2Contract.cpp`
+- Modify: `CMakeLists.txt` only owned new sources/link/test/fixture hunks
+- No PluginManager implementation changes, no QML, no real Navidrome/Admin calls or system Keychain/user settings access in tests.
+
+**Consumes:** PluginManager acquire/pluginInstance/spec/notifications; SourceRegistry borrowed sessions; SourceAccountStore saveValidatedV2(SourceAccountSaveV2, error), storedAccount/accounts; SDK named-secret helpers; existing schema validator. Field IDs/source IDs/account IDs and named/raw wire retain Task8a semantics. Current SourceRegistry enabledInstances() includes disabled descriptors; sessionFor() creates/opens, so do not call it to display settings.
+
+**Typed SDK extensions:**
+```cpp
+enum class SettingsComparisonV2 { Equal, NotEqual };
+struct SettingsVisibilityConditionV2 {
+    QString fieldId;
+    SettingsComparisonV2 comparison = SettingsComparisonV2::Equal;
+    QVariant value;
+};
+// Append std::optional<SettingsVisibilityConditionV2> visibleWhen to SettingsFieldV2.
+struct SettingsActionDescriptorV2 {
+    QString id;
+    QString labelKey;
+    bool requiresConfirmation = false;
+};
+// Append QList<SettingsActionDescriptorV2> actions to SettingsSectionV2.
+struct SettingsActionCapabilitiesV2 {
+    QHash<QString, ActionAvailabilityV2> serverActions;
+    QHash<QString, ActionAvailabilityV2> accountActions;
+};
+class ISettingsActionProviderV2 {
+public:
+    virtual ~ISettingsActionProviderV2() = default;
+    virtual SettingsActionCapabilitiesV2 settingsCapabilities() const = 0;
+    virtual QUuid runSettingsAction(const QString &actionId) = 0;
+};
+// IID org.quemusic.source.SettingsActionProvider/2.0; Q_DECLARE_INTERFACE.
+// Add session signal: void settingsActionCompleted(QUuid requestId, QString actionId);
+```
+Keep optional plugin settingsSchema() interface independent. Settings actions are nonmedia: intersect declared action + serverActions + accountActions (no fabricated media layer). Missing declaration is Unsupported; missing runtime layer is Unavailable; preserve standard severity precedence; any constraints are unsupported for this action interface and fail closed. Map errors/reasons to host-owned keys, not arbitrary provider strings. No SourceActionV2 admin enum or arbitrary payload. Settings actions are only infrastructure tested with a fake diagnostic action; actual server administration remains excluded. Registry tracks the new terminal signal when present just like actionCompleted.
+
+**Visibility rules:** validate whole schema before use, unique action IDs across sections using same safe ID syntax. Conditions reference an existing nonsecret field other than itself, use a known comparison enum and a primitive compatible with the target field/choice category; reject condition dependency cycles. Evaluate comparisons using merged public draft/previous/default values, not field visibility recursively. Missing comparison target value means invisible for both operators. Required is enforced only when visible; explicit supplied values (even hidden) still undergo type/constraint validation, and hidden existing valid values/credentials remain preserved. Do not drop hidden fields from storage or treat visibility as authorization. Empty secret input remains preservation. Extend the shared validator, not a second controller validator. Required-secret resolution in store must use evaluated visibility too, including ambiguous legacy raw re-entry.
+
+**C++ draft configuration (zero writes):**
+```cpp
+std::optional<SourceConfigurationV2> SourceAccountStore::configurationForDraftV2(
+    const SourceAccountSaveV2 &request, QString *error = nullptr);
+bool SourceRegistry::configurationChanged(const QString &sourceInstanceId);
+```
+configurationForDraftV2 shares validation, previous-record identity checks, secret-format/schema evolution and merge with saveValidatedV2. Refactor internal helpers rather than copy the existing transaction body into controller. Resolve unchanged existing bytes only for a probe that needs them; return new-envelope bytes for updates. It must perform ZERO QSettings writes/sync/removes and ZERO secret writes/removes, including errors; saving still retains Task8a's metadata-only zero secure reads guarantee. No temporary save/delete trick. New no-secret drafts work without secret backend. No controller stores or returns SourceConfigurationV2/secretUpdates to QML.
+
+configurationChanged validates reversible source/account instance syntax, invalidates in-flight creation, closes any old session before releasing its lease, and emits instanceChanged even if no session/account exists (removed-account notification). It does not create a replacement or toggle enabled state. Guard reentrant registry destruction/creation during cancellation/close/notification; no new session using old configuration may escape. sessionFor must reject a stored nonempty pluginPackageId that differs from the selected descriptor/loader package; legacy empty-package resolution retains existing behavior. Controller calls configurationChanged only after successful save/remove, so failed saves preserve currently running sessions. Enable/disable uses existing registry authority.
+
+**Public controller API (QObject, injected dependencies):**
+```cpp
+PluginSettingsController(PluginManager *, SourceRegistry *, SourceAccountStore *,
+                         QObject *parent = nullptr);
+Q_INVOKABLE bool selectPlugin(const QString &packageId);
+Q_INVOKABLE bool selectInstance(const QString &instanceId); // empty = new draft
+Q_INVOKABLE bool setDraftValues(const QVariantMap &publicDraft); // replace public draft overrides
+Q_INVOKABLE bool saveInstance(const QString &displayName, const QVariantMap &secretDraft);
+Q_INVOKABLE bool removeInstance(const QString &instanceId);
+Q_INVOKABLE bool setInstanceEnabled(const QString &instanceId, bool enabled);
+Q_INVOKABLE QUuid testConnection(const QVariantMap &secretDraft);
+Q_INVOKABLE QUuid runSettingsAction(const QString &actionId,
+                                  const QVariantMap &secretDraft, bool confirmed = false);
+Q_INVOKABLE void cancelOperation();
+Q_INVOKABLE void discoverPlugins();
+Q_INVOKABLE bool loadPlugin(const QString &packageId);
+Q_INVOKABLE bool unloadPlugin(const QString &packageId);
+Q_INVOKABLE bool reloadPlugin(const QString &packageId);
+// Properties (NOTIFY, never CONSTANT except truly stable dependencies):
+// QVariantList plugins, instances, settingsSections, settingsActions;
+// QVariantMap selectedPlugin;
+// QString selectedPluginId, selectedInstanceId, lastErrorKey;
+// bool busy;
+// Signals:
+void connectionTestFinished(QUuid requestId, QVariantMap result);
+void settingsActionFinished(QUuid requestId, QVariantMap result);
+void draftReset(); // QML clears transient password controls on selection/save/reset
+```
+Only a selected loaded valid v2 settings-provider can create/save/test a draft. Unsupported/no-schema/nonmusic packages still appear safely in plugin list with common load/unload controls and host reason. selectPlugin resets selection/draft and cancels old work; selectInstance accepts only that package's source/account (legacy source matching allowed), rejects foreign account/unknown ID, empty starts a fresh stable UUID-backed draft account identity. Creation and connection test use that draft identity, but only explicit save persists it. Existing account IDs never editable implicitly. Successful save selects saved instance and resets draft/temporary password controls; failed save keeps public overrides. setDraftValues accepts only declared nonsecret fields, validates partial values without requiring omitted fields, cancels outstanding work and clears stale probe permissions on change. secretDraft accepts only declared secret fields, is used only during explicit save/test/action invocation, never stored in public snapshots, signaled or logged. Passed empty secrets preserve. Plugin/instance removal or unloaded state invalidates stale selection data safely.
+
+**Snapshot allowlists:**
+- plugins / selectedPlugin: id, sourceId, name, version, state (stable lowercase manager-state string), activeLeases, loadable/unloadable/reloadable, settingsAvailable, reasonKey. Construct field-by-field; no raw manager error/busyReason/path passthrough.
+- instances: sourceInstanceId, accountId, displayName, enabled, state, credentialConfigured, configuredSecretFieldIds; include selected unavailable state safely. No credentialReference, secretFormat, bytes or unrestricted parameters.
+- settingsSections: id,titleKey,fields; each field id,labelKey,type(integer enum),required,secret,visible,choices,constraints,credentialConfigured; value only for nonsecret fields. No defaultValue/raw schema/draft/secretUpdates.
+- settingsActions: id,labelKey,requiresConfirmation,state(integer AvailabilityV2),reasonKey. Before explicit probe, missing runtime information stays Unavailable; unsupported optional interface remains Unsupported once determined. Refresh grants only from a same-draft probe, clear on edits/selection/config/plugin changes; dispatch always reopens and rechecks live permission, never trusts cached UI grant.
+- results: connection {success:bool,state:int,reasonKey:QString}, action {success:bool,actionId:QString,state:int,reasonKey:QString}; all returned reason strings host-owned, no backend detail/URL/credentials. Actual returned actionId must match pending declared ID.
+
+Validate/detach schema under a short lease: copy QString contents (not merely shared QStringLiteral data), primitive QVariant contents, lists/maps/condition strings into host-owned storage. Do not retain secret defaults. Release viewing lease after detached snapshots; merely viewing settings must not permanently prevent unload. Invalid schema becomes settingsUnavailable with host reason, not permissive empty schema.
+
+Lease acquisition/release itself can emit manager notifications. Avoid recursive or perpetual schema reload loops: cache detached schema for the same loaded plugin object/load generation, refresh lease-count/status snapshots separately, and only notify changed public values. Coalesce reentrant rebuilds; invalidate schema when that loaded object disappears/reloads. Include a stable-event-loop/lease-zero regression after selecting a loaded plugin.
+
+**Ephemeral operation lifecycle:**
+PluginSettingsOperation owns its factory-created session and PluginLease independently of Registry. Retain callable lease/operation state across reentrant factory/open/provider callbacks, even controller destruction. Never parent the session to an owner that can vanish inside its method stack; defer teardown until invocation unwinds. Validate returned session identity/source/account and requested parent/ownership; refuse mismatches. Public calls allocate a host UUID and defer all terminal public signals until after it is returned; one terminal at most. open() and action calls must have observed matching requestStarted before accepting return UUID or inline terminal state/result. Capture started IDs in invocation-local lifetime independent of controller; never cancel a fabricated/unstarted returned ID. Handle nested/foreign request signals without claiming them as the operation's request.
+After open Ready: probe snapshots only sanitized capabilities then closes; action verifies current declared/server/account intersection and confirmation before invoking optional provider. Auth/failed states and requestFailed are sanitized terminals; unsupported/nonready action cannot execute. One active operation per controller, generation cancellation on explicit cancel, selection/public draft/config changes, dependency loss and superseding request. Default operation deadline 15000ms (inject a smaller timeout into internal helper in tests, not via QML); timeout is Unavailable with host reason. Late/wrong-ID/duplicate results ignored. Close/destroy session before lease release on every terminal/cancel/destruction path; don't delete borrowed Registry sessions. Unload/reload while registered-session/settings leases are active refuses with host-owned busy reason, never force-closes unrelated playback. Controller cancellation may leave a temporary lease until an in-progress provider invocation safely returns; do not force unload that window.
+
+**TDD sequence and acceptance (concrete scenarios):**
+- [ ] Add failing storage tests: configurationForDraftV2 merges two secrets with no writes; raw sole password preserved; new no-secret draft returns config with no backend; invalid/missing-required input has no IO; save still zero reads for metadata-only; visibility changes required state without losing hidden stored values; secret condition target/cycle/type/unknown action schema rejected.
+- [ ] Add failing registry tests: notify with no session and after account removal; live old session destroyed then next session uses new config; reentrant creation invalidated; stored foreign package cannot create; owner deletion inside close does not continue dereferencing registry.
+- [ ] Add failing controller/operation tests using a real local plugin fixture and QPointer/event counters, not module-static counters: generic two-instance CRUD, disabled account, unknown/foreign IDs, no-schema package, public-only nested snapshots/no secret defaults, caller-supplied secret in publicDraft rejected, existing credential never echoed, test draft never persisted, failed save does not close live session, notification reaches source selector observer, selected plugin unload releases detached schema lease.
+- [ ] Cover inline Ready/failure/open returning unstartedID, wrong-ID and duplicate action results, delayed cancellation/timeout, missing/false account grant, unsupported provider, unsupported constraints, confirmation required, live grant revoked after UI probe, controller deletion during create/open/run, unload attempts inside provider invocation and normal unload after final cleanup. Assert session closed/destroyed before activeLeases drops. Observe real behavior, no tautological expected-value fixtures.
+```cpp
+const auto oldMetadata = settings.allKeys();
+const auto id = controller.testConnection({{"password", "draft-only"}});
+QVERIFY(!id.isNull());
+QCOMPARE(done.count(), 0); // public completion must be deferred
+QTRY_COMPARE(done.count(), 1);
+QCOMPARE(settings.allKeys(), oldMetadata);
+QCOMPARE(secrets.writeCount, 0);
+QCOMPARE(registryObserver.liveSessions(), 0); // use actual fixture-owned counters, not an invented Registry API
+QCOMPARE(manager.plugin(packageId).activeLeases, 0);
+```
+- [ ] Build/run new focused targets `quemusic_plugin_settings_controller_test`, `quemusic_plugin_settings_operation_test` plus existing storage/registry/SDK contract tests; record behavioral RED before implementation.
+- [ ] Implement the three focused host units, shared storage preparation and typed SDK additions; run focused GREEN throughout.
+- [ ] Full build and CTest once after final GREEN (Qt6.11.1 configured build/bridge; cmake/ctest at /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin; timeout40, local fixture escalation only). Existing40legacyQMLwarnings are baseline, record precisely; don't suppress them.
+- [ ] Self-review, scoped commit (never all CMake/user files), report final API, changed paths, tests/commands/results and concerns. Controller then independent review. No GUI/main.cpp registration or real NAS call in this task.
+
+#### Task 8c: 通用界面（8b接口完成后按上文API替换以下历史草图）
 
 **Files:**
 - Create: `core/settings/PluginSettingsController.h`
