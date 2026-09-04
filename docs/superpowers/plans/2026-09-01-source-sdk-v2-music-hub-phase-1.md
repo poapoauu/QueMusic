@@ -1132,11 +1132,14 @@ git commit -m "feat: route media actions by effective capability"
 - Create: `core/music/MusicHub.h`
 - Create: `core/music/MusicHub.cpp`
 - Create: `tests/tst_MusicHub.cpp`
+- Modify: `core/music/MusicPageModel.h`
+- Modify: `core/music/MusicPageModel.cpp`
+- Modify: `tests/tst_MusicPageModel.cpp`
 - Modify: `CMakeLists.txt`
 
 **Interfaces:**
 - Consumes: `SourceScopeStore`, `SourceRegistry`, `PageRepository`, four `MusicPageModel` instances and `MediaActionRouter`.
-- Produces: QML properties `recommendation`, `category`, `favorites`, `search`, `sourceOptions`, `selectedSourceInstanceId` and explicit refresh/search/load-more methods.
+- Produces: QML properties `recommendation`, `category`, `favorites`, `searchResults`, `sourceOptions`, `selectedSourceInstanceId` and explicit refresh/search/load-more methods.
 
 Use this constructor throughout later tasks:
 
@@ -1170,6 +1173,7 @@ void MusicHubTest::searchUsesSameScope()
 
 void MusicHubTest::disabledSelectedSourceIsPreservedAndExplained()
 {
+    hub.activatePage(MusicPageKindV2::Recommendation);
     hub.setSelectedSourceInstanceId("navidrome/home");
     registry.disableInstance("navidrome/home");
     QCOMPARE(hub.selectedSourceInstanceId(), "navidrome/home");
@@ -1199,23 +1203,35 @@ class MusicHub final : public QObject {
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
     Q_PROPERTY(MediaActionRouter *actions READ actions CONSTANT)
+    Q_PROPERTY(QVariantMap categoryContext READ categoryContext NOTIFY categoryContextChanged)
+    Q_PROPERTY(bool canNavigateBack READ canNavigateBack NOTIFY categoryContextChanged)
 public:
+    QVariantMap categoryContext() const;
+    bool canNavigateBack() const;
     Q_INVOKABLE void activatePage(int pageKind);
     Q_INVOKABLE void refresh(int pageKind);
     Q_INVOKABLE void loadMore(int pageKind, const QString &sectionId);
     Q_INVOKABLE void search(const QString &text);
     Q_INVOKABLE void cancel(int pageKind);
+    Q_INVOKABLE void retrySection(int pageKind, const QString &sectionId);
+    Q_INVOKABLE bool browse(const QVariantMap &item);
+    Q_INVOKABLE bool navigateBack();
     Q_INVOKABLE QUuid loadArtwork(const QVariantMap &media);
     Q_INVOKABLE QUuid loadLyrics(const QVariantMap &media);
+    Q_INVOKABLE void cancelAsset(const QUuid &requestId);
 signals:
-    void artworkReady(QVariantMap media, QUrl localUrl);
-    void lyricsReady(QVariantMap media, QString lyrics);
+    void artworkReady(QUuid requestId, QVariantMap media, QUrl localUrl);
+    void lyricsReady(QUuid requestId, QVariantMap media, QString lyrics);
+    void assetFailed(QUuid requestId, QVariantMap error);
+    void categoryContextChanged();
 };
 ```
 
 `sourceOptions` starts with `{sourceInstanceId: "", displayName: "全部音源", available: true}` followed by enabled registry instances. Only activated pages auto-refresh on scope changes; inactive pages refresh when first activated.
 
-`loadArtwork()` and `loadLyrics()` delegate to `MediaAssetRepository`; the hub converts typed results to QML-safe values and never exposes authenticated remote URLs.
+If the selected instance is disabled or removed, retain a non-available option for that exact ID with a host-owned reason key. Do not silently select aggregate or leave the selector blank. A shared scope change invalidates old-context rows in all four stable model objects immediately; only activated pages issue new requests. Same-query refresh may retain cached rows. Changed search text or drill-down filters must not display rows from the old query as if they belong to the new one.
+
+`loadArtwork()` and `loadLyrics()` accept the five-field MediaRef map (the item's `ref`, unlike full-item action/browse inputs) and delegate to `MediaAssetRepository`; the hub converts typed results to QML-safe values and never exposes authenticated remote URLs. Malformed references get deferred, correlated host failures; use the returned request ID to cancel or match the terminal signal.
 
 Use an explicit standard-section map so page composition is deterministic:
 
@@ -1248,6 +1264,24 @@ QList<PageSectionKindV2> MusicHub::sectionsForPage(MusicPageKindV2 page)
 
 `loadMore(pageKind, sectionId)` uses that rendered section's kind and opaque token, preserving the originating page, selected scope, search text, filters and limit (Ruling 12). Never reuse a sibling's token or the initial bundle's section kind for a different clicked section. Each continuation updates only its target section and leaves sibling rows and continuation positions unchanged.
 
+**Model lifecycle integration (Ruling 14):** Extend `MusicPageModel` with narrowly scoped, generation-checked reset, cancellation and per-section update APIs. Keep all existing Task4 full-refresh contracts. A section continuation appends to its existing items, updates only its cursor/loading/error state, and cannot prune siblings. A one-section retry replaces only that section; a failed continuation retains prior items and its retryable cursor. Permit independent section requests but suppress duplicate requests for the same section. On page cancellation invalidate in-flight callbacks, clear all loading indicators, retain accepted rows, and settle to `Ready` when rows contain items or `Idle` otherwise; do not synthesize a successful empty result. Cancelled asset IDs likewise suppress queued terminal notifications, without cancelling another delegate's request. Include request IDs in asset signals so identical-media delegates can correlate independently.
+
+**Browse context (Ruling 15):** Add observable `categoryContext` (`item` full map and `sourceInstanceId`, empty at root) and `canNavigateBack` properties. `browse(item)` validates all MediaRef identity fields against the owning registry instance before changing state. Album -> Category/Tracks with `albumId`; artist -> Category/Albums with `artistId`; playlist -> Category/Tracks with `playlistId`; genre -> Category/Tracks with `genre` using its typed entity ID. A detail request uses the entity's own instance even in aggregate mode, without changing the shared selectedSourceInstanceId. Track/unsupported directory or malformed/foreign references return false without changing context. Keep a small in-memory category query-context stack: `navigateBack()` restores the previous query and refreshes it, returning false at root. Global scope changes clear this stack and return Category to its root before fetching; never transfer a source-owned filter to another source. No new top-level detail page or plugin-specific host code.
+
+Add focused tests with controlled fake providers for: changed scope/search dropping old rows without changing model pointers; load-more appending only its section after full refresh has finished; two independent sibling tokens; duplicate-terminal deduplication; cancellation clearing page/section loading and ignoring late callbacks; retry replacing only its target; disabled-selected option retention; two same-media asset IDs with only one cancelled; and source-bound album/artist/playlist/genre browse plus back navigation without global scope mutation. Example assertions use real returned provider/repository IDs, not guessed generation counts:
+
+```cpp
+auto *const stableCategory = hub.category();
+hub.setSelectedSourceInstanceId("");
+QVERIFY(hub.browse(albumItemFromHome));
+QCOMPARE(hub.selectedSourceInstanceId(), QString());
+QCOMPARE(hub.categoryContext().value("sourceInstanceId").toString(), "navidrome/home");
+QVERIFY(hub.canNavigateBack());
+QVERIFY(hub.navigateBack());
+QCOMPARE(hub.category(), stableCategory);
+QVERIFY(hub.categoryContext().isEmpty());
+```
+
 - [ ] **Step 4: Run focused tests**
 
 ```bash
@@ -1260,7 +1294,8 @@ Expected: shared scope, activation, cancellation, partial errors and source opti
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/music/MusicHub.* tests/tst_MusicHub.cpp CMakeLists.txt
+git add core/music/MusicHub.* core/music/MusicPageModel.* tests/tst_MusicHub.cpp tests/tst_MusicPageModel.cpp
+# Stage only Task7 CMake hunks; preserve pre-existing user edits.
 git commit -m "feat: expose unified music hub to qml"
 ```
 
@@ -1572,6 +1607,7 @@ void NavidromeSourceTest::drillDownUsesTypedFilterEndpoint_data()
     QTest::newRow("album") << "albumId" << "getAlbum";
     QTest::newRow("song") << "songId" << "getSong";
     QTest::newRow("genre") << "genre" << "getSongsByGenre";
+    QTest::newRow("playlist") << "playlistId" << "getPlaylist";
 }
 
 void NavidromeSourceTest::favoritesMapsSongsAlbumsAndArtists()
@@ -1636,7 +1672,7 @@ Mappers contain no network or session state. Every item receives stable `MediaRe
 
 - [ ] **Step 5: Implement endpoint dispatch and pagination**
 
-Map standard sections to `getAlbumList2`, `getGenres`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `getSongsByGenre`, `getStarred2` and `search3`. `PageQueryV2.filters` uses the mutually exclusive keys `artistId`, `albumId`, `songId` or `genre` for drill-down. A top-level `Tracks` request without one of these filters returns typed `Unsupported` rather than inventing a server-wide song order. Translate offset-based endpoints to opaque provider cursors encoded as decimal offsets; reject negative or malformed cursors. Use `size=query.limit` and cap the accepted limit to `1..500`.
+Map standard sections to `getAlbumList2`, `getGenres`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `getSongsByGenre`, `getPlaylist`, `getStarred2` and `search3`. `PageQueryV2.filters` uses the mutually exclusive keys `artistId`, `albumId`, `songId`, `playlistId` or `genre` for drill-down. `artistId` returns Albums; album/playlist/genre drill-down returns Tracks, preserving native playlist order and duplicates. A top-level `Tracks` request without one of these filters returns typed `Unsupported` rather than inventing a server-wide song order. Translate offset-based endpoints to opaque provider cursors encoded as decimal offsets; reject negative or malformed cursors. Use `size=query.limit` and cap the accepted limit to `1..500`.
 
 An initial favorites query may return its three standard sections as required above. A continuation query carries the clicked section kind and that section's provider cursor; return only that requested section on continuation (Ruling 12). Keep cursors/offsets section-specific even when a shared underlying endpoint supplies several lists. A plugin must adapt whole-response transport into this typed per-section continuation contract.
 
@@ -1753,7 +1789,7 @@ void NavidromeSourceSession::completeMutation(const PendingRequest &pending,
 }
 ```
 
-Do not mutate page models from the plugin. `MediaActionRouter` applies the confirmed result, except favorite/rating optimistic state which it rolls back on `requestFailed`.
+Do not mutate page models from the plugin. `MediaActionRouter` validates and emits the confirmed result using Task6's documented allowlisted payload contract; it owns no page model. Task13's MusicHub/UI integration applies confirmed results and, if favorite/rating use optimistic state, owns the previous value and request-correlated rollback. Do not introduce a circular router-to-hub dependency in this plugin task.
 
 - [ ] **Step 6: Run focused tests**
 
@@ -1762,7 +1798,7 @@ Do not mutate page models from the plugin. `MediaActionRouter` applies the confi
 /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/bridge -R '(navidrome_source|media_action_router_v2)' --output-on-failure
 ```
 
-Expected: all mutations, validation, same-instance constraints, server failures and optimistic rollback pass.
+Expected: all mutations, validation, same-instance constraints, server failures and confirmed-result routing pass. UI reconciliation and any optimistic rollback are tested in Task13, not by mutating host models from this plugin task.
 
 - [ ] **Step 7: Commit**
 
