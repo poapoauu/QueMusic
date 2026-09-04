@@ -1,4 +1,5 @@
 #include "SourceAccountStore.h"
+#include "SourceSettingsValidation.h"
 
 #include <QMetaType>
 #include <QSettings>
@@ -82,6 +83,152 @@ SourceAccountStore::SourceAccountStore(QSettings *settings, ISecretStore *secret
     : m_settings(settings)
     , m_secretStore(secretStore)
 {
+}
+
+bool SourceAccountStore::saveValidatedV2(const SourceAccountSaveV2 &request, QString *error)
+{
+    if (error) error->clear();
+    auto fail = [error](const char *key) {
+        if (error) *error = QString::fromLatin1(key);
+        return false;
+    };
+    if (request.pluginPackageId.isEmpty() || request.sourceId.isEmpty()
+        || request.accountId.isEmpty() || request.sourceId.contains('/')
+        || request.configurationVersion <= 0) return fail("source.settings.invalidIdentity");
+
+    // First pass validates every schema/default/constraint and supplied value
+    // before even reading metadata, so invalid drafts never reach storage IO.
+    const QString draftError = validateSourceSettingsDraftV2(request.schema, request.draft);
+    if (!draftError.isEmpty()) {
+        if (error) *error = draftError;
+        return false;
+    }
+    if (!m_settings) return fail("source.settings.storageUnavailable");
+    QStringList secretIds, requiredIds;
+    for (const auto &section : request.schema) {
+        for (const auto &field : section.fields) {
+            if (field.secret || field.type == SettingsFieldTypeV2::Secret) {
+                secretIds.append(field.id);
+                if (field.required) requiredIds.append(field.id);
+            }
+        }
+    }
+    secretIds.sort();
+    auto supplied = [&request](const QString &id) { return !request.draft.value(id).toString().isEmpty(); };
+    auto allSupplied = [&supplied](const QStringList &ids) {
+        for (const auto &id : ids) if (!supplied(id)) return false;
+        return !ids.isEmpty();
+    };
+    const bool allReplaced = allSupplied(secretIds);
+    const QString matchingGroup = matchingGroupFor(request.sourceId, request.accountId);
+    const QString group = matchingGroup.isEmpty() ? groupFor(request.sourceId, request.accountId) : matchingGroup;
+    const QVariantMap previousValues = recordValues(group);
+    const auto previous = matchingGroup.isEmpty() ? std::optional<StoredSourceAccount>() : storedAccountForGroup(group);
+    if (!previous && !previousValues.isEmpty()) return fail("source.settings.identityConflict");
+    // A legacy raw group can be an ancestor of a different account's record.
+    // Never let the existing remove-and-restore transaction erase that child.
+    for (auto it = previousValues.cbegin(); it != previousValues.cend(); ++it)
+        if (it.key().endsWith("/version")) return fail("source.settings.identityConflict");
+    if (previous && previous->recordVersion == 2 && previous->pluginPackageId != request.pluginPackageId)
+        return fail("source.settings.identityConflict");
+    const QString oldReference = previous ? previous->secretReference : QString();
+    QString format = previous ? previous->secretFormat : QStringLiteral("none");
+    QStringList configured = previous ? previous->configuredSecretFieldIds : QStringList();
+    bool discardPrevious = allReplaced;
+    if (!oldReference.isEmpty()) {
+        if (secretIds.isEmpty()) return fail("source.settings.credentialsReentryRequired");
+        if (format == "legacyRaw") {
+            if (secretIds.size() == 1) {
+                if (!configured.isEmpty() && configured != secretIds && !allReplaced)
+                    return fail("source.settings.credentialsReentryRequired");
+                configured = secretIds;
+            } else {
+                // The raw bytes have no field names. Explicit re-entry supplies
+                // all required credentials; absent optional credentials stay absent.
+                if (!allReplaced && !allSupplied(requiredIds))
+                    return fail("source.settings.credentialsReentryRequired");
+                discardPrevious = true;
+                configured.clear();
+            }
+        } else if (format != "namedEnvelopeV2") {
+            return fail("source.settings.credentialsReentryRequired");
+        }
+        for (const auto &id : configured)
+            if (!secretIds.contains(id) && !discardPrevious)
+                return fail("source.settings.credentialsReentryRequired");
+    }
+    if (discardPrevious) configured.clear();
+    const auto validated = validateSourceSettingsV2(request.schema, request.draft,
+        previous ? previous->parameters : QVariantMap(), configured, previous.has_value());
+    if (!validated.errorKey.isEmpty()) {
+        if (error) *error = validated.errorKey;
+        return false;
+    }
+
+    QString newReference = oldReference;
+    const bool rotating = !validated.secretUpdates.isEmpty();
+    if (rotating) {
+        if (!m_secretStore) return fail("source.settings.secureStorageUnavailable");
+        SourceNamedSecretsV2 secrets;
+        if (!oldReference.isEmpty() && !discardPrevious) {
+            const auto bytes = m_secretStore->read(oldReference, nullptr);
+            if (!bytes) return fail("source.settings.secureReadFailed");
+            if (format == "legacyRaw") {
+                // An explicit raw marker does not make a damaged envelope raw.
+                if (secretIds.size() != 1 || sourceSecretInputKindV2(*bytes) != SourceSecretInputKindV2::LegacyRaw)
+                    return fail("source.settings.credentialsReentryRequired");
+                secrets.insert(secretIds.first(), *bytes);
+            } else {
+                const auto decoded = decodeSourceSecretsV2(*bytes);
+                if (!decoded) return fail("source.settings.credentialsReentryRequired");
+                secrets = *decoded;
+                QStringList actualIds;
+                for (auto it = secrets.cbegin(); it != secrets.cend(); ++it) {
+                    if (it->isEmpty()) return fail("source.settings.credentialsReentryRequired");
+                    actualIds.append(it.key());
+                }
+                if (actualIds != configured) return fail("source.settings.credentialsReentryRequired");
+            }
+        }
+        for (auto it = validated.secretUpdates.cbegin(); it != validated.secretUpdates.cend(); ++it)
+            secrets.insert(it.key(), *it);
+        const auto envelope = encodeSourceSecretsV2(secrets);
+        if (!envelope) return fail("source.settings.invalidSecretEnvelope");
+        newReference = freshSecretReference();
+        if (!m_secretStore->write(newReference, *envelope, nullptr)) {
+            if (!m_secretStore->remove(newReference, nullptr)) return fail("source.settings.secretCleanupFailed");
+            return fail("source.settings.secureWriteFailed");
+        }
+        configured = secrets.keys();
+        format = QStringLiteral("namedEnvelopeV2");
+    }
+    if (newReference.isEmpty()) format = QStringLiteral("none");
+    QVariantMap values{
+        {"version", 2}, {"pluginPackageId", request.pluginPackageId},
+        {"configurationVersion", request.configurationVersion},
+        {"sourceId", request.sourceId}, {"accountId", request.accountId},
+        {"sourceInstanceId", request.sourceId + '/' + request.accountId},
+        {"displayName", request.displayName}, {"enabled", request.enabled},
+        {"secretReference", newReference}, {"secretFormat", format},
+        {"configuredSecretFieldIds", configured},
+        // A QVariantMap retains primitive types across INI reopen, unlike plain
+        // integer/bool INI values that QSettings may read back as strings.
+        {"parameters", validated.parameters}
+    };
+    if (!restoreRecord(group, values)) {
+        const bool restored = restoreRecord(group, previousValues);
+        const bool cleaned = !rotating || m_secretStore->remove(newReference, nullptr);
+        if (!cleaned) return fail("source.settings.secretCleanupFailed");
+        return fail(restored ? "source.settings.metadataWriteFailed" : "source.settings.metadataRestoreFailed");
+    }
+    if (rotating && !oldReference.isEmpty() && !m_secretStore->remove(oldReference, nullptr)) {
+        // Keep the new secret if metadata rollback fails: the persisted record
+        // may still reference it. This matches the legacy transaction policy.
+        if (!restoreRecord(group, previousValues)) return fail("source.settings.metadataRestoreFailed");
+        if (!m_secretStore->remove(newReference, nullptr)) return fail("source.settings.secretCleanupFailed");
+        return fail("source.settings.previousSecretCleanupFailed");
+    }
+    return true;
 }
 
 bool SourceAccountStore::upsert(const SourceAccount &account, bool enabled, QString *error)
@@ -178,7 +325,7 @@ bool SourceAccountStore::setEnabled(const QString &sourceId, const QString &acco
 
 bool SourceAccountStore::remove(const QString &sourceId, const QString &accountId, QString *error)
 {
-    if (!m_settings || !m_secretStore) {
+    if (!m_settings) {
         if (error) {
             *error = QStringLiteral("Source account storage is not configured");
         }
@@ -192,19 +339,29 @@ bool SourceAccountStore::remove(const QString &sourceId, const QString &accountI
     const QString group = matchingGroup.isEmpty() ? groupFor(sourceId, accountId) : matchingGroup;
     const QVariantMap previousValues = recordValues(group);
     const QString reference = previousValues.value(QStringLiteral("secretReference")).toString();
+    const bool v2 = previousValues.value(QStringLiteral("version")).toInt() == 2;
+    if (!reference.isEmpty() && !m_secretStore) {
+        if (error) *error = v2 ? QStringLiteral("source.settings.secureStorageUnavailable")
+                              : QStringLiteral("Source account storage is not configured");
+        return false;
+    }
 
     m_settings->remove(group);
     m_settings->sync();
     if (m_settings->status() != QSettings::NoError) {
         restoreRecord(group, previousValues);
         if (error) {
-            *error = QStringLiteral("Unable to remove source account metadata");
+            *error = v2 ? QStringLiteral("source.settings.metadataWriteFailed")
+                        : QStringLiteral("Unable to remove source account metadata");
         }
         return false;
     }
-    if (!reference.isEmpty() && !m_secretStore->remove(reference, error)) {
+    if (!reference.isEmpty() && !m_secretStore->remove(reference, v2 ? nullptr : error)) {
         const bool metadataRestored = restoreRecord(group, previousValues);
-        if (error && !metadataRestored) {
+        if (error && v2) {
+            *error = metadataRestored ? QStringLiteral("source.settings.secretCleanupFailed")
+                                     : QStringLiteral("source.settings.metadataRestoreFailed");
+        } else if (error && !metadataRestored) {
             *error += QStringLiteral("; unable to restore source account metadata");
         }
         return false;
@@ -243,7 +400,8 @@ QList<StoredSourceAccount> SourceAccountStore::accounts() const
 std::optional<StoredSourceAccount> SourceAccountStore::storedAccountForGroup(const QString &group) const
 {
     const QVariantMap values = recordValues(group);
-    if (values.value(QStringLiteral("version")).toInt() != kRecordVersion) {
+    const int version = values.value(QStringLiteral("version")).toInt();
+    if (version != kRecordVersion && version != 2) {
         return std::nullopt;
     }
 
@@ -253,13 +411,28 @@ std::optional<StoredSourceAccount> SourceAccountStore::storedAccountForGroup(con
     account.displayName = values.value(QStringLiteral("displayName")).toString();
     account.enabled = values.value(QStringLiteral("enabled"), true).toBool();
     account.secretReference = values.value(QStringLiteral("secretReference")).toString();
+    account.recordVersion = version;
+    account.sourceInstanceId = account.sourceId + '/' + account.accountId;
+    account.secretFormat = QStringLiteral("legacyRaw");
+    if (version == 2) {
+        account.pluginPackageId = values.value(QStringLiteral("pluginPackageId")).toString();
+        account.configurationVersion = values.value(QStringLiteral("configurationVersion")).toInt();
+        account.configuredSecretFieldIds = values.value(QStringLiteral("configuredSecretFieldIds")).toStringList();
+        account.secretFormat = values.value(QStringLiteral("secretFormat")).toString();
+        account.parameters = values.value(QStringLiteral("parameters")).toMap();
+        if (account.pluginPackageId.isEmpty() || account.configurationVersion <= 0
+            || account.sourceId.contains('/')
+            || values.value(QStringLiteral("sourceInstanceId")).toString() != account.sourceInstanceId)
+            return std::nullopt;
+    }
     for (auto parameter = values.cbegin(); parameter != values.cend(); ++parameter) {
         const QString prefix = QStringLiteral("parameters/");
-        if (parameter.key().startsWith(prefix)) {
+        if (version == 1 && parameter.key().startsWith(prefix)) {
             account.parameters.insert(parameter.key().mid(prefix.size()), parameter.value());
         }
     }
-    if (account.sourceId.isEmpty() || account.accountId.isEmpty() || account.secretReference.isEmpty()) {
+    if (account.sourceId.isEmpty() || account.accountId.isEmpty()
+        || (version == 1 && account.secretReference.isEmpty())) {
         return std::nullopt;
     }
     return account;
@@ -296,12 +469,6 @@ std::optional<SourceAccount> SourceAccountStore::sourceAccount(const QString &so
                                                                  const QString &accountId,
                                                                  QString *error) const
 {
-    if (!m_secretStore) {
-        if (error) {
-            *error = QStringLiteral("Source account storage is not configured");
-        }
-        return std::nullopt;
-    }
     const std::optional<StoredSourceAccount> stored = storedAccount(sourceId, accountId);
     if (!stored.has_value()) {
         if (error) {
@@ -310,8 +477,19 @@ std::optional<SourceAccount> SourceAccountStore::sourceAccount(const QString &so
         return std::nullopt;
     }
 
-    const std::optional<QByteArray> secret = m_secretStore->read(stored->secretReference, error);
+    if (stored->recordVersion == 2 && stored->secretReference.isEmpty()) {
+        return SourceAccount{stored->sourceId, stored->accountId, stored->displayName,
+                             stored->parameters, {}};
+    }
+    const bool v2 = stored->recordVersion == 2;
+    if (!m_secretStore) {
+        if (error) *error = v2 ? QStringLiteral("source.settings.secureStorageUnavailable")
+                              : QStringLiteral("Source account storage is not configured");
+        return std::nullopt;
+    }
+    const std::optional<QByteArray> secret = m_secretStore->read(stored->secretReference, v2 ? nullptr : error);
     if (!secret.has_value()) {
+        if (error && v2) *error = QStringLiteral("source.settings.secureReadFailed");
         return std::nullopt;
     }
     return SourceAccount{stored->sourceId, stored->accountId, stored->displayName,

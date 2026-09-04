@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SourceTypes.h"
+#include "v2/SourceV2Types.h"
 
 #include <QList>
 #include <QString>
@@ -37,6 +38,23 @@ struct StoredSourceAccount {
     bool enabled = true;
     QVariantMap parameters;
     QString secretReference;
+    int recordVersion = 1;
+    QString pluginPackageId;
+    QString sourceInstanceId;
+    int configurationVersion = 0;
+    QStringList configuredSecretFieldIds;
+    QString secretFormat;
+};
+
+struct SourceAccountSaveV2 {
+    QString pluginPackageId;
+    QString sourceId;
+    QString accountId;
+    QString displayName;
+    bool enabled = true;
+    int configurationVersion = 1;
+    SettingsSchemaV2 schema;
+    QVariantMap draft;
 };
 
 class SourceAccountStore {
@@ -44,6 +62,8 @@ public:
     SourceAccountStore(QSettings *settings, ISecretStore *secretStore);
 
     bool upsert(const SourceAccount &account, bool enabled = true, QString *error = nullptr);
+    // Errors are host-owned keys; never contain draft values or backend diagnostics.
+    bool saveValidatedV2(const SourceAccountSaveV2 &request, QString *error = nullptr);
     bool setEnabled(const QString &sourceId, const QString &accountId, bool enabled,
                     QString *error = nullptr);
     bool remove(const QString &sourceId, const QString &accountId, QString *error = nullptr);

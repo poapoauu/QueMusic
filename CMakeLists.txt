@@ -52,6 +52,8 @@ add_library(quemusic_source_sdk STATIC
     sdk/source/v2/ISourceProvidersV2.h
     sdk/source/v2/SourceV2Types.cpp
     sdk/source/v2/SourceV2Types.h
+    sdk/source/v2/SourceSecretsV2.cpp
+    sdk/source/v2/SourceSecretsV2.h
 )
 target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -133,6 +135,8 @@ target_include_directories(quemusic_media_core PUBLIC
 add_library(quemusic_source_account_store STATIC
     core/media/SourceAccountStore.cpp
     core/media/SourceAccountStore.h
+    core/settings/SourceSettingsValidation.cpp
+    core/settings/SourceSettingsValidation.h
     core/media/MacKeychainSecretStore.h
 )
 target_compile_features(quemusic_source_account_store PUBLIC cxx_std_17)
@@ -142,6 +146,7 @@ target_link_libraries(quemusic_source_account_store PUBLIC
 )
 target_include_directories(quemusic_source_account_store PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/media
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/settings
 )
 if(APPLE)
     target_sources(quemusic_source_account_store PRIVATE
@@ -311,6 +316,15 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_v2_contract_test COMMAND quemusic_source_v2_contract_test)
+
+    qt_add_executable(quemusic_source_settings_storage_test
+        tests/tst_SourceSettingsStorage.cpp
+    )
+    target_link_libraries(quemusic_source_settings_storage_test PRIVATE
+        quemusic_source_account_store
+        Qt6::Test
+    )
+    add_test(NAME quemusic_source_settings_storage_test COMMAND quemusic_source_settings_storage_test)
 
     qt_add_executable(quemusic_source_account_store_test
         tests/tst_SourceAccountStore.cpp
