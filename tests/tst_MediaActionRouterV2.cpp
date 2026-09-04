@@ -391,6 +391,41 @@ private slots:
         h.router.setFavorite(item(),true);
         QTRY_COMPARE(failed.size(),1); QCOMPARE(s->property("cancelCount").toInt(),0);
     }
+    void unstartedReturnCannotBeCancelledAfterReentrantInvalidation_data()
+    {
+        QTest::addColumn<bool>("destroyRouter");
+        QTest::newRow("capabilities-changed") << false;
+        QTest::newRow("router-destroyed") << true;
+    }
+    void unstartedReturnCannotBeCancelledAfterReentrantInvalidation()
+    {
+        QFETCH(bool,destroyRouter);
+        ActionHarness h; QVERIFY(h.init()); auto s=h.session(); s->setProperty("skipStarted",true);
+        QPointer<MediaActionRouter> router=new MediaActionRouter(&h.registry,&h.router);
+        QSignalSpy failed(router,&MediaActionRouter::actionFailed),done(router,&MediaActionRouter::actionSucceeded);
+        bool observed=false;
+        connect(s,&IMusicSourceSessionV2::actionCompleted,&h.router,[&] {
+            observed=true;
+            if (destroyRouter) delete router.data();
+            else emit s->capabilitiesChanged({});
+        });
+        const auto id=router->setFavorite(item(),true);
+        QVERIFY(observed); QVERIFY(!id.isNull()); QCOMPARE(failed.size(),0);
+        if (destroyRouter) QVERIFY(!router);
+        else { QTRY_COMPARE(failed.size(),1); QCOMPARE(failed[0][0].toUuid(),id); }
+        QCOMPARE(done.size(),0); QCOMPARE(s->property("cancelCount").toInt(),0);
+        QVERIFY(s->property("cancelled").toUuid().isNull());
+    }
+    void ownedPendingReturnIsCancelledAfterInlineCapabilityInvalidation()
+    {
+        ActionHarness h; QVERIFY(h.init()); auto s=h.session(); s->setProperty("async",true);
+        QSignalSpy failed(&h.router,&MediaActionRouter::actionFailed);
+        connect(s,&IMusicSourceSessionV2::requestStarted,&h.router,[&] { emit s->capabilitiesChanged({}); });
+        const auto id=h.router.setFavorite(item(),true); QCOMPARE(failed.size(),0);
+        QTRY_COMPARE(failed.size(),1); QCOMPARE(failed[0][0].toUuid(),id);
+        QCOMPARE(s->property("cancelled").toUuid(),s->property("lastRequest").toUuid());
+        QCOMPARE(s->property("cancelCount").toInt(),1);
+    }
     void externalSessionDestructionFinishesPending()
     {
         ActionHarness h; QVERIFY(h.init(true)); auto s=h.session(); s->setProperty("async",true);

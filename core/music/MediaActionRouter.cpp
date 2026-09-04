@@ -397,9 +397,12 @@ void MediaActionRouter::dispatch(const std::shared_ptr<Request> &r)
         }
         if (!r->change.trackIndexesToRemove.isEmpty() && !allowed(SourceActionV2::RemovePlaylistTracks, r->item)) return;
     }
-    r->connections.append(connect(r->session, &IMusicSourceSessionV2::requestStarted, this, [r](QUuid pid) {
+    // A preceding started observer may destroy the router. Keep ownership
+    // capture alive until this provider invocation unwinds, independently of it.
+    QObject invocationObserver;
+    connect(r->session, &IMusicSourceSessionV2::requestStarted, &invocationObserver, [r](QUuid pid) {
         if (r->invoking && !pid.isNull()) r->started.insert(pid);
-    }));
+    });
     r->connections.append(connect(r->session, &IMusicSourceSessionV2::actionCompleted, this,
         [this, r](QUuid pid, const ActionResultV2 &result) {
             if (pid.isNull() || r->settled) return;
@@ -441,12 +444,11 @@ void MediaActionRouter::dispatch(const std::shared_ptr<Request> &r)
     default: break;
     }
     r->invoking = false;
-    r->providerId = returned;
+    // Validate ownership before every lifecycle/abandonment cleanup path.
+    r->providerId = r->started.contains(returned) ? returned : QUuid{};
     if (!guard || !r->current()) {
         r->reject(capabilityError(AvailabilityV2::Unavailable));
-    } else if (returned.isNull() || !r->started.contains(returned)) {
-        // A nonconforming return cannot identify a request owned by this router.
-        r->providerId = {};
+    } else if (r->providerId.isNull()) {
         r->reject(invalidError());
     } else if (!r->settled && r->inlineTerminals.contains(returned)) {
         r->providerFinished = true; r->terminal = r->inlineTerminals.value(returned); r->settled = true;
