@@ -1,229 +1,701 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 QueMusic Contributors
-//
+
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QueMusic 1.0
+import "PluginSettingsText.js" as PluginText
 
-QScrollView {
+Rectangle {
     id: root
 
-    property var manager: null
+    property var controller: null
     property real containX: 0
     property real standWidth: width - 48
-    property int selectedTab: 0
-    readonly property var plugins: manager ? manager.plugins : []
-    signal configureNavidromeRequested()
+    readonly property bool compact: width < 760
+    readonly property var plugins: controller ? controller.plugins : []
+    readonly property var selectedPlugin: controller ? controller.selectedPlugin : ({})
+    readonly property bool busy: controller ? controller.busy : false
+    readonly property color surfaceColor: Style.themes.containColor
+    readonly property color primaryTextColor: Style.themes.fontColor
+    readonly property color controlColor: Style.themes.primaryColor
+    readonly property bool darkTheme: Style.darkis
 
+    property var formSections: []
+    property string formContextKey: ""
+    property string pendingRemovalId: ""
+    property string pendingActionId: ""
+    property string directoryFieldId: ""
+    property string observedPluginState: ""
+    property string pendingProbeRequest: ""
+    property bool probeCurrent: true
+
+    color: Style.themes.backgroundColor || Style.themes.containColor
     clip: true
 
-    Component {
-        id: navidromeConfigButton
-        Button {
-            objectName: "navidromeConfigAction"
-            text: "配置音源"
-            onClicked: root.configureNavidromeRequested()
+    function currentInstance() {
+        if (!controller)
+            return null
+        var source = controller.instances || []
+        for (var index = 0; index < source.length; ++index) {
+            if (source[index].sourceInstanceId === controller.selectedInstanceId)
+                return source[index]
+        }
+        return null
+    }
+
+    function sanitizedSections(rawSections) {
+        var result = []
+        var source = rawSections || []
+        for (var sectionIndex = 0; sectionIndex < source.length; ++sectionIndex) {
+            var sectionSource = source[sectionIndex]
+            var sectionCopy = {}
+            for (var sectionKey in sectionSource) {
+                if (sectionKey !== "fields")
+                    sectionCopy[sectionKey] = sectionSource[sectionKey]
+            }
+            var safeFields = []
+            var fields = sectionSource.fields || []
+            for (var fieldIndex = 0; fieldIndex < fields.length; ++fieldIndex) {
+                var fieldSource = fields[fieldIndex]
+                var fieldCopy = {}
+                var secret = fieldSource.type === 1 || fieldSource.secret === true
+                for (var fieldKey in fieldSource) {
+                    if (!secret || fieldKey !== "value")
+                        fieldCopy[fieldKey] = fieldSource[fieldKey]
+                }
+                safeFields.push(fieldCopy)
+            }
+            sectionCopy.fields = safeFields
+            result.push(sectionCopy)
+        }
+        return result
+    }
+
+    function refreshFromController(forceReset) {
+        if (!controller) {
+            formContextKey = ""
+            formSections = []
+            displayNameInput.text = ""
+            schemaForm.resetFromSections([])
+            observedPluginState = ""
+            pendingProbeRequest = ""
+            probeCurrent = false
+            return
+        }
+        var nextContext = String(controller.selectedPluginId || "") + "\n"
+                          + String(controller.selectedInstanceId || "")
+        if (forceReset || nextContext !== formContextKey) {
+            formContextKey = nextContext
+            formSections = sanitizedSections(controller.settingsSections)
+            schemaForm.resetFromSections(formSections)
+            var account = currentInstance()
+            displayNameInput.text = account ? String(account.displayName || "") : ""
+            pendingProbeRequest = ""
+            probeCurrent = true
+        } else {
+            formSections = sanitizedSections(controller.settingsSections)
+            schemaForm.mergeFromSections(formSections)
+        }
+        var nextPluginState = String(selectedPlugin.state || "")
+        if (nextPluginState === "unloaded" && observedPluginState !== "unloaded")
+            schemaForm.clearSecrets()
+        observedPluginState = nextPluginState
+    }
+
+    function selectPlugin(packageId) {
+        if (!controller || busy)
+            return
+        schemaForm.clearSecrets()
+        controller.selectPlugin(packageId)
+        refreshFromController(false)
+    }
+
+    function selectInstance(instanceId) {
+        if (!controller || busy)
+            return
+        schemaForm.clearSecrets()
+        controller.selectInstance(instanceId)
+        refreshFromController(false)
+    }
+
+    function saveInstance() {
+        if (!controller || !schemaForm.synchronizePublicDraft())
+            return
+        var accepted = controller.saveInstance(displayNameInput.text,
+                                               schemaForm.collectSecretDraft())
+        if (accepted) {
+            schemaForm.clearSecrets()
+            formSections = sanitizedSections(controller.settingsSections)
+            schemaForm.resetFromSections(formSections)
+            probeCurrent = false
         }
     }
 
-    contentChildren: Item {
-        id: content
-        width: root.availableWidth
-        implicitHeight: contentColumn.implicitHeight + 24
-        height: implicitHeight
+    function testConnection() {
+        if (!controller || !schemaForm.synchronizePublicDraft())
+            return
+        pendingProbeRequest = String(controller.testConnection(schemaForm.collectSecretDraft()))
+    }
 
-        property real horizontalInset: Math.max(24, root.containX + 24)
-        property real panelWidth: Math.max(0, Math.min(root.standWidth,
-                                                        width - horizontalInset - 24))
+    function runAction(actionId, confirmed) {
+        if (!controller || !probeCurrent || !schemaForm.synchronizePublicDraft())
+            return
+        controller.runSettingsAction(actionId, schemaForm.collectSecretDraft(), confirmed)
+    }
 
-        Column {
-            id: contentColumn
-            x: content.horizontalInset
-            y: 24
-            width: content.panelWidth
-            spacing: 16
+    function requestAction(actionData) {
+        if (actionData.requiresConfirmation) {
+            pendingActionId = actionData.id
+            actionConfirmation.open()
+        } else {
+            runAction(actionData.id, false)
+        }
+    }
+
+    function cancelDraft() {
+        if (controller)
+            controller.cancelOperation()
+        schemaForm.clearSecrets()
+        formSections = controller ? sanitizedSections(controller.settingsSections) : []
+        schemaForm.resetFromSections(formSections)
+    }
+
+    function filteredActions() {
+        var result = []
+        var source = controller ? controller.settingsActions || [] : []
+        for (var index = 0; index < source.length; ++index) {
+            if (source[index].state !== 0)
+                result.push(source[index])
+        }
+        return result
+    }
+
+    onControllerChanged: {
+        schemaForm.clearSecrets()
+        refreshFromController(true)
+    }
+    onVisibleChanged: {
+        if (!visible)
+            schemaForm.clearSecrets()
+    }
+    Component.onCompleted: refreshFromController(true)
+    Component.onDestruction: schemaForm.clearSecrets()
+
+    Connections {
+        target: root.controller
+        ignoreUnknownSignals: true
+        function onSnapshotsChanged() { root.refreshFromController(false) }
+        function onDraftReset() {
+            schemaForm.clearSecrets()
+            root.formSections = root.controller
+                    ? root.sanitizedSections(root.controller.settingsSections) : []
+            schemaForm.resetFromSections(root.formSections)
+            root.pendingProbeRequest = ""
+            root.probeCurrent = true
+        }
+        function onConnectionTestFinished(requestId, result) {
+            if (!root.pendingProbeRequest
+                || String(requestId) !== root.pendingProbeRequest)
+                return
+            root.pendingProbeRequest = ""
+            root.probeCurrent = result.success === true
+        }
+    }
+
+    Dialog {
+        id: removalConfirmation
+        objectName: "instanceRemovalConfirmation"
+        parent: root
+        modal: true
+        title: qsTr("Remove account?")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        palette.window: Style.themes.containColor
+        palette.windowText: Style.themes.fontColor
+        onAccepted: {
+            if (root.controller && root.pendingRemovalId)
+                root.controller.removeInstance(root.pendingRemovalId)
+            root.pendingRemovalId = ""
+        }
+        onRejected: root.pendingRemovalId = ""
+    }
+
+    Dialog {
+        id: actionConfirmation
+        objectName: "settingsActionConfirmation"
+        parent: root
+        modal: true
+        title: qsTr("Run this plugin action?")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        palette.window: Style.themes.containColor
+        palette.windowText: Style.themes.fontColor
+        onAccepted: {
+            var actionId = root.pendingActionId
+            root.pendingActionId = ""
+            if (actionId)
+                root.runAction(actionId, true)
+        }
+        onRejected: root.pendingActionId = ""
+    }
+
+    FolderDialog {
+        id: directoryDialog
+        objectName: "pluginDirectoryDialog"
+        title: qsTr("Choose a local folder")
+        onAccepted: {
+            if (!root.controller || !root.directoryFieldId)
+                return
+            var localFolder = selectedFolder
+            schemaForm.acceptControllerValue(root.directoryFieldId)
+            if (root.controller.setDirectoryField(root.directoryFieldId, localFolder)) {
+                root.formSections = root.sanitizedSections(root.controller.settingsSections)
+                schemaForm.mergeFromSections(root.formSections)
+                root.probeCurrent = false
+            }
+            root.directoryFieldId = ""
+        }
+        onRejected: root.directoryFieldId = ""
+    }
+
+    Item {
+        id: page
+        x: Math.max(12, Math.min(root.width - 12, root.containX + 12))
+        y: 12
+        width: Math.max(0, Math.min(root.standWidth, root.width - x - 12))
+        height: Math.max(0, root.height - 24)
+
+        Item {
+            id: header
+            objectName: "pluginPanelHeader"
+            width: parent.width
+            height: headerContent.implicitHeight
+
+            Column {
+                id: headerContent
+                width: parent.width
+                spacing: 8
+
+                Text {
+                    width: parent.width
+                    text: qsTr("Plugins")
+                    color: Style.themes.fontColor
+                    font.pixelSize: Style.settings.pageTitle
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.Wrap
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 8
+                    Button {
+                        objectName: "discoverPluginsAction"
+                        text: qsTr("Discover plugins")
+                        enabled: !!root.controller && !root.busy
+                        palette.button: Style.themes.containColor
+                        palette.buttonText: Style.themes.fontColor
+                        onClicked: root.controller.discoverPlugins()
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            id: notice
+            objectName: "pluginPanelNotice"
+            anchors.top: header.bottom
+            anchors.topMargin: 12
+            width: parent.width
+            height: noticeText.implicitHeight + 24
+            radius: Style.settings.cubeRadius
+            color: Style.themes.containColor
+            border.color: Style.themes.sideColor
+            border.width: 1
 
             Text {
-                id: header
-                objectName: "pluginPanelHeader"
+                id: noticeText
+                anchors.fill: parent
+                anchors.margins: 12
+                text: qsTr("Configure installed source plugins and their accounts. Loading a plugin does not enable an account.")
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.textmain
+                wrapMode: Text.Wrap
+            }
+        }
+
+        Item {
+            id: workArea
+            anchors.top: notice.bottom
+            anchors.topMargin: 12
+            anchors.bottom: parent.bottom
+            width: parent.width
+
+            Text {
+                objectName: "pluginUnavailablePlaceholder"
+                anchors.centerIn: parent
                 width: parent.width
-                height: 36
-                color: Style.themes.fontColor
-                verticalAlignment: Text.AlignVCenter
-                text: "插件"
-                font.pixelSize: Style.settings.pageTitle
-                font.weight: Font.DemiBold
-                font.letterSpacing: -0.3
+                visible: !root.controller
+                text: qsTr("Plugin settings are unavailable")
+                color: Style.themes.textColor
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
             }
 
-            QBlurTapBar {
-                id: tabs
-                objectName: "pluginPanelTabs"
-                width: 304
-                height: 40
-                model: ["外观类", "功能类", "音源"]
-                tabWidth: 100
-                rectXy: Qt.rect(0, 0, width, height)
-                blurSource: root
-                onTabChange: (index) => root.selectedTab = index
+            Text {
+                objectName: "emptyPluginPlaceholder"
+                anchors.centerIn: parent
+                width: parent.width
+                visible: !!root.controller && root.plugins.length === 0
+                text: qsTr("No plugins discovered")
+                color: Style.themes.textColor
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
             }
 
-            Rectangle {
-                id: notice
-                objectName: "pluginPanelNotice"
-                width: parent.width
-                height: noticeText.implicitHeight + 48
-                color: Style.themes.containColor
-                radius: Style.settings.cubeRadius
-                border.color: Style.themes.sideColor
-                border.width: 1
+            ListView {
+                id: masterList
+                objectName: "pluginMasterList"
+                visible: !!root.controller && root.plugins.length > 0
+                x: 0
+                y: 0
+                width: root.compact ? workArea.width
+                                    : Math.max(180, Math.min(280, workArea.width * 0.3))
+                height: root.compact ? Math.min(180, workArea.height * 0.3) : workArea.height
+                model: root.plugins
+                spacing: 8
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
 
-                Text {
-                    x: 24
-                    y: 24
-                    font.family: typeof iconFont !== "undefined" && iconFont ? iconFont.name : ""
-                    height: noticeText.implicitHeight
-                    text: "\uf11a"
-                    color: Style.themes.themeColor
-                    font.pixelSize: Style.settings.texticon
-                }
-                Text {
-                    id: noticeText
-                    x: 48
-                    y: 24
-                    width: parent.width - 64
-                    text: "原生插件可从应用或用户插件目录发现。状态“loaded”仅表示插件可用；音源插件仍需添加并启用账户后才能使用。"
-                    wrapMode: Text.Wrap
-                    color: Style.themes.textColor
-                    font.pixelSize: Style.settings.textmain
-                }
-            }
+                delegate: Rectangle {
+                    required property var modelData
+                    width: masterList.width
+                    height: 60
+                    radius: Style.settings.cubeRadius
+                    color: modelData.id === (root.controller ? root.controller.selectedPluginId : "")
+                           ? Style.themes.sideColor : Style.themes.containColor
+                    border.color: Style.themes.sideColor
+                    border.width: 1
 
-            Item {
-                width: parent.width
-                implicitHeight: root.selectedTab === 2 ? musicContent.implicitHeight : 120
-                height: implicitHeight
-
-                Text {
-                    anchors.fill: parent
-                    visible: root.selectedTab !== 2
-                    text: root.selectedTab === 0 ? "外观类" : "功能类"
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignHCenter
-                    color: Style.themes.textColor
-                    font.pixelSize: Style.settings.textmain
-                }
-
-                Column {
-                    id: musicContent
-                    objectName: "pluginPanelList"
-                    visible: root.selectedTab === 2
-                    width: parent.width
-                    spacing: 12
-
-                    Row {
-                        spacing: 10
-                        Button {
-                            text: "发现插件"
-                            onClicked: {
-                                if (root.manager)
-                                    root.manager.discoverPlugins()
+                    Button {
+                        objectName: "pluginSelect_" + modelData.id
+                        anchors.fill: parent
+                        palette.button: "transparent"
+                        palette.buttonText: Style.themes.fontColor
+                        background: Rectangle { color: "transparent" }
+                        contentItem: Column {
+                            spacing: 2
+                            Text {
+                                width: parent.width
+                                text: modelData.name || modelData.id
+                                color: Style.themes.fontColor
+                                font.pixelSize: Style.settings.textmain
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: PluginText.pluginState(modelData.state)
+                                color: Style.themes.textColor
+                                font.pixelSize: Style.settings.textTip
                             }
                         }
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "仅加载本地已安装且与当前 Qt 环境兼容的原生插件"
-                            color: Style.themes.textColor
-                            font.pixelSize: Style.settings.textmain
+                        onClicked: root.selectPlugin(modelData.id)
+                    }
+                }
+            }
+
+            ScrollView {
+                id: detailPane
+                objectName: "pluginDetailPane"
+                visible: !!root.controller && root.plugins.length > 0
+                x: root.compact ? 0 : masterList.width + 12
+                y: root.compact ? masterList.height + 12 : 0
+                width: root.compact ? workArea.width
+                                    : Math.max(0, workArea.width - masterList.width - 12)
+                height: root.compact ? Math.max(0, workArea.height - y) : workArea.height
+                clip: true
+                contentWidth: availableWidth
+                contentHeight: detailColumn.implicitHeight + 12
+
+                Column {
+                    id: detailColumn
+                    width: detailPane.availableWidth
+                    spacing: 14
+
+                    Rectangle {
+                        width: parent.width
+                        height: pluginSummary.implicitHeight + 24
+                        radius: Style.settings.cubeRadius
+                        color: Style.themes.containColor
+                        border.color: Style.themes.sideColor
+                        border.width: 1
+
+                        Column {
+                            id: pluginSummary
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 4
+                            Text {
+                                width: parent.width
+                                text: (root.selectedPlugin.name || root.selectedPlugin.id || qsTr("Plugin"))
+                                      + (root.selectedPlugin.version ? " · " + root.selectedPlugin.version : "")
+                                color: Style.themes.fontColor
+                                font.pixelSize: Style.settings.textmain
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.Wrap
+                            }
+                            Text {
+                                objectName: "pluginSummaryState"
+                                width: parent.width
+                                text: qsTr("State: %1").arg(PluginText.pluginState(root.selectedPlugin.state))
+                                color: Style.themes.textColor
+                                font.pixelSize: Style.settings.textTip
+                                wrapMode: Text.Wrap
+                            }
+                        }
+                    }
+
+                    Flow {
+                        width: parent.width
+                        spacing: 8
+                        Button {
+                            objectName: "loadPluginAction"
+                            visible: root.selectedPlugin.loadable === true
+                            text: qsTr("Load")
+                            enabled: visible && !root.busy
+                            palette.button: Style.themes.containColor
+                            palette.buttonText: Style.themes.fontColor
+                            onClicked: root.controller.loadPlugin(root.selectedPlugin.id)
+                        }
+                        Button {
+                            objectName: "unloadPluginAction"
+                            visible: root.selectedPlugin.state === 2
+                                     || root.selectedPlugin.state === "loaded"
+                                     || root.selectedPlugin.unloadable === true
+                            text: qsTr("Unload")
+                            enabled: visible && root.selectedPlugin.unloadable === true && !root.busy
+                            palette.button: Style.themes.containColor
+                            palette.buttonText: Style.themes.fontColor
+                            onClicked: {
+                                schemaForm.clearSecrets()
+                                root.controller.unloadPlugin(root.selectedPlugin.id)
+                            }
+                        }
+                        Button {
+                            objectName: "reloadPluginAction"
+                            visible: root.selectedPlugin.reloadable === true
+                            text: qsTr("Reload")
+                            enabled: visible && !root.busy
+                            palette.button: Style.themes.containColor
+                            palette.buttonText: Style.themes.fontColor
+                            onClicked: root.controller.reloadPlugin(root.selectedPlugin.id)
+                        }
+                    }
+
+                    SourceAccountList {
+                        width: parent.width
+                        instances: root.controller ? root.controller.instances : []
+                        selectedInstanceId: root.controller ? root.controller.selectedInstanceId : ""
+                        busy: root.busy
+                        onSelectInstanceRequested: (instanceId) => root.selectInstance(instanceId)
+                        onNewInstanceRequested: root.selectInstance("")
+                        onRemoveInstanceRequested: (instanceId) => {
+                            root.pendingRemovalId = instanceId
+                            removalConfirmation.open()
+                        }
+                        onEnabledRequested: (instanceId, enabled) => {
+                            if (root.controller)
+                                root.controller.setInstanceEnabled(instanceId, enabled)
+                        }
+                    }
+
+                    TextField {
+                        id: displayNameInput
+                        objectName: "instanceDisplayNameField"
+                        width: parent.width
+                        placeholderText: qsTr("Account display name")
+                        enabled: !root.busy
+                        palette.base: Style.themes.containColor
+                        palette.text: Style.themes.fontColor
+                        palette.placeholderText: Style.themes.textColor
+                        onTextEdited: root.probeCurrent = false
+                    }
+
+                    Text {
+                        objectName: "noSchemaPlaceholder"
+                        width: parent.width
+                        visible: root.formSections.length === 0
+                        text: qsTr("This plugin has no configurable settings")
+                        color: Style.themes.textColor
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                    }
+
+                    SchemaSettingsForm {
+                        id: schemaForm
+                        width: parent.width
+                        controller: root.controller
+                        sections: root.formSections
+                        busy: root.busy
+                        onBrowseDirectoryRequested: (fieldId) => {
+                            root.directoryFieldId = fieldId
+                            directoryDialog.open()
+                        }
+                        onDraftEdited: root.probeCurrent = false
+                    }
+
+                    Flow {
+                        objectName: "formActionArea"
+                        width: parent.width
+                        spacing: 8
+                        Button {
+                            objectName: "saveInstanceAction"
+                            text: qsTr("Save")
+                            enabled: !!root.controller && schemaForm.canSubmit
+                            palette.button: Style.themes.themeColor
+                            palette.buttonText: Style.themes.fontColor
+                            onClicked: root.saveInstance()
+                        }
+                        Button {
+                            objectName: "testConnectionAction"
+                            text: qsTr("Test connection")
+                            enabled: !!root.controller && schemaForm.canSubmit
+                            palette.button: Style.themes.containColor
+                            palette.buttonText: Style.themes.fontColor
+                            onClicked: root.testConnection()
+                        }
+                        Button {
+                            objectName: "cancelDraftAction"
+                            text: qsTr("Cancel")
+                            enabled: !!root.controller && !root.busy
+                            palette.button: Style.themes.containColor
+                            palette.buttonText: Style.themes.fontColor
+                            onClicked: root.cancelDraft()
                         }
                     }
 
                     Text {
-                        visible: !root.manager || root.manager.plugins.length === 0
                         width: parent.width
-                        text: "未发现音源插件"
-                        color: Style.themes.textColor
-                        horizontalAlignment: Text.AlignHCenter
-                        font.pixelSize: Style.settings.textmain
+                        visible: !!root.controller && root.controller.lastErrorKey
+                        text: PluginText.error(root.controller ? root.controller.lastErrorKey : "")
+                        color: "#d85a5a"
+                        wrapMode: Text.Wrap
+                        font.pixelSize: Style.settings.textTip
                     }
 
-                    Repeater {
-                        model: root.plugins
+                    Column {
+                        objectName: "settingsActionsArea"
+                        width: parent.width
+                        spacing: 6
+                        visible: root.filteredActions().length > 0
 
-                        delegate: Rectangle {
-                            required property var modelData
-                            objectName: "pluginCard_" + modelData.id
-                            width: musicContent.width
-                            height: Math.max(88, pluginDetails.implicitHeight + 24)
-                            radius: Style.settings.cubeRadius
-                            color: Style.themes.containColor
-                            border.color: Style.themes.sideColor
-                            border.width: 1
+                        Text {
+                            width: parent.width
+                            text: qsTr("Plugin actions")
+                            color: Style.themes.fontColor
+                            font.pixelSize: Style.settings.textmain
+                            font.weight: Font.DemiBold
+                        }
 
-                            Row {
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                spacing: 14
+                        Repeater {
+                            model: root.filteredActions()
+                            delegate: Column {
+                                required property var modelData
+                                width: detailColumn.width
+                                spacing: 3
 
-                                Column {
-                                    id: pluginDetails
-                                    width: Math.max(180, parent.width - pluginActions.implicitWidth - 14)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 4
-                                    Text {
-                                        width: parent.width
-                                        text: modelData.name + " · " + modelData.version
-                                        color: Style.themes.fontColor
-                                        font.pixelSize: Style.settings.textmain
-                                        elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        width: parent.width
-                                        text: "状态：" + modelData.state
-                                              + (modelData.activeLeases > 0
-                                                 ? "（使用中：" + modelData.activeLeases + "）" : "")
-                                              + (modelData.error ? " · " + modelData.error : "")
-                                        color: Style.themes.textColor
-                                        font.pixelSize: Style.settings.textTip
-                                        elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        visible: modelData.id === "navidrome" && modelData.state === "loaded"
-                                        width: parent.width
-                                        text: "插件已就绪；请配置并启用 Navidrome 账户后使用。"
-                                        color: Style.themes.textColor
-                                        font.pixelSize: Style.settings.textTip
-                                        elide: Text.ElideRight
-                                    }
+                                Button {
+                                    objectName: "settingsAction_" + modelData.id
+                                    text: PluginText.translated(modelData.labelKey || "",
+                                                                qsTr("Run action"))
+                                    enabled: modelData.state === 1 && schemaForm.canSubmit
+                                             && root.probeCurrent
+                                    palette.button: Style.themes.containColor
+                                    palette.buttonText: Style.themes.fontColor
+                                    onClicked: root.requestAction(modelData)
                                 }
-
-                                Column {
-                                    id: pluginActions
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 6
-                                    Loader {
-                                        objectName: "navidromeConfigLoader"
-                                        active: modelData.id === "navidrome" && modelData.state === "loaded"
-                                        sourceComponent: navidromeConfigButton
-                                    }
-                                    Button {
-                                        text: "加载"
-                                        visible: modelData.loadable
-                                        onClicked: root.manager.loadPlugin(modelData.id)
-                                    }
-                                    Button {
-                                        text: modelData.state === "failed" ? "重试卸载" : "卸载"
-                                        visible: modelData.state === "loaded" || modelData.unloadable
-                                        enabled: modelData.unloadable
-                                        onClicked: root.manager.unloadPlugin(modelData.id)
-                                    }
-                                    Button {
-                                        text: "重载"
-                                        enabled: modelData.reloadable
-                                        onClicked: root.manager.reloadPlugin(modelData.id)
-                                    }
+                                Text {
+                                    objectName: "settingsActionReason_" + modelData.id
+                                    width: parent.width
+                                    visible: modelData.state !== 1
+                                    text: PluginText.availability(modelData.state,
+                                                                  modelData.reasonKey || "")
+                                    color: Style.themes.textColor
+                                    font.pixelSize: Style.settings.textTip
+                                    wrapMode: Text.Wrap
                                 }
                             }
+                        }
+                    }
+
+                    Column {
+                        id: diagnostics
+                        objectName: "sourceCapabilityDiagnostics"
+                        width: parent.width
+                        spacing: 8
+                        visible: root.controller && root.controller.sourceCapabilities.length > 0
+
+                        Text {
+                            width: parent.width
+                            text: qsTr("Source capabilities")
+                            color: Style.themes.fontColor
+                            font.pixelSize: Style.settings.textmain
+                            font.weight: Font.DemiBold
+                        }
+
+                        Repeater {
+                            model: root.controller ? root.controller.sourceCapabilities : []
+                            delegate: Column {
+                                required property var modelData
+                                width: diagnostics.width
+                                spacing: 3
+                                Text {
+                                    width: parent.width
+                                    text: PluginText.actionName(modelData.action)
+                                          + ": " + PluginText.availability(modelData.pluginState, "")
+                                    color: Style.themes.textColor
+                                    wrapMode: Text.Wrap
+                                    font.pixelSize: Style.settings.textTip
+                                }
+                                Text {
+                                    objectName: "capabilityServer_" + modelData.action
+                                    width: parent.width
+                                    text: qsTr("Server: %1").arg(
+                                              PluginText.layerAvailability(modelData.serverState))
+                                    color: Style.themes.textColor
+                                    wrapMode: Text.Wrap
+                                    font.pixelSize: Style.settings.textTip
+                                }
+                                Text {
+                                    objectName: "capabilityAccount_" + modelData.action
+                                    width: parent.width
+                                    text: qsTr("Account: %1").arg(
+                                              PluginText.layerAvailability(modelData.accountState))
+                                    color: Style.themes.textColor
+                                    wrapMode: Text.Wrap
+                                    font.pixelSize: Style.settings.textTip
+                                }
+                                Text {
+                                    objectName: "capabilityEffective_" + modelData.action
+                                    width: parent.width
+                                    text: qsTr("Effective: %1").arg(
+                                              PluginText.availability(modelData.state,
+                                                                      modelData.reasonKey || ""))
+                                    color: Style.themes.textColor
+                                    wrapMode: Text.Wrap
+                                    font.pixelSize: Style.settings.textTip
+                                }
+                            }
+                        }
+
+                        Text {
+                            objectName: "mediaPermissionDisclaimer"
+                            width: parent.width
+                            text: qsTr("These are source-level diagnostics, not per-media permission checks. Individual media may still be restricted.")
+                            color: Style.themes.textColor
+                            font.pixelSize: Style.settings.textTip
+                            wrapMode: Text.Wrap
                         }
                     }
                 }

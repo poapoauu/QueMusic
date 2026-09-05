@@ -979,6 +979,7 @@ if(BUILD_TESTING)
             pages/SearchPage.qml
             pages/SourceLibraryPage.qml
             ${QML_COMPONENTS}
+            components/PluginSettingsText.js
     )
     target_link_libraries(quemusic_media_bridge_qml_test PRIVATE
         quemusic_media_bridge
@@ -990,6 +991,29 @@ if(BUILD_TESTING)
     add_dependencies(quemusic_media_bridge_qml_test quemusic_navidrome_source)
     add_test(NAME quemusic_media_bridge_qml_test COMMAND quemusic_media_bridge_qml_test)
     set_tests_properties(quemusic_media_bridge_qml_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    qt_add_executable(quemusic_plugin_settings_qml_test
+        tests/tst_PluginSettingsQml.cpp
+    )
+    target_compile_features(quemusic_plugin_settings_qml_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_plugin_settings_qml_test PRIVATE
+        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    qt_add_resources(quemusic_plugin_settings_qml_test "quemusic_plugin_settings_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js
+    )
+    target_link_libraries(quemusic_plugin_settings_qml_test PRIVATE
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::Test
+    )
+    add_test(NAME quemusic_plugin_settings_qml_test COMMAND quemusic_plugin_settings_qml_test)
+    set_tests_properties(quemusic_plugin_settings_qml_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()
@@ -1088,6 +1112,7 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
         pages/SearchPage.qml
         pages/SourceLibraryPage.qml
         api/qrcode.js
+        components/PluginSettingsText.js
         ${QML_COMPONENTS}
 
     RESOURCES

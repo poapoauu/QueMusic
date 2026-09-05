@@ -12,6 +12,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUuid>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
@@ -170,29 +171,78 @@ private:
     QObject *m_results;
 };
 
-class PluginManagerDouble final : public QObject {
+class PluginSettingsControllerDouble final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList plugins READ plugins NOTIFY pluginsChanged)
+    Q_PROPERTY(QVariantList plugins READ plugins NOTIFY snapshotsChanged)
+    Q_PROPERTY(QVariantMap selectedPlugin READ selectedPlugin NOTIFY snapshotsChanged)
+    Q_PROPERTY(QVariantList instances READ instances NOTIFY snapshotsChanged)
+    Q_PROPERTY(QVariantList settingsSections READ settingsSections NOTIFY snapshotsChanged)
+    Q_PROPERTY(QVariantList settingsActions READ settingsActions NOTIFY snapshotsChanged)
+    Q_PROPERTY(QVariantList sourceCapabilities READ sourceCapabilities NOTIFY snapshotsChanged)
+    Q_PROPERTY(QString selectedPluginId READ selectedPluginId NOTIFY snapshotsChanged)
+    Q_PROPERTY(QString selectedInstanceId READ selectedInstanceId NOTIFY snapshotsChanged)
+    Q_PROPERTY(QString lastErrorKey READ lastErrorKey NOTIFY snapshotsChanged)
+    Q_PROPERTY(bool busy READ busy NOTIFY snapshotsChanged)
 
 public:
     QVariantList plugins() const { return m_plugins; }
+    QVariantMap selectedPlugin() const { return m_selectedPlugin; }
+    QVariantList instances() const { return {}; }
+    QVariantList settingsSections() const { return {}; }
+    QVariantList settingsActions() const { return {}; }
+    QVariantList sourceCapabilities() const { return {}; }
+    QString selectedPluginId() const { return m_selectedPluginId; }
+    QString selectedInstanceId() const { return {}; }
+    QString lastErrorKey() const { return {}; }
+    bool busy() const { return false; }
 
     void setPlugins(QVariantList plugins)
     {
         m_plugins = std::move(plugins);
-        emit pluginsChanged();
+        if (!m_plugins.isEmpty()) {
+            m_selectedPlugin = m_plugins.constFirst().toMap();
+            m_selectedPluginId = m_selectedPlugin.value(QStringLiteral("id")).toString();
+        }
+        emit snapshotsChanged();
     }
 
+    Q_INVOKABLE bool selectPlugin(const QString &id)
+    {
+        m_selectedPluginId = id;
+        for (const QVariant &plugin : std::as_const(m_plugins)) {
+            if (plugin.toMap().value(QStringLiteral("id")).toString() == id) {
+                m_selectedPlugin = plugin.toMap();
+                break;
+            }
+        }
+        emit snapshotsChanged();
+        return true;
+    }
+    Q_INVOKABLE bool selectInstance(const QString &) { return true; }
+    Q_INVOKABLE bool setDraftValues(const QVariantMap &) { return true; }
+    Q_INVOKABLE bool setDirectoryField(const QString &, const QUrl &) { return true; }
+    Q_INVOKABLE bool saveInstance(const QString &, const QVariantMap &) { return true; }
+    Q_INVOKABLE bool removeInstance(const QString &) { return true; }
+    Q_INVOKABLE bool setInstanceEnabled(const QString &, bool) { return true; }
+    Q_INVOKABLE QUuid testConnection(const QVariantMap &) { return QUuid::createUuid(); }
+    Q_INVOKABLE QUuid runSettingsAction(const QString &, const QVariantMap &, bool)
+    { return QUuid::createUuid(); }
+    Q_INVOKABLE void cancelOperation() {}
     Q_INVOKABLE void discoverPlugins() {}
-    Q_INVOKABLE void loadPlugin(const QString &) {}
-    Q_INVOKABLE void unloadPlugin(const QString &) {}
-    Q_INVOKABLE void reloadPlugin(const QString &) {}
+    Q_INVOKABLE bool loadPlugin(const QString &) { return true; }
+    Q_INVOKABLE bool unloadPlugin(const QString &) { return true; }
+    Q_INVOKABLE bool reloadPlugin(const QString &) { return true; }
 
 signals:
-    void pluginsChanged();
+    void snapshotsChanged();
+    void connectionTestFinished(QUuid requestId, QVariantMap result);
+    void settingsActionFinished(QUuid requestId, QVariantMap result);
+    void draftReset();
 
 private:
     QVariantList m_plugins;
+    QVariantMap m_selectedPlugin;
+    QString m_selectedPluginId;
 };
 
 } // namespace
@@ -207,8 +257,8 @@ private slots:
     void productionPlayListExposesClearOtherSongs();
     void productionSourceLibraryRejectsDisabledAccounts();
     void productionSourceLibraryOffersConfigurationWhenNoAccountExists();
-    void productionPluginPanelReceivesInjectedManager();
-    void productionPluginPanelSeparatesContentAndOffersNavidromeSetup();
+    void productionPluginPanelReceivesGenericController();
+    void productionPluginPanelUsesMasterDetailWithoutProviderAction();
 };
 
 void MediaBridgeQmlTest::exposesOnlyBridgeAndAcceptsNormalizedQueueEntry()
@@ -480,17 +530,17 @@ void MediaBridgeQmlTest::productionSourceLibraryOffersConfigurationWhenNoAccount
     delete page;
 }
 
-void MediaBridgeQmlTest::productionPluginPanelReceivesInjectedManager()
+void MediaBridgeQmlTest::productionPluginPanelReceivesGenericController()
 {
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
     NamedObject iconFont(QStringLiteral("Arial"));
     engine.rootContext()->setContextProperty("iconFont", &iconFont);
 
-    PluginManagerDouble pluginManager;
-    pluginManager.setPlugins({
-        QVariantMap{{QStringLiteral("id"), QStringLiteral("navidrome")},
-                    {QStringLiteral("name"), QStringLiteral("Navidrome")},
+    PluginSettingsControllerDouble controller;
+    controller.setPlugins({
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture.source")},
+                    {QStringLiteral("name"), QStringLiteral("Fixture Source")},
                     {QStringLiteral("version"), QStringLiteral("1.0.0")},
                     {QStringLiteral("state"), QStringLiteral("loaded")},
                     {QStringLiteral("loadable"), false},
@@ -498,7 +548,7 @@ void MediaBridgeQmlTest::productionPluginPanelReceivesInjectedManager()
                     {QStringLiteral("reloadable"), true},
                     {QStringLiteral("activeLeases"), 0}}
     });
-    engine.rootContext()->setContextProperty("pluginManager", &pluginManager);
+    engine.rootContext()->setContextProperty("pluginSettingsController", &controller);
 
     QQmlComponent component(&engine);
     component.setData(R"(
@@ -507,8 +557,7 @@ void MediaBridgeQmlTest::productionPluginPanelReceivesInjectedManager()
         PluginSettingsPanel {
             width: 1000
             height: 700
-            selectedTab: 2
-            manager: pluginManager
+            controller: pluginSettingsController
         }
     )", QUrl());
     QObject *panel = component.create();
@@ -516,30 +565,32 @@ void MediaBridgeQmlTest::productionPluginPanelReceivesInjectedManager()
     QCOMPARE(panel->property("plugins").toList().size(), 1);
     QCOMPARE(panel->property("plugins").toList().constFirst().toMap()
                  .value(QStringLiteral("id")).toString(),
-             QStringLiteral("navidrome"));
+             QStringLiteral("fixture.source"));
+    QCOMPARE(panel->property("controller").value<QObject *>(),
+             static_cast<QObject *>(&controller));
 
     delete panel;
 }
 
-void MediaBridgeQmlTest::productionPluginPanelSeparatesContentAndOffersNavidromeSetup()
+void MediaBridgeQmlTest::productionPluginPanelUsesMasterDetailWithoutProviderAction()
 {
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
     NamedObject iconFont(QStringLiteral("Arial"));
     engine.rootContext()->setContextProperty("iconFont", &iconFont);
 
-    PluginManagerDouble pluginManager;
-    pluginManager.setPlugins({
-        QVariantMap{{QStringLiteral("id"), QStringLiteral("navidrome")},
-                    {QStringLiteral("name"), QStringLiteral("Navidrome")},
+    PluginSettingsControllerDouble controller;
+    controller.setPlugins({
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture.one")},
+                    {QStringLiteral("name"), QStringLiteral("Fixture One")},
                     {QStringLiteral("version"), QStringLiteral("1.0.0")},
                     {QStringLiteral("state"), QStringLiteral("loaded")},
                     {QStringLiteral("loadable"), false},
                     {QStringLiteral("unloadable"), true},
                     {QStringLiteral("reloadable"), true},
                     {QStringLiteral("activeLeases"), 0}},
-        QVariantMap{{QStringLiteral("id"), QStringLiteral("unrelated")},
-                    {QStringLiteral("name"), QStringLiteral("Unrelated")},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture.two")},
+                    {QStringLiteral("name"), QStringLiteral("Fixture Two")},
                     {QStringLiteral("version"), QStringLiteral("1.0.0")},
                     {QStringLiteral("state"), QStringLiteral("loaded")},
                     {QStringLiteral("loadable"), false},
@@ -555,59 +606,32 @@ void MediaBridgeQmlTest::productionPluginPanelSeparatesContentAndOffersNavidrome
         {QStringLiteral("height"), 760},
         {QStringLiteral("containX"), 72},
         {QStringLiteral("standWidth"), 900},
-        {QStringLiteral("manager"), QVariant::fromValue(static_cast<QObject *>(&pluginManager))},
-        {QStringLiteral("selectedTab"), 2}
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject *>(&controller))}
     });
     QVERIFY2(panel != nullptr, qPrintable(component.errorString()));
     QCoreApplication::processEvents();
-    QCOMPARE(panel->property("selectedTab").toInt(), 2);
-    QCOMPARE(panel->property("manager").value<QObject *>(),
-             static_cast<QObject *>(&pluginManager));
+    QCOMPARE(panel->property("controller").value<QObject *>(),
+             static_cast<QObject *>(&controller));
     QCOMPARE(panel->property("plugins").toList().size(), 2);
 
     auto *panelItem = qobject_cast<QQuickItem *>(panel);
     QVERIFY(panelItem != nullptr);
     auto *header = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelHeader"));
-    auto *tabs = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelTabs"));
     auto *notice = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelNotice"));
-    auto *list = findVisualItemByObjectName(panelItem, QStringLiteral("pluginPanelList"));
+    auto *master = findVisualItemByObjectName(panelItem, QStringLiteral("pluginMasterList"));
+    auto *detail = findVisualItemByObjectName(panelItem, QStringLiteral("pluginDetailPane"));
+    auto *form = findVisualItemByObjectName(panelItem, QStringLiteral("schemaSettingsForm"));
     QVERIFY(header != nullptr);
-    QVERIFY(tabs != nullptr);
     QVERIFY(notice != nullptr);
-    QVERIFY(list != nullptr);
-    auto xInPanel = [panel](QQuickItem *item) {
-        return item->mapToItem(qobject_cast<QQuickItem *>(panel), QPointF{}).x();
-    };
+    QVERIFY(master != nullptr);
+    QVERIFY(detail != nullptr);
+    QVERIFY(form != nullptr);
     auto yInPanel = [panel](QQuickItem *item) {
         return item->mapToItem(qobject_cast<QQuickItem *>(panel), QPointF{}).y();
     };
-    QCOMPARE(xInPanel(header), xInPanel(tabs));
-    QCOMPARE(xInPanel(tabs), xInPanel(notice));
-    QVERIFY(yInPanel(header) + header->height() <= yInPanel(tabs));
-    QVERIFY(yInPanel(tabs) + tabs->height() <= yInPanel(notice));
-    QVERIFY(yInPanel(notice) + notice->height() <= yInPanel(list));
-
-    QVERIFY(findVisualItemByObjectName(panelItem, QStringLiteral("pluginCard_navidrome")) != nullptr);
-    QQuickItem *navidromeLoader = findVisualItemByObjectName(panelItem,
-                                                              QStringLiteral("navidromeConfigLoader"));
-    QVERIFY(navidromeLoader != nullptr);
-    QCOMPARE(navidromeLoader->property("status").toInt(), 1);
-    QQuickItem *navidromeAction = findVisualItemByObjectName(panelItem,
-                                                              QStringLiteral("navidromeConfigAction"));
-    QVERIFY(navidromeAction != nullptr);
-    QSignalSpy configured(panel, SIGNAL(configureNavidromeRequested()));
-    QVERIFY(QMetaObject::invokeMethod(navidromeAction, "click"));
-    QCOMPARE(configured.count(), 1);
-
-    pluginManager.setPlugins({QVariantMap{{QStringLiteral("id"), QStringLiteral("unrelated")},
-                                          {QStringLiteral("name"), QStringLiteral("Unrelated")},
-                                          {QStringLiteral("version"), QStringLiteral("1.0.0")},
-                                          {QStringLiteral("state"), QStringLiteral("loaded")},
-                                          {QStringLiteral("loadable"), false},
-                                          {QStringLiteral("unloadable"), true},
-                                          {QStringLiteral("reloadable"), true},
-                                          {QStringLiteral("activeLeases"), 0}}});
-    QCoreApplication::processEvents();
+    QVERIFY(yInPanel(header) + header->height() <= yInPanel(notice));
+    QVERIFY(yInPanel(notice) + notice->height() <= yInPanel(master));
+    QVERIFY(yInPanel(notice) + notice->height() <= yInPanel(detail));
     QVERIFY(findVisualItemByObjectName(panelItem, QStringLiteral("navidromeConfigAction")) == nullptr);
 
     delete panel;

@@ -159,74 +159,6 @@ Item {
         }
     }
 
-    Dialog {
-        id: navidromeAccountDialog
-        modal: true
-        title: editingAccountId.length > 0 ? "编辑 Navidrome 账户" : "添加 Navidrome 账户"
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        property string editingAccountId: ""
-        property bool saveSucceeded: false
-        width: 440
-        anchors.centerIn: parent
-        onAccepted: {
-            if (!sourceAccounts)
-                return;
-            saveSucceeded = editingAccountId.length > 0
-                ? sourceAccounts.updateNavidromeAccount(editingAccountId, accountNameField.text,
-                                                        serverUrlField.text, usernameField.text,
-                                                        passwordField.text)
-                : sourceAccounts.createNavidromeAccount(accountNameField.text, serverUrlField.text,
-                                                        usernameField.text, passwordField.text);
-            passwordField.text = "";
-            if (!saveSucceeded)
-                accountError.text = sourceAccounts.lastError;
-        }
-        onClosed: passwordField.text = ""
-        contentItem: Column {
-            spacing: 10
-            padding: 20
-            TextField {
-                id: accountNameField
-                width: parent.width - 40
-                placeholderText: "显示名称（可选）"
-            }
-            TextField {
-                id: serverUrlField
-                width: parent.width - 40
-                placeholderText: "服务器地址，例如 https://music.example.com"
-            }
-            TextField {
-                id: usernameField
-                width: parent.width - 40
-                placeholderText: "用户名"
-            }
-            TextField {
-                id: passwordField
-                width: parent.width - 40
-                placeholderText: navidromeAccountDialog.editingAccountId.length > 0
-                    ? "密码或令牌（留空以保留原凭据）" : "密码或令牌"
-                echoMode: TextInput.Password
-            }
-            Text {
-                id: accountError
-                width: parent.width - 40
-                visible: text.length > 0
-                wrapMode: Text.WordWrap
-                color: "#d85a5a"
-            }
-        }
-    }
-
-    function editNavidromeAccount(account) {
-        navidromeAccountDialog.editingAccountId = account ? account.accountId : "";
-        accountNameField.text = account ? account.displayName : "";
-        serverUrlField.text = account ? account.serverUrl : "";
-        usernameField.text = account ? account.username : "";
-        passwordField.text = "";
-        accountError.text = "";
-        navidromeAccountDialog.open();
-    }
-
     Rectangle {
         id: leftSidebarSettings
         x: 0
@@ -895,11 +827,6 @@ Item {
                                     }
                                     Button {
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: "编辑"
-                                        onClicked: settingsView.editNavidromeAccount(modelData)
-                                    }
-                                    Button {
-                                        anchors.verticalCenter: parent.verticalCenter
                                         text: "移除"
                                         onClicked: sourceAccounts.removeAccount(modelData.accountId)
                                     }
@@ -910,10 +837,6 @@ Item {
                             visible: sourceAccounts && sourceAccounts.accounts.length === 0
                             text: "还没有已配置的音乐源。"
                             color: Style.themes.textColor
-                        }
-                        Button {
-                            text: "添加 Navidrome 账户"
-                            onClicked: settingsView.editNavidromeAccount(null)
                         }
                         Text {
                             visible: sourceAccounts && sourceAccounts.lastError.length > 0
@@ -1948,8 +1871,8 @@ Item {
             visible: false
             containX: settingStack.containX
             standWidth: settingStack.standWidth
-            manager: pluginManager
-            onConfigureNavidromeRequested: settingsView.editNavidromeAccount(null)
+            controller: typeof pluginSettingsController !== "undefined"
+                        ? pluginSettingsController : null
         }
 
         // 关于页面
