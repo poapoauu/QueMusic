@@ -1350,7 +1350,10 @@ Task8 分为 8a 存储、8b 控制器/会话生命周期、8c QML 三个顺序�
 - Create: `tests/tst_PluginSettingsController.cpp`, `tests/tst_PluginSettingsOperation.cpp`
 - Modify: `tests/tst_SourceSettingsStorage.cpp`, `tests/tst_SourceRegistryV2.cpp`, `tests/tst_SourceV2Contract.cpp`
 - Modify: `CMakeLists.txt` only owned new sources/link/test/fixture hunks
-- No PluginManager implementation changes, no QML, no real Navidrome/Admin calls or system Keychain/user settings access in tests.
+- Modify narrowly: `core/plugins/PluginManager.h/.cpp` and `tests/tst_PluginManager.cpp` for the Ruling19 callable-lease lifetime prerequisite below; no unrelated manager refactor.
+- No QML, no real Navidrome/Admin calls or system Keychain/user settings access in tests.
+
+**Ruling19 lifecycle prerequisite:** A safely reproduced test showed that manager destruction unloads a root even while a valid callable lease survives. The lease must retain its loaded package/root independently of the manager facade until normal owned cleanup and the last callable lease complete. Normal healthy leases must not permanently pin packages; ordinary unload/reload controls remain functional. Provide lease-level permanent pin capability for the existing R7 ownership violation when the manager has already disappeared (including manager deletion inside a factory before it returns a foreign-parent session). A permanent pin must remain keyed to the library and survive replacement managers/process teardown as before. Avoid release callbacks touching a partly destroyed manager, preserve reentrant acquire/release notification safety, and cover manager-before-lease destruction plus ordinary last-lease cleanup and manager-gone foreign ownership with safe regressions. Do not invoke unmapped plugin code in RED tests. This is a bounded prerequisite fix, not a relaxation of dependency-loss cancellation or ownership guarantees.
 
 **Consumes:** PluginManager acquire/pluginInstance/spec/notifications; SourceRegistry borrowed sessions; SourceAccountStore saveValidatedV2(SourceAccountSaveV2, error), storedAccount/accounts; SDK named-secret helpers; existing schema validator. Field IDs/source IDs/account IDs and named/raw wire retain Task8a semantics. Current SourceRegistry enabledInstances() includes disabled descriptors; sessionFor() creates/opens, so do not call it to display settings.
 
@@ -1403,6 +1406,7 @@ PluginSettingsController(PluginManager *, SourceRegistry *, SourceAccountStore *
 Q_INVOKABLE bool selectPlugin(const QString &packageId);
 Q_INVOKABLE bool selectInstance(const QString &instanceId); // empty = new draft
 Q_INVOKABLE bool setDraftValues(const QVariantMap &publicDraft); // replace public draft overrides
+Q_INVOKABLE bool setDirectoryField(const QString &fieldId, const QUrl &localFolder);
 Q_INVOKABLE bool saveInstance(const QString &displayName, const QVariantMap &secretDraft);
 Q_INVOKABLE bool removeInstance(const QString &instanceId);
 Q_INVOKABLE bool setInstanceEnabled(const QString &instanceId, bool enabled);
@@ -1415,7 +1419,7 @@ Q_INVOKABLE bool loadPlugin(const QString &packageId);
 Q_INVOKABLE bool unloadPlugin(const QString &packageId);
 Q_INVOKABLE bool reloadPlugin(const QString &packageId);
 // Properties (NOTIFY, never CONSTANT except truly stable dependencies):
-// QVariantList plugins, instances, settingsSections, settingsActions;
+// QVariantList plugins, instances, settingsSections, settingsActions, sourceCapabilities;
 // QVariantMap selectedPlugin;
 // QString selectedPluginId, selectedInstanceId, lastErrorKey;
 // bool busy;
@@ -1426,12 +1430,16 @@ void draftReset(); // QML clears transient password controls on selection/save/r
 ```
 Only a selected loaded valid v2 settings-provider can create/save/test a draft. Unsupported/no-schema/nonmusic packages still appear safely in plugin list with common load/unload controls and host reason. selectPlugin resets selection/draft and cancels old work; selectInstance accepts only that package's source/account (legacy source matching allowed), rejects foreign account/unknown ID, empty starts a fresh stable UUID-backed draft account identity. Creation and connection test use that draft identity, but only explicit save persists it. Existing account IDs never editable implicitly. Successful save selects saved instance and resets draft/temporary password controls; failed save keeps public overrides. setDraftValues accepts only declared nonsecret fields, validates partial values without requiring omitted fields, cancels outstanding work and clears stale probe permissions on change. secretDraft accepts only declared secret fields, is used only during explicit save/test/action invocation, never stored in public snapshots, signaled or logged. Passed empty secrets preserve. Plugin/instance removal or unloaded state invalidates stale selection data safely.
 
+setDirectoryField accepts only a declared nonsecret Directory field and a nonempty local-file QUrl, converts with QUrl::toLocalFile (not string prefix chopping), then updates that one override through the same draft path. Reject remote URLs/other field types without changing draft. It does not inspect or modify the filesystem. This gives QML FolderDialog a platform-correct path boundary; include URL percent/space handling and rejected remote input tests.
+
 **Snapshot allowlists:**
 - plugins / selectedPlugin: id, sourceId, name, version, state (stable lowercase manager-state string), activeLeases, loadable/unloadable/reloadable, settingsAvailable, reasonKey. Construct field-by-field; no raw manager error/busyReason/path passthrough.
 - instances: sourceInstanceId, accountId, displayName, enabled, state, credentialConfigured, configuredSecretFieldIds; include selected unavailable state safely. No credentialReference, secretFormat, bytes or unrestricted parameters.
 - settingsSections: id,titleKey,fields; each field id,labelKey,type(integer enum),required,secret,visible,choices,constraints,credentialConfigured; value only for nonsecret fields. No defaultValue/raw schema/draft/secretUpdates.
 - settingsActions: id,labelKey,requiresConfirmation,state(integer AvailabilityV2),reasonKey. Before explicit probe, missing runtime information stays Unavailable; unsupported optional interface remains Unsupported once determined. Refresh grants only from a same-draft probe, clear on edits/selection/config/plugin changes; dispatch always reopens and rechecks live permission, never trusts cached UI grant.
 - results: connection {success:bool,state:int,reasonKey:QString}, action {success:bool,actionId:QString,state:int,reasonKey:QString}; all returned reason strings host-owned, no backend detail/URL/credentials. Actual returned actionId must match pending declared ID.
+- State enums: connection and instance state use SourceSessionStateV2; action state uses AvailabilityV2. Successful action is Available, unknown/missing runtime permission Unavailable, explicit denial Forbidden. Keep these domains distinct in consumers.
+- sourceCapabilities (source-level MUSIC operation diagnostics, separate from nonmedia settingsActions): rows {action:int SourceActionV2,pluginState:int,serverState:int,accountState:int,state:int,reasonKey:QString}. Copy descriptor.declaredActions under the schema/descriptor lease; probe reads session.capabilities() while alive. Compute source-level intersection with the shared SDK helper; no fabricated media permission. Before probe or after any draft/selection/config invalidation, server/account are unknown Unavailable. Iterate known music actions, reject invalid enum keys, and use host-owned reasons only. This read-only summary is NOT authority for media dispatch; UI must label it source-level and retain Task6/13 per-media rechecks. Include missing/denied roles, invalidation and no-probe-network-on-view tests. No new session should be created merely to read this property.
 
 Validate/detach schema under a short lease: copy QString contents (not merely shared QStringLiteral data), primitive QVariant contents, lists/maps/condition strings into host-owned storage. Do not retain secret defaults. Release viewing lease after detached snapshots; merely viewing settings must not permanently prevent unload. Invalid schema becomes settingsUnavailable with host reason, not permissive empty schema.
 
@@ -1439,6 +1447,8 @@ Lease acquisition/release itself can emit manager notifications. Avoid recursive
 
 **Ephemeral operation lifecycle:**
 PluginSettingsOperation owns its factory-created session and PluginLease independently of Registry. Retain callable lease/operation state across reentrant factory/open/provider callbacks, even controller destruction. Never parent the session to an owner that can vanish inside its method stack; defer teardown until invocation unwinds. Validate returned session identity/source/account and requested parent/ownership; refuse mismatches. Public calls allocate a host UUID and defer all terminal public signals until after it is returned; one terminal at most. open() and action calls must have observed matching requestStarted before accepting return UUID or inline terminal state/result. Capture started IDs in invocation-local lifetime independent of controller; never cancel a fabricated/unstarted returned ID. Handle nested/foreign request signals without claiming them as the operation's request.
+
+Existing Ruling7 applies to foreign-owned factory results and unexpected external destruction of operation-owned sessions: if the external destructor unwind cannot be proven, permanently pin that offending package/root until process exit, including manager destruction. A zero-delay timer is not an unwind proof (nested event loops can execute it inside the destructor). Never close/delete foreign-owned sessions. Normal owned cleanup disconnects its unexpected-destruction observer and must retain ordinary successful unload behavior. Add nested-loop metadata-only RED coverage and isolated-process pin tests; do not deliberately unload an executing plugin merely to demonstrate the failure.
 After open Ready: probe snapshots only sanitized capabilities then closes; action verifies current declared/server/account intersection and confirmation before invoking optional provider. Auth/failed states and requestFailed are sanitized terminals; unsupported/nonready action cannot execute. One active operation per controller, generation cancellation on explicit cancel, selection/public draft/config changes, dependency loss and superseding request. Default operation deadline 15000ms (inject a smaller timeout into internal helper in tests, not via QML); timeout is Unavailable with host reason. Late/wrong-ID/duplicate results ignored. Close/destroy session before lease release on every terminal/cancel/destruction path; don't delete borrowed Registry sessions. Unload/reload while registered-session/settings leases are active refuses with host-owned busy reason, never force-closes unrelated playback. Controller cancellation may leave a temporary lease until an in-progress provider invocation safely returns; do not force unload that window.
 
 **TDD sequence and acceptance (concrete scenarios):**
@@ -1462,140 +1472,118 @@ QCOMPARE(manager.plugin(packageId).activeLeases, 0);
 - [ ] Full build and CTest once after final GREEN (Qt6.11.1 configured build/bridge; cmake/ctest at /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin; timeout40, local fixture escalation only). Existing40legacyQMLwarnings are baseline, record precisely; don't suppress them.
 - [ ] Self-review, scoped commit (never all CMake/user files), report final API, changed paths, tests/commands/results and concerns. Controller then independent review. No GUI/main.cpp registration or real NAS call in this task.
 
-#### Task 8c: 通用界面（8b接口完成后按上文API替换以下历史草图）
+#### Task 8c: 通用设置界面（仅在8b独立审查通过后执行）
 
 **Files:**
-- Create: `core/settings/PluginSettingsController.h`
-- Create: `core/settings/PluginSettingsController.cpp`
 - Create: `components/SchemaSettingsForm.qml`
 - Create: `components/SourceAccountList.qml`
+- Create: `components/PluginSettingsText.js` (shared host-owned translated labels/statuses, no plugin-ID branching)
 - Modify: `components/PluginSettingsPanel.qml`
 - Modify: `SettingsView.qml`
-- Create: `tests/tst_PluginSettingsController.cpp`
 - Create: `tests/tst_PluginSettingsQml.cpp`
-- Modify: `CMakeLists.txt`
+- Modify narrowly: `tests/tst_MediaBridgeQml.cpp` (the two existing plugin-panel tests and their declarations/helpers)
+- Modify: `CMakeLists.txt` (new QML test/resource/link hunks only)
+- Do not modify controller/storage/manager implementation, main.cpp, unrelated login dialogs or shared scroll components.
 
 **Interfaces:**
-- Consumes: `PluginManager`, `SourceRegistry`, `SourceAccountStore`, `SettingsSchemaV2` and secure secret storage.
-- Produces: generic QML models `plugins`, `selectedPlugin`, `instances`, `settingsSections`, plus create/update/remove/enable/test/reload actions with no Navidrome-specific C++ or QML method.
+- Consumes: Task8b `PluginSettingsController` via nullable injected `controller` property. Properties: plugins, selectedPlugin, instances, settingsSections, settingsActions, sourceCapabilities, selectedPluginId, selectedInstanceId, lastErrorKey, busy; `snapshotsChanged`/`draftReset` and connection/action finished signals. No direct PluginManager, Registry, account-store or plugin-object calls in the form.
+- Produces: approved master/detail plugin settings, generic multi-instance form/actions/diagnostics, safe null-controller placeholder until Task14 registers the real controller.
+- SettingsView binds `controller: typeof pluginSettingsController !== "undefined" ? pluginSettingsController : null`; remove only old Navidrome settings dialog/helper and configure signal wiring. Preserve unrelated KuGou/NetEase login UI.
 
-- [ ] **Step 1: Write failing controller tests**
+- [ ] **Step 1: Write failing production-QML behavior tests**
 
 ```cpp
-void PluginSettingsControllerTest::secretsNeverAppearInQmlValues()
-{
-    controller.selectPlugin("org.quemusic.source.navidrome");
-    controller.saveInstance({}, {{"serverUrl", "https://music.example"},
-                                 {"username", "admin"},
-                                 {"password", "secret"}});
-    const QVariantMap row = controller.instances().first().toMap();
-    QVERIFY(!row.contains("password"));
-    QVERIFY(row.value("credentialConfigured").toBool());
-}
-
-void PluginSettingsControllerTest::unloadReportsActiveSessionReason()
-{
-    openSession("navidrome/home");
-    QVERIFY(!controller.unloadPlugin("org.quemusic.source.navidrome"));
-    QCOMPARE(controller.lastErrorKey(), "source.sessions.active");
-}
-
-
-void PluginSettingsControllerTest::testConnectionUsesEphemeralSession()
-{
-    const QUuid request = controller.testConnection(
-        {{"serverUrl", "https://music.example"},
-         {"username", "admin"}, {"password", "secret"}});
-    QVERIFY(!request.isNull());
-    completeEphemeralOpen(SourceSessionStateV2::Ready);
-    QTRY_COMPARE(connectionSpy.count(), 1);
-    QCOMPARE(registry.liveSessionCount(), 0);
-}
+// Use the actual QML panel and an injected QObject controller double with
+// Task8b's exact properties/signatures; record real user-triggered calls.
+// Isolate QSettings path/organization/application before creating QQmlEngine.
+private slots:
+    void nullControllerShowsUnavailable();
+    void selectionAndMultiInstanceCrud();
+    void schemaTypesVisibilityAndCredentialPlaceholder();
+    void invalidVisibleDraftBlocksStaleSubmission();
+    void secretsClearOnSelectionCancelAndSuccessfulSave();
+    void connectionTestRetainsUnsavedPasswordOnlyInInput();
+    void actionConfirmationAndAvailability();
+    void musicDiagnosticsAreNotMediaPermission();
+    void directorySelectionUsesLocalUrlAdapter();
+    void lifecycleBusyAndNoSchemaStates();
+    void responsiveGeometryAndTheme_data();
+    void responsiveGeometryAndTheme();
 ```
+
+Use generic fixture IDs, all seven field types, long labels, two accounts, missing/forbidden capabilities, a no-schema plugin and a secret-flagged Text field. Simulate edits/clicks on production controls; assert actual call arguments/counts and state changes, not source-text-only scans. Include rejection of an invalid URL after an earlier valid draft: Save/Test/Run must remain disabled and no stale configuration submitted. Connection test must not cause a save call. Password may remain only in its private input while editing the same draft after Test; clear on selection, Cancel, successful Save, draftReset, unload/controller replacement or form destruction. Never initialize secret input from a snapshot or copy it into public draft/models.
+In this step also register `quemusic_plugin_settings_qml_test` in CMake with the production QML resources under `/QueMusic`, Qt Quick/Qml/Test links and generated module import path so Step3 reaches behavioral assertions rather than failing because the target or imports are absent.
 
 - [ ] **Step 2: Write failing QML layout assertions**
 
 ```cpp
-QVERIFY(findObject(root, "pluginMasterList"));
-QVERIFY(findObject(root, "pluginDetailPane"));
-QVERIFY(findObject(root, "schemaSettingsForm"));
-QVERIFY(!findObject(root, "navidromeConfigAction"));
+QVERIFY(root->findChild<QQuickItem *>("pluginMasterList"));
+QVERIFY(root->findChild<QQuickItem *>("pluginDetailPane"));
+QVERIFY(root->findChild<QQuickItem *>("schemaSettingsForm"));
+QVERIFY(!root->findChild<QObject *>("navidromeConfigAction"));
 ```
+
+Render with QQuickWindow/offscreen at 1200x800 and 480x800 in isolated dark/light settings. Check mapped scene rectangles: positive widths within panel, no header/notice/form/action overlap, wrapped long text, independent master/details scrolling. Test null/empty/loaded/busy plugin states. Explicitly bind surface/text/control colors to Style.themes so platform palette cannot produce the former white content/black label defect. Capture test-only screenshots if needed; do not launch the user's app or change their theme.
 
 - [ ] **Step 3: Run and verify failure**
 
 ```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build build/bridge --target quemusic_plugin_settings_controller_test quemusic_plugin_settings_qml_test -j2
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build build/bridge --target quemusic_plugin_settings_qml_test -j2
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/bridge -R '^quemusic_plugin_settings_qml_test$' --output-on-failure --timeout 40
 ```
 
-Expected: generic controller and schema form are missing; old Navidrome-specific action still exists.
+Expected behavioral RED: old panel lacks generic selection/form/actions/layout or still exposes its Navidrome-only setup path. Compilation errors alone are not RED evidence.
 
-- [ ] **Step 4: Implement schema-driven form data and secret separation**
+- [ ] **Step 4: Implement generic form, draft synchronization and private secret submission**
 
-```cpp
-QVariantList PluginSettingsController::settingsSections() const
-{
-    auto *settings = qobject_cast<IPluginSettingsProviderV2 *>(selectedPluginObject());
-    if (settings == nullptr) return {};
-    return settingsSchemaToVariantList(settings->settingsSchema(),
-                                       m_draftNonSecretValues,
-                                       m_credentialConfigured);
+```qml
+// Panel consumes controller; the form owns only public raw overrides and
+// private input controls, never a stored credential or public secret map.
+function synchronizePublicDraft() {
+    if (!controller) return false
+    controller.cancelOperation()
+    return controller.setDraftValues(publicDraft)
 }
-
-bool PluginSettingsController::saveInstance(const QString &instanceId,
-                                             const QVariantMap &draft)
-{
-    const auto split = splitSettingsBySecretFlag(currentSchema(), draft);
-    if (!validateSettings(currentSchema(), split.nonSecret, split.secret)) return false;
-    return m_accountStore->upsert(toSourceAccount(instanceId, split), true, &m_lastError);
-}
+// Actual Save handler: first synchronize and stop if it fails; collect new
+// password-control input into a local map only for this explicit call:
+// controller.saveInstance(displayNameInput.text, localSecretDraft)
+// Test: controller.testConnection(localSecretDraft), never save/delete.
+// Action: controller.runSettingsAction(actionId, localSecretDraft, confirmed).
 ```
 
-The QVariant model contains field ID, label key, type, required, choices, current non-secret value and `credentialConfigured`. It never contains an existing secret. An empty secret during edit preserves the credential reference.
+Render type values Text0, Secret1, Url2, Integer3, Boolean4, Choice5, Directory6; secret flag overrides any text presentation. Map Text/Url/Directory to text controls (Directory also has FolderDialog), Secret or secret-flagged Text to a password-mode TextField, Integer to SpinBox, Boolean to Switch and Choice to ComboBox. Only local-folder acceptance calls controller.setDirectoryField(fieldId, selectedFolder); do not strip file URL prefixes in JS. After acceptance mirror the resulting public value without discarding other edits. Fields bind visible, required, choices, constraints and configured-secret placeholder; hidden fields do not lose edits/stored values. User-edit signals (textEdited/valueModified/activated/clicked), not programmatic valueChanged, update public overrides. Track failed synchronization separately from backend status; disable all submissions while invalid, and retain visible edits on failed Save. A status-only snapshot notification must not reset edits or duplicate operations.
 
-`testConnection(draft)` creates a non-persisted session, waits for `Ready`, `AuthenticationRequired` or `Failed`, emits a sanitized result, then closes and destroys that session and releases its lease. It never writes the draft credential.
+SourceAccountList consumes instances and selectedInstanceId, emits selection/new/remove/enable intents to the panel; new calls selectInstance(""). Confirm account removal before removeInstance. Selected unavailable accounts remain visible with reason, never silently switch. Refresh and common lifecycle buttons call discoverPlugins/loadPlugin/unloadPlugin/reloadPlugin; respect exact public flags and busy state, no forced unload.
+
+Settings action states use AvailabilityV2 (Unsupported0 hidden, Available1 enabled, Unavailable2/Forbidden3 disabled with translated reason). Required confirmation opens a host dialog and calls runSettingsAction only after acceptance; controller rechecks permission. Connection/instance state uses distinct SourceSessionStateV2 values; never infer success via truthiness. Display sourceCapabilities as read-only source-level diagnostics, with unknown runtime layers labeled not checked and an explicit per-media restriction disclaimer; opening settings must not auto-probe. Use PluginSettingsText.js for host-owned qsTr status/action labels, qsTrId labelKey with safe fallback and common reason translation; unknown keys show generic unavailable text, no raw provider error/URL/secret data. No plugin-specific conditionals or injected QML.
 
 - [ ] **Step 5: Replace the card list with the approved A layout**
 
 ```qml
-Row {
-    anchors.fill: parent
-    spacing: 16
-    ListView {
-        id: pluginMasterList
-        objectName: "pluginMasterList"
-        width: 260
-        model: pluginSettings.plugins
-    }
-    Column {
-        id: pluginDetailPane
-        objectName: "pluginDetailPane"
-        width: parent.width - pluginMasterList.width - 16
-        SourceAccountList { model: pluginSettings.instances }
-        SchemaSettingsForm {
-            id: schemaForm
-            objectName: "schemaSettingsForm"
-            sections: pluginSettings.settingsSections
-        }
-    }
-}
+readonly property bool compact: width < 760
+property var controller: null
+// Desktop: bounded master ListView left, independent detail ScrollView right.
+// Compact: bounded master above details. Clamp widths to available space.
+// Stable objectNames: pluginMasterList, pluginDetailPane, schemaSettingsForm,
+// pluginPanelHeader, pluginPanelNotice; header buttons use wrapping Flow.
 ```
 
-Remove `navidromeAccountDialog`, `createNavidromeAccount`, `updateNavidromeAccount` and all `modelData.id === "navidrome"` branches from QML. Keep common load, unload and reload actions in the detail header.
+Details contain name/version/state, common lifecycle controls, instances, schema sections, explicit Save/Test/Cancel, nonmedia settings actions and source-level capability diagnostics. Preserve settings-page containX/standWidth integration while clamping narrow geometry. Do not keep an old Navidrome dialog as a fallback. Update only the two plugin-panel legacy tests to this generic contract; no unrelated test/UI rewrites.
 
 - [ ] **Step 6: Run focused tests**
 
 ```bash
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build build/bridge --target quemusic_plugin_settings_controller_test quemusic_plugin_settings_qml_test -j2
-/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/bridge -R plugin_settings --output-on-failure
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake --build build/bridge --target quemusic_plugin_settings_qml_test quemusic_media_bridge_qml_test -j2
+/Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/bridge -R 'plugin_settings|media_bridge_qml' --output-on-failure --timeout 40
 ```
 
-Expected: schema rendering, validation, secret redaction, multiple instances and busy unload tests pass offscreen.
+Expected: production-QML behavior, credential separation, capability boundaries, multiple instances and desktop/compact dark/light geometry pass offscreen. Register new resources under /QueMusic, include the JS helper, reuse generated module import path. Isolate settings before engine creation; no system Keychain/NAS access. After focused GREEN run full build/full CTest once, report new versus existing QML warnings explicitly without suppressing them.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add core/settings components/PluginSettingsPanel.qml components/SchemaSettingsForm.qml components/SourceAccountList.qml SettingsView.qml tests/tst_PluginSettingsController.cpp tests/tst_PluginSettingsQml.cpp CMakeLists.txt
+git add components/PluginSettingsPanel.qml components/SchemaSettingsForm.qml components/SourceAccountList.qml components/PluginSettingsText.js SettingsView.qml tests/tst_PluginSettingsQml.cpp
+# Stage only this task's CMake and legacy plugin-panel test hunks after review.
 git commit -m "feat: add schema-driven plugin settings"
 ```
 
