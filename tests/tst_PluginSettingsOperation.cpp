@@ -57,6 +57,7 @@ private slots:
     void refusesForeignOwnership_data();
     void refusesForeignOwnership();
     void invalidIdentityClosesWithoutOpening();
+    void externalDeletionDuringIdentityPinsBeforeOpen();
     void neverDispatchesAfterReadyRevoked_data();
     void neverDispatchesAfterReadyRevoked();
     void ignoresUnstartedAndForeignOpenFailure_data();
@@ -211,6 +212,41 @@ void PluginSettingsOperationTest::invalidIdentityClosesWithoutOpening()
     QTRY_COMPARE(done.count(), 1); QVERIFY(!done[0][1].toMap().value("success").toBool());
     QCOMPARE(h.control.opened, 0); QCOMPARE(h.control.closed, 1); QCOMPARE(h.control.destroyed, 1);
     QCOMPARE(h.manager.plugin(packageId).activeLeases, 0);
+}
+void PluginSettingsOperationTest::externalDeletionDuringIdentityPinsBeforeOpen()
+{
+    if (!qEnvironmentVariableIsSet("QUEMUSIC_SETTINGS_PIN_CHILD")) {
+        QByteArray output;
+        const auto status = isolatedPinTest("externalDeletionDuringIdentityPinsBeforeOpen", &output);
+        QVERIFY2(status == 0, output.constData());
+        return;
+    }
+    // The safety loader keeps plugin code mapped throughout RED even if the
+    // operation misses destruction and crashes on the next virtual call.
+    QPluginLoader safetyLoader;
+    Harness h;
+    QVERIFY(h.load());
+    const auto manifest = PluginManifest::fromFile(
+        QDir(h.manager.plugin(packageId).path).filePath("manifest.json"));
+    QVERIFY(manifest.isValid());
+    safetyLoader.setFileName(manifest.libraryAbsolutePath());
+    QVERIFY(safetyLoader.load());
+    QCOMPARE(safetyLoader.instance(), h.manager.pluginInstance(packageId));
+    h.control.callback = [&](const QString &event, QObject *session) {
+        if (event == "identity") delete session;
+    };
+    auto op = h.operation();
+    QSignalSpy done(op.get(), &PluginSettingsOperation::finished);
+    op->start();
+    QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 500);
+    QCOMPARE(h.control.opened, 0);
+    QCOMPARE(h.control.closed, 0);
+    QCOMPARE(h.control.destroyed, 1);
+    QCOMPARE(done[0][1].toMap().value("reasonKey").toString(),
+             QString("source.settings.invalidOwnership"));
+    QCOMPARE(h.manager.unload(packageId), PluginOperationResult::Busy);
+    safetyLoader.unload();
+    QVERIFY(h.manager.pluginInstance(packageId));
 }
 void PluginSettingsOperationTest::neverDispatchesAfterReadyRevoked_data()
 {

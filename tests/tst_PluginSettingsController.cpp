@@ -69,6 +69,7 @@ private slots:
     void genericCrudAndForeignIdentity();
     void safeSnapshotsAndLeaseStable();
     void directoryAdapter();
+    void partialDraftUsesSelectedVisibilityContext();
     void draftProbeNeverPersists();
     void failurePreservesRunningSession();
     void probePermissionsInvalidateAndRecheck();
@@ -124,6 +125,32 @@ void PluginSettingsControllerTest::directoryAdapter()
     QVERIFY(!c.setDirectoryField("active", QUrl("file:///tmp/x")));
     QVERIFY(!c.setDirectoryField("folder", QUrl()));
     QCOMPARE(field(c, "folder").value("value").toString(), QString("/tmp/a b/100%"));
+}
+void PluginSettingsControllerTest::partialDraftUsesSelectedVisibilityContext()
+{
+    Harness h;
+    h.control.conditionalRequiredFolder = true;
+    QVERIFY(h.load());
+    auto &c = *h.controller;
+    QVERIFY(c.selectPlugin(packageId));
+    // A new draft has known empty previous context, so the true default still
+    // makes an explicitly empty folder invalid.
+    QVERIFY(!c.setDraftValues({{"folder", ""}}));
+    QCOMPARE(c.lastErrorKey(), QString("source.settings.invalidValue"));
+    QVERIFY(c.setDraftValues({{"active", false}, {"folder", "/stored"}}));
+    QVERIFY(c.saveInstance("Hidden folder", {}));
+
+    // The replacement draft omits the condition field. Its selected stored
+    // value (false), not the schema default (true), keeps folder non-required.
+    QVERIFY(c.setDraftValues({{"folder", ""}}));
+    QCOMPARE(field(c, "active").value("value").toBool(), false);
+    QCOMPARE(field(c, "folder").value("visible").toBool(), false);
+    QCOMPARE(field(c, "folder").value("value").toString(), QString());
+    QVERIFY(c.saveInstance("Cleared hidden folder", {}));
+    const auto stored = h.store.storedAccount("settings-fixture", c.selectedInstanceId().section('/', 1));
+    QVERIFY(stored);
+    QCOMPARE(stored->parameters.value("active").toBool(), false);
+    QCOMPARE(stored->parameters.value("folder").toString(), QString());
 }
 void PluginSettingsControllerTest::draftProbeNeverPersists()
 {

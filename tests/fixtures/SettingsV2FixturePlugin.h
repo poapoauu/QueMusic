@@ -18,6 +18,7 @@ struct SettingsV2FixtureControl {
     bool requiresConfirmation = false;
     bool missingAccountGrant = false;
     bool invalidSchema = false;
+    bool conditionalRequiredFolder = false;
     AvailabilityV2 accountGrant = AvailabilityV2::Available;
     QVariantMap actionConstraints;
     CapabilitySetV2 musicCapabilities{

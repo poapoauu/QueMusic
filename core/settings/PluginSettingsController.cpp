@@ -325,7 +325,10 @@ bool PluginSettingsController::setDraftValues(const QVariantMap &values)
     const auto schema = s->caches.value(s->pluginId).schema;
     for (const auto &section : schema) for (const auto &f : section.fields)
         if (isSecret(f) && values.contains(f.id)) return s->fail(QStringLiteral("source.settings.secretInPublicDraft"));
-    const auto error = validateSourceSettingsDraftV2(schema, values);
+    const auto previous = s->instanceId.isEmpty() ? std::optional<StoredSourceAccount>()
+                                                   : s->ownedAccount(s->instanceId);
+    const auto error = validateSourceSettingsDraftV2(schema, values,
+        previous ? previous->parameters : QVariantMap());
     if (!error.isEmpty()) return s->fail(error);
     if (s->draft != values) { s->invalidate(); s->draft = values; }
     s->error.clear(); s->refresh(); return true;

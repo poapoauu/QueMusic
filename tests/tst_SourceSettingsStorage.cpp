@@ -107,6 +107,7 @@ private slots:
     void draftConfigurationWithoutBackendAndInvalidInput();
     void draftConfigurationPreservesRaw();
     void visibilityPreservesHiddenAndRequiresVisible();
+    void partialEditUsesStoredVisibilityContext();
     void invalidVisibilityAndActions();
 };
 
@@ -136,6 +137,34 @@ void SourceSettingsStorageTest::visibilityPreservesHiddenAndRequiresVisible()
     // A missing comparison value is invisible even for NotEqual.
     active.defaultValue.clear();
     QVERIFY(validateSourceSettingsV2(schema({active, folder}), {}).errorKey.isEmpty());
+}
+void SourceSettingsStorageTest::partialEditUsesStoredVisibilityContext()
+{
+    Fixture f;
+    auto active = field("active", SettingsFieldTypeV2::Boolean);
+    active.defaultValue = true;
+    auto folder = field("folder", SettingsFieldTypeV2::Directory, true);
+    folder.visibleWhen = SettingsVisibilityConditionV2{
+        "active", SettingsComparisonV2::Equal, true};
+    auto r = request(schema({active, folder}),
+                     {{"active", false}, {"folder", "/stored"}});
+    QVERIFY(f.store.saveValidatedV2(r));
+    f.secrets.resetCalls();
+
+    // An explicit target value is sufficient preflight context and must not
+    // defer its visible required check.
+    r.draft = {{"active", true}, {"folder", ""}};
+    QString error;
+    QVERIFY(!f.store.saveValidatedV2(r, &error));
+    QCOMPARE(error, QString("source.settings.invalidValue"));
+    QCOMPARE(f.secrets.calls(), 0);
+
+    r.draft = {{"folder", ""}};
+    QVERIFY2(f.store.saveValidatedV2(r, &error), qPrintable(error));
+    QVERIFY(f.account());
+    QCOMPARE(f.account()->parameters.value("active").toBool(), false);
+    QCOMPARE(f.account()->parameters.value("folder").toString(), QString());
+    QCOMPARE(f.secrets.calls(), 0);
 }
 void SourceSettingsStorageTest::invalidVisibilityAndActions()
 {

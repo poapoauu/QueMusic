@@ -92,7 +92,8 @@ bool validField(const SettingsFieldV2 &f)
 }
 
 SourceSettingsValidationV2 validate(const SettingsSchemaV2 &schema, const QVariantMap &draft,
-    const QVariantMap &previous, const QStringList &configured, bool editing, bool draftOnly)
+    const QVariantMap &previous, const QStringList &configured, bool editing, bool draftOnly,
+    bool visibilityContextAvailable = true)
 {
     SourceSettingsValidationV2 result;
     auto fail = [](const char *key) {
@@ -146,7 +147,10 @@ SourceSettingsValidationV2 validate(const SettingsSchemaV2 &schema, const QVaria
     const auto publicValues = sourceSettingsPublicValuesV2(schema, draft, previous);
     for (const auto &section : schema) {
         for (auto f : section.fields) {
-            f.required = f.required && sourceSettingsFieldVisibleV2(f, publicValues);
+            const bool conditionKnown = !f.visibleWhen || visibilityContextAvailable
+                || draft.contains(f.visibleWhen->fieldId);
+            f.required = f.required && (!f.visibleWhen || (conditionKnown
+                && sourceSettingsFieldVisibleV2(f, publicValues)));
             if (secretField(f)) {
                 result.secretFieldIds.append(f.id);
                 if (f.required) result.requiredSecretFieldIds.append(f.id);
@@ -209,7 +213,13 @@ bool sourceSettingsFieldVisibleV2(const SettingsFieldV2 &field, const QVariantMa
 
 QString validateSourceSettingsDraftV2(const SettingsSchemaV2 &schema, const QVariantMap &draft)
 {
-    return validate(schema, draft, {}, {}, false, true).errorKey;
+    return validate(schema, draft, {}, {}, false, true, false).errorKey;
+}
+
+QString validateSourceSettingsDraftV2(const SettingsSchemaV2 &schema, const QVariantMap &draft,
+    const QVariantMap &previousParameters)
+{
+    return validate(schema, draft, previousParameters, {}, false, true).errorKey;
 }
 
 SourceSettingsValidationV2 validateSourceSettingsV2(const SettingsSchemaV2 &schema, const QVariantMap &draft,

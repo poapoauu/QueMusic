@@ -10,8 +10,14 @@ public:
         : IMusicSourceSessionV2(parent), config(std::move(config)), control(control) {}
     ~SettingsFixtureSession() override { ++control->destroyed; control->event("destroy", this); }
     SourceIdentityV2 identity() const override {
-        return {control->invalidIdentity ? QString("wrong") : config.sourceId,
-                config.sourceInstanceId, config.accountId, config.displayName};
+        const SourceIdentityV2 result{
+            control->invalidIdentity ? QString("wrong") : config.sourceId,
+            config.sourceInstanceId, config.accountId, config.displayName};
+        // Capture every plugin-owned value before the callback. A test may
+        // externally delete this session while identity() remains on stack.
+        auto *hostControl = control;
+        hostControl->event("identity", const_cast<SettingsFixtureSession *>(this));
+        return result;
     }
     SourceSessionStateV2 state() const override { return currentState; }
     CapabilitySetV2 capabilities() const override { return control->musicCapabilities; }
@@ -111,6 +117,11 @@ public:
         password.defaultValue = QStringLiteral("PRIVATE-default");
         SettingsFieldV2 active{"active", "settings.active", SettingsFieldTypeV2::Boolean};
         active.defaultValue = true;
+        if (control() && control()->conditionalRequiredFolder) {
+            folder.required = true;
+            folder.visibleWhen = SettingsVisibilityConditionV2{
+                "active", SettingsComparisonV2::Equal, true};
+        }
         if (control() && control()->invalidSchema) folder.id = "../invalid";
         return {{"main", "settings.main", {folder, password, active},
                  {{"diagnose", "settings.diagnose", control() && control()->requiresConfirmation}}}};

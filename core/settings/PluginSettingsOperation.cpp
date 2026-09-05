@@ -218,8 +218,19 @@ struct PluginSettingsOperation::State {
         }
         if (terminal) return;
         if (!session) { finish(false, AvailabilityV2::Unavailable, QStringLiteral("source.settings.unavailable")); return; }
+        // Observe ownership loss before the first session virtual call. The
+        // lease is callable independently of the manager, so R7 pinning is
+        // safe even when identity() reentrantly destroys both session/facade.
+        QObject::connect(session, &QObject::destroyed, owner, [this] {
+            Frame frame(this);
+            session = nullptr;
+            // Normal cleanup disconnects this observer before deleting. Reaching
+            // it means external ownership was violated, so R7 applies here too.
+            lease.pinLoadedPackage();
+            finish(false, AvailabilityV2::Unavailable, QStringLiteral("source.settings.invalidOwnership"));
+        });
         const auto identity = session->identity();
-        if (terminal) return;
+        if (terminal || !session) return;
         if (identity.sourcePluginId != configuration.sourceId || identity.accountId != configuration.accountId
             || identity.sourceInstanceId != configuration.sourceInstanceId) {
             finish(false, AvailabilityV2::Unavailable, QStringLiteral("source.settings.invalidIdentity")); return;
@@ -247,14 +258,7 @@ struct PluginSettingsOperation::State {
             }
             else { Frame frame(this); completeAction(request, name); }
         });
-        QObject::connect(session, &QObject::destroyed, owner, [this] {
-            Frame frame(this);
-            session = nullptr;
-            // Normal cleanup disconnects this observer before deleting. Reaching
-            // it means external ownership was violated, so R7 applies here too.
-            lease.pinLoadedPackage();
-            finish(false, AvailabilityV2::Unavailable, QStringLiteral("source.settings.invalidOwnership"));
-        });
+        if (terminal || !session) return;
         callRequest([&] { return session->open(); });
     }
 };

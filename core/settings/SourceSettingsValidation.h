@@ -14,7 +14,11 @@ struct SourceSettingsValidationV2 {
 };
 
 // Checks the complete schema and supplied draft, without requiring omitted fields.
+// The two-argument preflight defers only conditional requiredness because an
+// existing value may supply the condition context after metadata is read.
 QString validateSourceSettingsDraftV2(const SettingsSchemaV2 &schema, const QVariantMap &draft);
+QString validateSourceSettingsDraftV2(const SettingsSchemaV2 &schema, const QVariantMap &draft,
+    const QVariantMap &previousParameters);
 QVariantMap sourceSettingsPublicValuesV2(const SettingsSchemaV2 &schema,
     const QVariantMap &draft, const QVariantMap &previous = {});
 bool sourceSettingsFieldVisibleV2(const SettingsFieldV2 &field, const QVariantMap &values);
