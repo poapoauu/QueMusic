@@ -93,7 +93,7 @@ Rectangle {
             var account = currentInstance()
             displayNameInput.text = account ? String(account.displayName || "") : ""
             pendingProbeRequest = ""
-            probeCurrent = true
+            probeCurrent = false
         } else {
             formSections = sanitizedSections(controller.settingsSections)
             schemaForm.mergeFromSections(formSections)
@@ -172,6 +172,11 @@ Rectangle {
         return result
     }
 
+    function invalidateProbe() {
+        probeCurrent = false
+        pendingProbeRequest = ""
+    }
+
     onControllerChanged: {
         schemaForm.clearSecrets()
         refreshFromController(true)
@@ -247,11 +252,11 @@ Rectangle {
             if (!root.controller || !root.directoryFieldId)
                 return
             var localFolder = selectedFolder
-            schemaForm.acceptControllerValue(root.directoryFieldId)
             if (root.controller.setDirectoryField(root.directoryFieldId, localFolder)) {
+                schemaForm.acceptControllerValue(root.directoryFieldId)
                 root.formSections = root.sanitizedSections(root.controller.settingsSections)
                 schemaForm.mergeFromSections(root.formSections)
-                root.probeCurrent = false
+                root.invalidateProbe()
             }
             root.directoryFieldId = ""
         }
@@ -519,7 +524,7 @@ Rectangle {
                         palette.base: Style.themes.containColor
                         palette.text: Style.themes.fontColor
                         palette.placeholderText: Style.themes.textColor
-                        onTextEdited: root.probeCurrent = false
+                        onTextEdited: root.invalidateProbe()
                     }
 
                     Text {
@@ -542,7 +547,7 @@ Rectangle {
                             root.directoryFieldId = fieldId
                             directoryDialog.open()
                         }
-                        onDraftEdited: root.probeCurrent = false
+                        onDraftEdited: root.invalidateProbe()
                     }
 
                     Flow {
@@ -662,7 +667,8 @@ Rectangle {
                                     objectName: "capabilityServer_" + modelData.action
                                     width: parent.width
                                     text: qsTr("Server: %1").arg(
-                                              PluginText.layerAvailability(modelData.serverState))
+                                              PluginText.layerAvailability(modelData.serverState,
+                                                                           root.probeCurrent))
                                     color: Style.themes.textColor
                                     wrapMode: Text.Wrap
                                     font.pixelSize: Style.settings.textTip
@@ -671,7 +677,8 @@ Rectangle {
                                     objectName: "capabilityAccount_" + modelData.action
                                     width: parent.width
                                     text: qsTr("Account: %1").arg(
-                                              PluginText.layerAvailability(modelData.accountState))
+                                              PluginText.layerAvailability(modelData.accountState,
+                                                                           root.probeCurrent))
                                     color: Style.themes.textColor
                                     wrapMode: Text.Wrap
                                     font.pixelSize: Style.settings.textTip

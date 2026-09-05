@@ -45,8 +45,8 @@ function actionName(action) {
     return action >= 0 && action < names.length ? names[action] : qsTr("Unknown action")
 }
 
-function layerAvailability(state) {
-    return state === 2 ? qsTr("Not checked") : availability(state, "")
+function layerAvailability(state, currentDraftProbed) {
+    return state === 2 && !currentDraftProbed ? qsTr("Not checked") : availability(state, "")
 }
 
 function sessionState(state) {

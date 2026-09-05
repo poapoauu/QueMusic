@@ -306,7 +306,7 @@ Column {
                     Loader {
                         id: editorLoader
                         width: parent.width
-                        active: fieldRow.visible
+                        active: root.isSecret(fieldRow.fieldData) || fieldRow.visible
                         sourceComponent: root.isSecret(fieldRow.fieldData) ? secretEditor
                                          : fieldRow.fieldData.type === 3 ? integerEditor
                                          : fieldRow.fieldData.type === 4 ? booleanEditor

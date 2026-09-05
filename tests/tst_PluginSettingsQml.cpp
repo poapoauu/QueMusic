@@ -43,6 +43,11 @@ QVariantMap field(const QString &id, const QString &labelKey, int type,
     return result;
 }
 
+QString longFallbackFieldId()
+{
+    return QStringLiteral("generic_setting_identifier_without_translation_that_is_deliberately_long_enough_to_require_multiline_wrapping_at_desktop_and_compact_widths_and_continues_with_additional_fallback_safe_words_for_the_widest_supported_settings_layout_without_using_any_provider_translation_catalog");
+}
+
 class PluginSettingsControllerDouble final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList plugins READ plugins NOTIFY snapshotsChanged)
@@ -88,6 +93,9 @@ public:
         text[QStringLiteral("constraints")] = QVariantMap{
             {QStringLiteral("minLength"), 2}, {QStringLiteral("maxLength"), 32},
             {QStringLiteral("pattern"), QStringLiteral("^[A-Za-z ]+$")}};
+        QVariantMap longFallback = field(longFallbackFieldId(),
+                                         QStringLiteral("source.settings.field.untranslated.long"),
+                                         0, QStringLiteral("fallback value"));
         QVariantMap secret = field(QStringLiteral("password"),
                                    QStringLiteral("source.settings.field.password"), 1,
                                    {}, true, true);
@@ -115,7 +123,7 @@ public:
         hidden[QStringLiteral("visible")] = false;
         m_sections = {QVariantMap{{QStringLiteral("id"), QStringLiteral("connection")},
                                   {QStringLiteral("titleKey"), QStringLiteral("source.settings.section.connection")},
-                                  {QStringLiteral("fields"), QVariantList{text, secret, url, integer,
+                                  {QStringLiteral("fields"), QVariantList{text, longFallback, secret, url, integer,
                                                                            boolean, choice, directory,
                                                                            secretText, hidden}}}};
         m_actions = {
@@ -127,7 +135,8 @@ public:
             QVariantMap{{QStringLiteral("id"), QStringLiteral("refresh")},
                         {QStringLiteral("labelKey"), QStringLiteral("source.settings.action.refresh")},
                         {QStringLiteral("requiresConfirmation"), false},
-                        {QStringLiteral("state"), 1}, {QStringLiteral("reasonKey"), QString()}},
+                        {QStringLiteral("state"), 2},
+                        {QStringLiteral("reasonKey"), QStringLiteral("source.settings.unavailable")}},
             QVariantMap{{QStringLiteral("id"), QStringLiteral("unavailable")},
                         {QStringLiteral("labelKey"), QStringLiteral("source.settings.action.unavailable")},
                         {QStringLiteral("requiresConfirmation"), false},
@@ -141,7 +150,8 @@ public:
             QVariantMap{{QStringLiteral("id"), QStringLiteral("reset")},
                         {QStringLiteral("labelKey"), QStringLiteral("source.settings.action.reset")},
                         {QStringLiteral("requiresConfirmation"), true},
-                        {QStringLiteral("state"), 1}, {QStringLiteral("reasonKey"), QString()}}
+                        {QStringLiteral("state"), 2},
+                        {QStringLiteral("reasonKey"), QStringLiteral("source.settings.unavailable")}}
         };
         m_capabilities = {
             QVariantMap{{QStringLiteral("action"), 0}, {QStringLiteral("pluginState"), 1},
@@ -184,6 +194,21 @@ public:
         m_sections = {section};
         emit snapshotsChanged();
     }
+    void setPasswordVisible(bool visible)
+    {
+        QVariantMap section = m_sections.constFirst().toMap();
+        QVariantList fields = section.value(QStringLiteral("fields")).toList();
+        for (int index = 0; index < fields.size(); ++index) {
+            QVariantMap item = fields[index].toMap();
+            if (item.value(QStringLiteral("id")).toString() == QStringLiteral("password")) {
+                item[QStringLiteral("visible")] = visible;
+                fields[index] = item;
+            }
+        }
+        section[QStringLiteral("fields")] = fields;
+        m_sections = {section};
+        emit snapshotsChanged();
+    }
     void setSelectedPluginState(const QString &state)
     {
         m_selectedPlugin[QStringLiteral("state")] = state;
@@ -192,6 +217,25 @@ public:
     }
     void completeConnectionTest(bool success)
     {
+        for (int index = 0; index < m_actions.size(); ++index) {
+            QVariantMap action = m_actions[index].toMap();
+            const QString id = action.value(QStringLiteral("id")).toString();
+            if (id == QStringLiteral("refresh") || id == QStringLiteral("reset")) {
+                action[QStringLiteral("state")] = success ? 1 : 2;
+                action[QStringLiteral("reasonKey")] = success
+                    ? QString() : QStringLiteral("source.settings.unavailable");
+                m_actions[index] = action;
+            }
+        }
+        if (!m_capabilities.isEmpty()) {
+            QVariantMap capability = m_capabilities[0].toMap();
+            capability[QStringLiteral("serverState")] = 2;
+            capability[QStringLiteral("accountState")] = success ? 1 : 2;
+            capability[QStringLiteral("state")] = 2;
+            capability[QStringLiteral("reasonKey")] = QStringLiteral("source.settings.unavailable");
+            m_capabilities[0] = capability;
+        }
+        emit snapshotsChanged();
         emit connectionTestFinished(lastTestRequest,
                                     {{QStringLiteral("success"), success},
                                      {QStringLiteral("state"), success ? 1 : 2},
@@ -249,18 +293,36 @@ public:
             return false;
         QVariantMap section = m_sections.constFirst().toMap();
         QVariantList fields = section.value(QStringLiteral("fields")).toList();
+        bool draftChanged = false;
         for (int index = 0; index < fields.size(); ++index) {
             QVariantMap item = fields[index].toMap();
             const QString id = item.value(QStringLiteral("id")).toString();
             if (!item.value(QStringLiteral("secret")).toBool()
                 && item.value(QStringLiteral("type")).toInt() != 1
                 && publicDraft.contains(id)) {
+                draftChanged = draftChanged || item.value(QStringLiteral("value")) != publicDraft.value(id);
                 item[QStringLiteral("value")] = publicDraft.value(id);
                 fields[index] = item;
             }
         }
         section[QStringLiteral("fields")] = fields;
         m_sections = {section};
+        for (int index = 0; draftChanged && index < m_actions.size(); ++index) {
+            QVariantMap action = m_actions[index].toMap();
+            const QString id = action.value(QStringLiteral("id")).toString();
+            if (id == QStringLiteral("refresh") || id == QStringLiteral("reset")) {
+                action[QStringLiteral("state")] = 2;
+                action[QStringLiteral("reasonKey")] = QStringLiteral("source.settings.unavailable");
+                m_actions[index] = action;
+            }
+        }
+        if (draftChanged && !m_capabilities.isEmpty()) {
+            QVariantMap capability = m_capabilities[0].toMap();
+            capability[QStringLiteral("serverState")] = 2;
+            capability[QStringLiteral("accountState")] = 2;
+            capability[QStringLiteral("state")] = 2;
+            m_capabilities[0] = capability;
+        }
         emit snapshotsChanged();
         return true;
     }
@@ -269,6 +331,10 @@ public:
         ++directoryCalls;
         lastDirectoryField = fieldId;
         lastDirectoryUrl = localFolder;
+        if (!directoryAccepted) {
+            emit snapshotsChanged();
+            return false;
+        }
         QVariantMap section = m_sections.constFirst().toMap();
         QVariantList fields = section.value(QStringLiteral("fields")).toList();
         for (int index = 0; index < fields.size(); ++index) {
@@ -322,11 +388,26 @@ public:
     Q_INVOKABLE void cancelOperation() { ++cancelCalls; }
     Q_INVOKABLE void discoverPlugins() { ++discoverCalls; }
     Q_INVOKABLE bool loadPlugin(const QString &id) { ++loadCalls; lastLifecycleId = id; return true; }
-    Q_INVOKABLE bool unloadPlugin(const QString &id) { ++unloadCalls; lastLifecycleId = id; return true; }
+    Q_INVOKABLE bool unloadPlugin(const QString &id)
+    {
+        ++unloadCalls;
+        lastLifecycleId = id;
+        m_selectedPlugin[QStringLiteral("state")] = QStringLiteral("unloaded");
+        m_selectedPlugin[QStringLiteral("loadable")] = true;
+        m_selectedPlugin[QStringLiteral("unloadable")] = false;
+        m_selectedPlugin[QStringLiteral("reloadable")] = true;
+        m_plugins[0] = m_selectedPlugin;
+        m_sections.clear();
+        m_actions.clear();
+        m_capabilities.clear();
+        emit snapshotsChanged();
+        return true;
+    }
     Q_INVOKABLE bool reloadPlugin(const QString &id) { ++reloadCalls; lastLifecycleId = id; return true; }
 
     bool draftAccepted = true;
     bool saveAccepted = true;
+    bool directoryAccepted = true;
     int selectPluginCalls = 0;
     int selectInstanceCalls = 0;
     int setDraftCalls = 0;
@@ -455,15 +536,22 @@ private slots:
     void selectionAndMultiInstanceCrud();
     void schemaTypesVisibilityAndCredentialPlaceholder();
     void invalidVisibleDraftBlocksStaleSubmission();
+    void nestedStringConstraintsAndActualUnload();
     void failedSynchronizationAndSaveRetainDraft();
     void sameInstanceMetadataRefreshPreservesPrivateDraft();
+    void conditionalSecretHideShowPreservesPrivateDraft();
     void secretsClearOnSelectionCancelAndSuccessfulSave();
     void connectionTestRetainsUnsavedPasswordOnlyInInput();
     void actionConfirmationAndAvailability();
+    void runtimeTransitionUsesProbeProvenance();
     void localEditsRequireFreshExplicitProbe();
+    void inFlightProbeCannotAuthorizeEditedDraft();
     void musicDiagnosticsAreNotMediaPermission();
     void directorySelectionUsesLocalUrlAdapter();
+    void rejectedDirectoryConversionPreservesLocalOverride();
     void lifecycleBusyAndNoSchemaStates();
+    void longFallbackLabelWraps_data();
+    void longFallbackLabelWraps();
     void responsiveGeometryAndTheme_data();
     void responsiveGeometryAndTheme();
 
@@ -615,6 +703,45 @@ void PluginSettingsQmlTest::invalidVisibleDraftBlocksStaleSubmission()
     QVERIFY(save->property("enabled").toBool());
 }
 
+void PluginSettingsQmlTest::nestedStringConstraintsAndActualUnload()
+{
+    PluginSettingsControllerDouble controller;
+    PanelHarness harness(&controller);
+    QVERIFY2(harness.panel, qPrintable(harness.component.errorString()));
+    QObject *alias = harness.named(QStringLiteral("field_alias"));
+    QObject *save = harness.named(QStringLiteral("saveInstanceAction"));
+    QObject *test = harness.named(QStringLiteral("testConnectionAction"));
+    QObject *run = harness.named(QStringLiteral("settingsAction_refresh"));
+    QVERIFY(alias && save && test && run);
+
+    const QStringList invalidAliases{QStringLiteral("A"), QString(33, QLatin1Char('A')),
+                                       QStringLiteral("Alpha_1")};
+    for (const QString &invalid : invalidAliases) {
+        QVERIFY(editText(alias, invalid));
+        QVERIFY(!save->property("enabled").toBool());
+        QVERIFY(!test->property("enabled").toBool());
+        QVERIFY(!run->property("enabled").toBool());
+        click(save);
+        click(test);
+        click(run);
+        QCOMPARE(controller.saveCalls, 0);
+        QCOMPARE(controller.testCalls, 0);
+        QCOMPARE(controller.actionCalls, 0);
+        QVERIFY(editText(alias, QStringLiteral("Valid Alias")));
+        QVERIFY(save->property("enabled").toBool());
+    }
+
+    auto *password = harness.named(QStringLiteral("field_password"));
+    QVERIFY(editText(password, QStringLiteral("unload-private-secret")));
+    QPointer<QObject> watchedPassword(password);
+    QVERIFY(click(harness.named(QStringLiteral("unloadPluginAction"))));
+    QCOMPARE(controller.unloadCalls, 1);
+    QCoreApplication::processEvents();
+    QVERIFY(!harness.named(QStringLiteral("field_password")));
+    QVERIFY(watchedPassword.isNull()
+            || watchedPassword->property("text").toString().isEmpty());
+}
+
 void PluginSettingsQmlTest::failedSynchronizationAndSaveRetainDraft()
 {
     PluginSettingsControllerDouble controller;
@@ -660,6 +787,28 @@ void PluginSettingsQmlTest::sameInstanceMetadataRefreshPreservesPrivateDraft()
     QVERIFY(label);
     QCOMPARE(label->property("presentationKey").toString(),
              QStringLiteral("source.settings.field.refreshed.long.alias"));
+}
+
+void PluginSettingsQmlTest::conditionalSecretHideShowPreservesPrivateDraft()
+{
+    PluginSettingsControllerDouble controller;
+    PanelHarness harness(&controller);
+    QVERIFY2(harness.panel, qPrintable(harness.component.errorString()));
+    QObject *password = harness.named(QStringLiteral("field_password"));
+    QVERIFY(editText(password, QStringLiteral("private-through-visibility")));
+    QPointer<QObject> original(password);
+
+    controller.setPasswordVisible(false);
+    QCoreApplication::processEvents();
+    QVERIFY(!original.isNull());
+    QCOMPARE(original->property("text").toString(), QStringLiteral("private-through-visibility"));
+
+    controller.setPasswordVisible(true);
+    QCoreApplication::processEvents();
+    password = harness.named(QStringLiteral("field_password"));
+    QVERIFY(password);
+    QCOMPARE(password, original.data());
+    QCOMPARE(password->property("text").toString(), QStringLiteral("private-through-visibility"));
 }
 
 void PluginSettingsQmlTest::secretsClearOnSelectionCancelAndSuccessfulSave()
@@ -749,6 +898,10 @@ void PluginSettingsQmlTest::actionConfirmationAndAvailability()
                 ->property("text").toString().contains(QStringLiteral("forbidden"),
                                                         Qt::CaseInsensitive));
 
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    controller.completeConnectionTest(true);
+    QCoreApplication::processEvents();
+
     QVERIFY(click(harness.named(QStringLiteral("settingsAction_refresh"))));
     QCOMPARE(controller.actionCalls, 1);
     QCOMPARE(controller.lastActionId, QStringLiteral("refresh"));
@@ -764,12 +917,58 @@ void PluginSettingsQmlTest::actionConfirmationAndAvailability()
     QCOMPARE(controller.lastActionConfirmed, true);
 }
 
+void PluginSettingsQmlTest::runtimeTransitionUsesProbeProvenance()
+{
+    PluginSettingsControllerDouble controller;
+    PanelHarness harness(&controller);
+    QVERIFY2(harness.panel, qPrintable(harness.component.errorString()));
+    QObject *refresh = harness.named(QStringLiteral("settingsAction_refresh"));
+    QObject *server = harness.named(QStringLiteral("capabilityServer_0"));
+    QObject *account = harness.named(QStringLiteral("capabilityAccount_0"));
+    QVERIFY(refresh && server && account);
+    QVERIFY(!refresh->property("enabled").toBool());
+    QVERIFY(server->property("text").toString().contains(QStringLiteral("not checked"),
+                                                           Qt::CaseInsensitive));
+    QVERIFY(account->property("text").toString().contains(QStringLiteral("not checked"),
+                                                            Qt::CaseInsensitive));
+
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    QCOMPARE(controller.testCalls, 1);
+    controller.completeConnectionTest(true);
+    QCoreApplication::processEvents();
+    refresh = harness.named(QStringLiteral("settingsAction_refresh"));
+    server = harness.named(QStringLiteral("capabilityServer_0"));
+    account = harness.named(QStringLiteral("capabilityAccount_0"));
+    QVERIFY(refresh->property("enabled").toBool());
+    QVERIFY(server->property("text").toString().contains(QStringLiteral("unavailable"),
+                                                           Qt::CaseInsensitive));
+    QVERIFY(!server->property("text").toString().contains(QStringLiteral("not checked"),
+                                                            Qt::CaseInsensitive));
+    QVERIFY(account->property("text").toString().contains(QStringLiteral("available"),
+                                                            Qt::CaseInsensitive));
+
+    QVERIFY(editText(harness.named(QStringLiteral("field_alias")), QStringLiteral("Failed Probe")));
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    QCOMPARE(controller.testCalls, 2);
+    controller.completeConnectionTest(false);
+    QCoreApplication::processEvents();
+    refresh = harness.named(QStringLiteral("settingsAction_refresh"));
+    server = harness.named(QStringLiteral("capabilityServer_0"));
+    QVERIFY(!refresh->property("enabled").toBool());
+    QVERIFY(server->property("text").toString().contains(QStringLiteral("not checked"),
+                                                           Qt::CaseInsensitive));
+}
+
 void PluginSettingsQmlTest::localEditsRequireFreshExplicitProbe()
 {
     PluginSettingsControllerDouble controller;
     PanelHarness harness(&controller);
     QVERIFY2(harness.panel, qPrintable(harness.component.errorString()));
     QObject *refresh = harness.named(QStringLiteral("settingsAction_refresh"));
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    controller.completeConnectionTest(true);
+    QCoreApplication::processEvents();
+    refresh = harness.named(QStringLiteral("settingsAction_refresh"));
     QVERIFY(refresh && refresh->property("enabled").toBool());
 
     QVERIFY(editText(harness.named(QStringLiteral("field_alias")), QStringLiteral("Changed Draft")));
@@ -778,15 +977,17 @@ void PluginSettingsQmlTest::localEditsRequireFreshExplicitProbe()
     QCOMPARE(controller.saveCalls, 1);
     QVERIFY(!refresh->property("enabled").toBool());
     QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
-    QCOMPARE(controller.testCalls, 1);
+    QCOMPARE(controller.testCalls, 2);
     QVERIFY(!refresh->property("enabled").toBool());
     controller.completeConnectionTest(false);
     QCoreApplication::processEvents();
+    refresh = harness.named(QStringLiteral("settingsAction_refresh"));
     QVERIFY(!refresh->property("enabled").toBool());
     QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
-    QCOMPARE(controller.testCalls, 2);
+    QCOMPARE(controller.testCalls, 3);
     controller.completeConnectionTest(true);
     QCoreApplication::processEvents();
+    refresh = harness.named(QStringLiteral("settingsAction_refresh"));
     QVERIFY(refresh->property("enabled").toBool());
 
     QVERIFY(editText(harness.named(QStringLiteral("field_password")), QStringLiteral("new secret")));
@@ -794,6 +995,38 @@ void PluginSettingsQmlTest::localEditsRequireFreshExplicitProbe()
     controller.completeConnectionTest(true); // stale completion cannot restore the grant
     QCoreApplication::processEvents();
     QVERIFY(!refresh->property("enabled").toBool());
+}
+
+void PluginSettingsQmlTest::inFlightProbeCannotAuthorizeEditedDraft()
+{
+    PluginSettingsControllerDouble controller;
+    PanelHarness harness(&controller);
+    QVERIFY2(harness.panel, qPrintable(harness.component.errorString()));
+
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    QVERIFY(editText(harness.named(QStringLiteral("field_alias")), QStringLiteral("Public During Probe")));
+    controller.completeConnectionTest(true);
+    QCoreApplication::processEvents();
+    QVERIFY(!harness.named(QStringLiteral("settingsAction_refresh"))->property("enabled").toBool());
+
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    QVERIFY(editText(harness.named(QStringLiteral("field_password")), QStringLiteral("secret-during-probe")));
+    controller.completeConnectionTest(true);
+    QCoreApplication::processEvents();
+    QVERIFY(!harness.named(QStringLiteral("settingsAction_refresh"))->property("enabled").toBool());
+
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    QVERIFY(editText(harness.named(QStringLiteral("instanceDisplayNameField")),
+                     QStringLiteral("Display During Probe")));
+    controller.completeConnectionTest(true);
+    QCoreApplication::processEvents();
+    QVERIFY(!harness.named(QStringLiteral("settingsAction_refresh"))->property("enabled").toBool());
+
+    QVERIFY(click(harness.named(QStringLiteral("testConnectionAction"))));
+    controller.completeConnectionTest(true);
+    QCoreApplication::processEvents();
+    QVERIFY(harness.named(QStringLiteral("settingsAction_refresh"))->property("enabled").toBool());
+    QCOMPARE(controller.testCalls, 4);
 }
 
 void PluginSettingsQmlTest::musicDiagnosticsAreNotMediaPermission()
@@ -838,6 +1071,25 @@ void PluginSettingsQmlTest::directorySelectionUsesLocalUrlAdapter()
              QStringLiteral("/controller/converted folder"));
 }
 
+void PluginSettingsQmlTest::rejectedDirectoryConversionPreservesLocalOverride()
+{
+    PluginSettingsControllerDouble controller;
+    controller.directoryAccepted = false;
+    PanelHarness harness(&controller);
+    QVERIFY2(harness.panel, qPrintable(harness.component.errorString()));
+    QObject *directory = harness.named(QStringLiteral("field_library"));
+    QVERIFY(editText(directory, QStringLiteral("/user/local directory draft")));
+    QVERIFY(click(harness.named(QStringLiteral("directoryBrowse_library"))));
+    QObject *dialog = harness.named(QStringLiteral("pluginDirectoryDialog"));
+    QVERIFY(dialog && dialog->property("visible").toBool());
+    const QUrl rejectedFolder(QStringLiteral("file:///tmp/rejected-directory"));
+    QVERIFY(dialog->setProperty("selectedFolder", rejectedFolder));
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accepted", Qt::DirectConnection));
+    QCOMPARE(controller.directoryCalls, 1);
+    QCOMPARE(controller.lastDirectoryUrl, rejectedFolder);
+    QCOMPARE(directory->property("text").toString(), QStringLiteral("/user/local directory draft"));
+}
+
 void PluginSettingsQmlTest::lifecycleBusyAndNoSchemaStates()
 {
     PluginSettingsControllerDouble controller;
@@ -868,6 +1120,34 @@ void PluginSettingsQmlTest::lifecycleBusyAndNoSchemaStates()
     QVERIFY(harness.panel->setProperty("controller", QVariant::fromValue(static_cast<QObject *>(nullptr))));
     QCoreApplication::processEvents();
     QVERIFY(harness.named(QStringLiteral("pluginUnavailablePlaceholder"))->property("visible").toBool());
+}
+
+void PluginSettingsQmlTest::longFallbackLabelWraps_data()
+{
+    QTest::addColumn<int>("width");
+    QTest::newRow("desktop") << 1200;
+    QTest::newRow("compact") << 480;
+}
+
+void PluginSettingsQmlTest::longFallbackLabelWraps()
+{
+    QFETCH(int, width);
+    PluginSettingsControllerDouble controller;
+    PanelHarness harness(&controller, QSize(width, 800));
+    QVERIFY2(harness.panel, qPrintable(harness.component.errorString()));
+    auto *form = qobject_cast<QQuickItem *>(harness.named(QStringLiteral("schemaSettingsForm")));
+    auto *label = qobject_cast<QQuickItem *>(
+        harness.named(QStringLiteral("fieldLabel_%1").arg(longFallbackFieldId())));
+    QVERIFY(form && label);
+    QCOMPARE(label->property("text").toString(), longFallbackFieldId());
+    QVERIFY(label->property("wrapMode").toInt() != 0);
+    QVERIFY(label->property("lineCount").toInt() >= 2);
+    QVERIFY(label->property("paintedWidth").toReal() <= label->width() + 0.5);
+    QVERIFY(label->height() > label->property("font").value<QFont>().pixelSize() * 1.5);
+    const QRectF formRect = sceneRect(form);
+    const QRectF labelRect = sceneRect(label);
+    QVERIFY(labelRect.left() >= formRect.left() - 0.5);
+    QVERIFY(labelRect.right() <= formRect.right() + 0.5);
 }
 
 void PluginSettingsQmlTest::responsiveGeometryAndTheme_data()
