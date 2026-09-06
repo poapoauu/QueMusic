@@ -1728,14 +1728,24 @@ git commit -m "feat: migrate navidrome plugin to source sdk v2"
 **Files:**
 - Create: `plugins/navidrome-source/NavidromeMappers.h`
 - Create: `plugins/navidrome-source/NavidromeMappers.cpp`
+- Modify: `plugins/navidrome-source/NavidromeApiClient.h`
+- Modify: `plugins/navidrome-source/NavidromeApiClient.cpp`
+- Modify: `plugins/navidrome-source/NavidromeSourcePlugin.cpp`
 - Modify: `plugins/navidrome-source/NavidromeSourceSession.h`
 - Modify: `plugins/navidrome-source/NavidromeSourceSession.cpp`
 - Modify: `plugins/navidrome-source/CMakeLists.txt`
+- Modify: `core/music/AggregateComposer.h`
+- Modify: `core/music/AggregateComposer.cpp`
+- Modify: `core/music/PageCache.cpp`
+- Modify: `core/music/PageRepository.cpp`
+- Modify: `tests/tst_AggregateComposer.cpp`
+- Modify: `tests/tst_PageRepository.cpp`
+- Modify: `tests/tst_MusicCaches.cpp`
 - Modify: `tests/tst_NavidromeSource.cpp`
 
 **Interfaces:**
 - Consumes: `IPageProviderV2`, `IPlaybackProviderV2`, `IDownloadProviderV2`, Navidrome transport and v2 DTOs.
-- Produces: recommendation/category/favorites/search pages plus stream, artwork, lyrics and download descriptors.
+- Produces: recommendation/category/favorites/search pages, stream/artwork/lyrics results, atomic local downloads, and source-ordered native-playlist composition.
 
 - [ ] **Step 1: Add table-driven failing endpoint mapping tests**
 
@@ -1774,6 +1784,16 @@ void NavidromeSourceTest::favoritesMapsSongsAlbumsAndArtists()
     QCOMPARE(page.sections.size(), 3);
     QCOMPARE(page.sections[0].items[0].ref.sourceInstanceId, "navidrome/home");
 }
+
+void NavidromeSourceTest::playlistTracksCarryAbsoluteOccurrenceMetadata()
+{
+    server.enqueueJson("/rest/getPlaylist.view", playlistWithDuplicateSongs());
+    const QUuid id = session.fetchPage(playlistQuery("p1", 1, "1"));
+    QTRY_COMPARE(pageSpy.count(), 1);
+    const auto page = qvariant_cast<PageResultV2>(pageSpy.takeFirst().at(1));
+    QCOMPARE(page.sections[0].items[0].metadata.value("playlistId").toString(), "p1");
+    QCOMPARE(page.sections[0].items[0].metadata.value("playlistIndex").toInt(), 1);
+}
 ```
 
 - [ ] **Step 2: Add failing media-resolution tests**
@@ -1795,6 +1815,16 @@ void NavidromeSourceTest::lyricsUsesNegotiatedEndpoint()
     session.fetchLyrics(trackRef("42"));
     QTRY_COMPARE(actionSpy.count(), 1);
     QCOMPARE(lastOperation(actionSpy), SourceActionV2::Lyrics);
+}
+
+void NavidromeSourceTest::downloadWritesRequestedLocalFileAtomically()
+{
+    server.enqueueBytes("/rest/download.view", QByteArrayLiteral("audio-bytes"));
+    const QUrl destination = newLocalDestination();
+    session.download(trackRef("42"), destination);
+    QTRY_COMPARE(actionSpy.count(), 1);
+    QCOMPARE(lastAction(actionSpy).payload.value("destination").toUrl(), destination);
+    QCOMPARE(readFile(destination), QByteArrayLiteral("audio-bytes"));
 }
 ```
 
@@ -1823,17 +1853,25 @@ QList<PageSectionV2> search(const QJsonObject &response,
 }
 ```
 
-Mappers contain no network or session state. Every item receives stable `MediaRefV2`, source badge metadata, server IDs, duration, cover art reference, reliable external IDs and per-object action candidates.
+Mappers contain no network or session state. Every item receives stable `MediaRefV2`, source badge metadata, server IDs, duration, cover art reference, reliable external IDs and per-object action candidates. Tracks mapped from `getPlaylist` additionally receive only `metadata.playlistId` as a non-empty string and `metadata.playlistIndex` as the absolute zero-based integer position in the server list. Do not use `trackNumber` or a rendered row index as playlist position.
 
 - [ ] **Step 5: Implement endpoint dispatch and pagination**
 
 Map standard sections to `getAlbumList2`, `getGenres`, `getArtists`, `getArtist`, `getAlbum`, `getSong`, `getSongsByGenre`, `getPlaylist`, `getStarred2` and `search3`. `PageQueryV2.filters` uses the mutually exclusive keys `artistId`, `albumId`, `songId`, `playlistId` or `genre` for drill-down. `artistId` returns Albums; album/playlist/genre drill-down returns Tracks, preserving native playlist order and duplicates. A top-level `Tracks` request without one of these filters returns typed `Unsupported` rather than inventing a server-wide song order. Translate offset-based endpoints to opaque provider cursors encoded as decimal offsets; reject negative or malformed cursors. Use `size=query.limit` and cap the accepted limit to `1..500`.
 
+`getPlaylist` returns a native ordered collection. Slice its entry array by the validated decimal offset and limit, set each returned occurrence's absolute `playlistIndex`, and expose the next absolute offset only when entries remain. A `playlistId` query requires one concrete `sourceInstanceId` matching the session; reject aggregate or foreign scope before transport.
+
+Extend the host with a typed source-ordered composition mode selected only for a specific-source `playlistId` query. It accepts exactly one source, preserves input order and repeated reliable IDs in the initial result and every continuation, and never carries discovery-page `seenIds` into that cursor. `PageRepository` rejects aggregate `playlistId` before provider dispatch, treats validated `playlistId` as cacheable, and uses this mode for composition. Discovery queries keep the existing round-robin/reliable-ID deduplication unchanged. Add composer and repository regressions for duplicate ISRC/MBID occurrences, provider order across continuation and zero provider calls for aggregate playlist queries.
+
+Extend `PageCache` live/disk sanitization with exactly two native-playlist fields: non-empty string `playlistId` and integral `playlistIndex` in `0..INT_MAX`. Invalid types, negative/fractional/out-of-range indexes and all unknown metadata remain dropped. Add live sanitization and disk round-trip tests proving valid occurrence metadata survives without widening the allowlist.
+
 An initial favorites query may return its three standard sections as required above. A continuation query carries the clicked section kind and that section's provider cursor; return only that requested section on continuation (Ruling 12). Keep cursors/offsets section-specific even when a shared underlying endpoint supplies several lists. A plugin must adapt whole-response transport into this typed per-section continuation contract.
 
 - [ ] **Step 6: Implement media providers**
 
-`resolveStream` uses `stream`; artwork uses `getCoverArt`; lyrics prefer `getLyricsBySongId` only when negotiated and otherwise use the compatible lyric endpoint; download uses `download`. Stream/download URLs are emitted transiently and never inserted into page metadata or disk cache.
+Implement `IPageProviderV2`, `IPlaybackProviderV2` and `IDownloadProviderV2` on the session and declare only the corresponding implemented actions (`Play`, `Artwork`, `Lyrics`, `Download`) in the plugin descriptor; Task11 actions remain absent/`Unsupported` until their provider interfaces exist. `resolveStream` uses `stream` and emits only a transient `StreamDescriptorV2`; it is never inserted into page metadata or disk cache. Artwork uses bounded binary `getCoverArt` bytes and the existing exact `ActionResultV2` keys `bytes: QByteArray` and `mimeType: QString`. Lyrics prefer `getLyricsBySongId` only when negotiated and otherwise use the compatible endpoint, emitting exact `lyrics: QString`.
+
+Extend `NavidromeApiClient` with bounded binary response support for artwork and streaming-to-file support for downloads without exposing authenticated URLs. `download(media, destination)` accepts only an absolute local file URL whose parent directory already exists and whose target does not exist. Stream `download` into a uniquely named temporary file in that same directory and atomically rename without overwriting; do not buffer the full song in memory. On cancel, HTTP/Subsonic failure, disk error, session close or destruction, abort transport and remove every partial/temp file. Success is emitted only after the final rename and uses `ActionResultV2{Download, exact requested media, {"destination": exact requested QUrl}}`. Add fake-server tests for content, exact payload, no authenticated URL in action/page/cache data, existing/remote/relative destination early rejection with zero requests, destination race/no-overwrite behavior, cancellation/failure/teardown cleanup, and no terminal success before the file is committed.
 
 - [ ] **Step 7: Run focused tests**
 
@@ -1842,12 +1880,12 @@ An initial favorites query may return its three standard sections as required ab
 /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/ctest --test-dir build/bridge -R navidrome_source --output-on-failure
 ```
 
-Expected: all endpoint, mapper, pagination, lyrics fallback, stream, artwork and download tests pass.
+Expected: all endpoint, mapper, pagination, lyrics fallback, stream, artwork, atomic-download, native-playlist order/duplicate and cache-sanitization tests pass.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add plugins/navidrome-source/NavidromeMappers.* plugins/navidrome-source/NavidromeSourceSession.* plugins/navidrome-source/CMakeLists.txt tests/tst_NavidromeSource.cpp
+git add plugins/navidrome-source/NavidromeMappers.* plugins/navidrome-source/NavidromeApiClient.* plugins/navidrome-source/NavidromeSourcePlugin.cpp plugins/navidrome-source/NavidromeSourceSession.* plugins/navidrome-source/CMakeLists.txt core/music/AggregateComposer.* core/music/PageCache.cpp core/music/PageRepository.cpp tests/tst_AggregateComposer.cpp tests/tst_PageRepository.cpp tests/tst_MusicCaches.cpp tests/tst_NavidromeSource.cpp
 git commit -m "feat: expose navidrome page feeds and media"
 ```
 
