@@ -236,18 +236,6 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
     const QNetworkReply::NetworkError networkCode = reply->error();
     reply->deleteLater();
 
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
-    const QJsonValue responseValue = document.object().value(QStringLiteral("subsonic-response"));
-    const QJsonObject response = responseValue.toObject();
-    if (parseError.error == QJsonParseError::NoError && responseValue.isObject()
-        && response.value(QStringLiteral("status")).toString() == QStringLiteral("failed")) {
-        emit failed(requestId,
-                    subsonicFailure(response.value(QStringLiteral("error")).toObject()
-                                        .value(QStringLiteral("code")).toInt(-1),
-                                    rawStatus));
-        return;
-    }
     if (rawStatus == 404 || rawStatus == 405 || rawStatus == 501) {
         emit failed(requestId,
                     error(SourceErrorKindV2::Unsupported,
@@ -273,6 +261,19 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
         emit failed(requestId,
                     error(SourceErrorKindV2::Network, QStringLiteral("source.network.failed"),
                           QStringLiteral("The Navidrome request failed."), status));
+        return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+    const QJsonValue responseValue = document.object().value(QStringLiteral("subsonic-response"));
+    const QJsonObject response = responseValue.toObject();
+    if (parseError.error == QJsonParseError::NoError && responseValue.isObject()
+        && response.value(QStringLiteral("status")).toString() == QStringLiteral("failed")) {
+        emit failed(requestId,
+                    subsonicFailure(response.value(QStringLiteral("error")).toObject()
+                                        .value(QStringLiteral("code")).toInt(-1),
+                                    rawStatus));
         return;
     }
     if (parseError.error != QJsonParseError::NoError || !responseValue.isObject()

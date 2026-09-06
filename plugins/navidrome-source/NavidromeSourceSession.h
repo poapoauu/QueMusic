@@ -54,10 +54,12 @@ private:
     void handleClientSuccess(const QUuid &requestId, const QString &operation,
                              const QJsonObject &response);
     void handleClientFailure(const QUuid &requestId, const SourceErrorV2 &error);
-    void startExtensions();
-    void startCurrentUser();
-    void finishOpenReady(bool validUser, const QJsonObject &user = {});
-    void failOpen(const SourceErrorV2 &error);
+    bool isOpenRequestActive(const QUuid &requestId) const;
+    void startExtensions(const QUuid &requestId);
+    void startCurrentUser(const QUuid &requestId);
+    void finishOpenReady(const QUuid &requestId, bool validUser,
+                         const QJsonObject &user = {});
+    void failOpen(const QUuid &requestId, const SourceErrorV2 &error);
     void setState(SourceSessionStateV2 state);
     void setCapabilities(const CapabilitySetV2 &capabilities);
     static QHash<SourceActionV2, ActionAvailabilityV2> conservativeServerActions();

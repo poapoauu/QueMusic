@@ -180,6 +180,16 @@ SettingsFieldV2 field(const SettingsSchemaV2 &schema, const QString &id)
     return {};
 }
 
+const QList<SourceActionV2> allSourceActions{
+    SourceActionV2::Play, SourceActionV2::Artwork, SourceActionV2::Lyrics,
+    SourceActionV2::Download, SourceActionV2::Favorite, SourceActionV2::Unfavorite,
+    SourceActionV2::Rating, SourceActionV2::Scrobble,
+    SourceActionV2::CreatePlaylist, SourceActionV2::UpdatePlaylist,
+    SourceActionV2::DeletePlaylist, SourceActionV2::AddPlaylistTracks,
+    SourceActionV2::RemovePlaylistTracks, SourceActionV2::FetchPlayQueue,
+    SourceActionV2::SavePlayQueue, SourceActionV2::FetchBookmarks,
+    SourceActionV2::CreateBookmark, SourceActionV2::DeleteBookmark};
+
 class ImmediateReply final : public QNetworkReply {
 public:
     ImmediateReply(const QNetworkRequest &request, QByteArray body, QObject *parent)
@@ -247,12 +257,18 @@ private slots:
     void packageAndQtMetadataAdvertiseV2();
     void pluginAdvertisesV2AndGenericSettings();
     void pluginCreatesOnlyBaseV2Session();
+    void descriptorMatchesAbsentV2Providers();
     void legacyAndNamedSecretsProduceEquivalentControlledTokens();
     void malformedOrMissingPasswordFailsBeforeNetwork();
     void transportPreservesBasePathAndUsesFreshSalt();
     void transportMapsTypedErrorsAndRedactsDetails();
+    void authoritativeHttpStatusOverridesSubsonicBody();
     void synchronousCompletionAndCancellationAreSafe();
     void openNegotiatesExtensionsAndCurrentUserRoles();
+    void synchronousOpenInterruption_data();
+    void synchronousOpenInterruption();
+    void extensionsRetainConservativeCapabilities_data();
+    void extensionsRetainConservativeCapabilities();
     void roleMappingIsLiteralAndIndependent();
     void unsupportedOrMalformedRoleResponseKeepsReadSessionReady();
     void authenticationAndNetworkFailuresSetTypedStates();
@@ -332,6 +348,25 @@ void NavidromeSourceTest::pluginCreatesOnlyBaseV2Session()
     QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) == nullptr);
+}
+
+void NavidromeSourceTest::descriptorMatchesAbsentV2Providers()
+{
+    NavidromeSourcePlugin plugin;
+    const SourceDescriptorV2 descriptor = plugin.descriptor();
+    IMusicSourceSessionV2 *session = plugin.createSession(configuration(8533), &plugin);
+    QVERIFY(session != nullptr);
+    QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IRatingProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IPlayQueueProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IBookmarkProviderV2 *>(session) == nullptr);
+    QCOMPARE(descriptor.declaredActions.size(), 0);
+    for (SourceActionV2 action : allSourceActions)
+        QCOMPARE(descriptor.declaredActions.value(action).state, AvailabilityV2::Unsupported);
 }
 
 void NavidromeSourceTest::legacyAndNamedSecretsProduceEquivalentControlledTokens()
@@ -459,6 +494,35 @@ void NavidromeSourceTest::transportMapsTypedErrorsAndRedactsDetails()
     }
 }
 
+void NavidromeSourceTest::authoritativeHttpStatusOverridesSubsonicBody()
+{
+    struct Case {
+        int httpStatus;
+        int subsonicCode;
+        SourceErrorKindV2 expected;
+    };
+    const QList<Case> cases{
+        {401, 50, SourceErrorKindV2::Authentication},
+        {404, 50, SourceErrorKindV2::Unsupported},
+        {405, 40, SourceErrorKindV2::Unsupported},
+        {501, 70, SourceErrorKindV2::Unsupported}};
+    for (const Case &testCase : cases) {
+        FakeNavidromeServer server;
+        QVERIFY2(server.start(), qPrintable(server.errorString()));
+        server.enqueue(subsonicError(testCase.subsonicCode,
+                                     QStringLiteral("body must not override HTTP status")),
+                       testCase.httpStatus);
+        QNetworkAccessManager network;
+        NavidromeApiClient client(configuration(server.serverPort()), &network);
+        QSignalSpy failure(&client, &NavidromeApiClient::failed);
+        client.get(QStringLiteral("status-precedence"), QStringLiteral("ping"));
+        QTRY_COMPARE(failure.count(), 1);
+        const SourceErrorV2 error = qvariant_cast<SourceErrorV2>(failure.constFirst().at(1));
+        QCOMPARE(error.kind, testCase.expected);
+        QCOMPARE(error.httpStatus, std::optional<int>(testCase.httpStatus));
+    }
+}
+
 void NavidromeSourceTest::synchronousCompletionAndCancellationAreSafe()
 {
     ImmediateNetworkAccessManager network;
@@ -509,6 +573,118 @@ void NavidromeSourceTest::openNegotiatesExtensionsAndCurrentUserRoles()
     QCOMPARE(capabilities.action(SourceActionV2::Lyrics).state, AvailabilityV2::Available);
     QCOMPARE(capabilities.serverAction(SourceActionV2::Play).state, AvailabilityV2::Available);
     QCOMPARE(capabilities.accountAction(SourceActionV2::Play).state, AvailabilityV2::Available);
+}
+
+void NavidromeSourceTest::synchronousOpenInterruption_data()
+{
+    QTest::addColumn<int>("trigger");
+    QTest::addColumn<bool>("cancelInsteadOfClose");
+
+    constexpr int RequestStarted = 0;
+    constexpr int StateChanged = 1;
+    constexpr int CapabilitiesChanged = 2;
+    QTest::newRow("cancel-from-requestStarted") << RequestStarted << true;
+    QTest::newRow("close-from-requestStarted") << RequestStarted << false;
+    QTest::newRow("cancel-from-stateChanged") << StateChanged << true;
+    QTest::newRow("close-from-stateChanged") << StateChanged << false;
+    QTest::newRow("cancel-from-capabilitiesChanged") << CapabilitiesChanged << true;
+    QTest::newRow("close-from-capabilitiesChanged") << CapabilitiesChanged << false;
+}
+
+void NavidromeSourceTest::synchronousOpenInterruption()
+{
+    QFETCH(int, trigger);
+    QFETCH(bool, cancelInsteadOfClose);
+    constexpr int RequestStarted = 0;
+    constexpr int StateChanged = 1;
+    constexpr int CapabilitiesChanged = 2;
+
+    FakeNavidromeServer server;
+    QVERIFY2(server.start(), qPrintable(server.errorString()));
+    enqueueSuccessfulHandshake(server);
+    QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()), &network);
+    QUuid startedId;
+    bool interruptionHadRequestId = false;
+    bool interrupted = false;
+    bool sawReady = false;
+    const auto interrupt = [&] {
+        if (interrupted)
+            return;
+        interrupted = true;
+        interruptionHadRequestId = !startedId.isNull();
+        if (cancelInsteadOfClose)
+            session.cancel(startedId);
+        else
+            session.close();
+    };
+    connect(&session, &IMusicSourceSessionV2::requestStarted, &session,
+            [&](const QUuid &requestId) {
+        startedId = requestId;
+        if (trigger == RequestStarted)
+            interrupt();
+    });
+    connect(&session, &IMusicSourceSessionV2::stateChanged, &session,
+            [&](SourceSessionStateV2 state) {
+        sawReady = sawReady || state == SourceSessionStateV2::Ready;
+        if (trigger == StateChanged && state == SourceSessionStateV2::Connecting)
+            interrupt();
+    });
+    connect(&session, &IMusicSourceSessionV2::capabilitiesChanged, &session,
+            [&](const CapabilitySetV2 &capabilities) {
+        if (trigger == CapabilitiesChanged && !capabilities.serverActions.isEmpty())
+            interrupt();
+    });
+
+    const QUuid returnedId = session.open();
+    if (trigger == CapabilitiesChanged)
+        QTRY_VERIFY_WITH_TIMEOUT(interrupted, 1000);
+    else
+        QVERIFY(interrupted);
+    QVERIFY(interruptionHadRequestId);
+    QVERIFY(!returnedId.isNull());
+    QCOMPARE(returnedId, startedId);
+    QTest::qWait(150);
+    QCOMPARE(session.state(), SourceSessionStateV2::Closed);
+    QVERIFY(!sawReady);
+    QVERIFY(session.capabilities().serverActions.isEmpty());
+    QVERIFY(session.capabilities().accountActions.isEmpty());
+    QCOMPARE(server.requests().size(), trigger == CapabilitiesChanged ? 1 : 0);
+}
+
+void NavidromeSourceTest::extensionsRetainConservativeCapabilities_data()
+{
+    QTest::addColumn<QByteArray>("extensionBody");
+    QTest::addColumn<int>("httpStatus");
+    QTest::newRow("empty-extension-set")
+        << QJsonDocument(extensionsResponse({})).toJson(QJsonDocument::Compact) << 200;
+    QTest::newRow("recognized-extension-set")
+        << QJsonDocument(extensionsResponse({QStringLiteral("lyrics"),
+                                             QStringLiteral("songLyrics")}))
+               .toJson(QJsonDocument::Compact)
+        << 200;
+    QTest::newRow("malformed-extension-response") << QByteArrayLiteral("not-json") << 200;
+    QTest::newRow("unsupported-extension-endpoint") << QByteArrayLiteral("not-found") << 404;
+}
+
+void NavidromeSourceTest::extensionsRetainConservativeCapabilities()
+{
+    QFETCH(QByteArray, extensionBody);
+    QFETCH(int, httpStatus);
+    FakeNavidromeServer server;
+    QVERIFY2(server.start(), qPrintable(server.errorString()));
+    server.enqueue(subsonicOk());
+    server.enqueueRaw(extensionBody, httpStatus);
+    server.enqueue(userResponse());
+    QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()), &network);
+    session.open();
+    QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+    QCOMPARE(server.requests().size(), 3);
+    const CapabilitySetV2 capabilities = session.capabilities();
+    QCOMPARE(capabilities.serverActions.size(), allSourceActions.size());
+    for (SourceActionV2 action : allSourceActions)
+        QCOMPARE(capabilities.serverAction(action).state, AvailabilityV2::Available);
 }
 
 void NavidromeSourceTest::roleMappingIsLiteralAndIndependent()

@@ -101,47 +101,68 @@ CapabilitySetV2 NavidromeSourceSession::capabilities() const
 
 QUuid NavidromeSourceSession::open()
 {
-    if (!m_openClientRequestId.isNull())
-        m_client->cancel(m_openClientRequestId);
+    const QUuid previousClientRequestId = m_openClientRequestId;
     m_openClientRequestId = {};
+    m_openRequestId = {};
+    m_openStage.clear();
+    if (!previousClientRequestId.isNull())
+        m_client->cancel(previousClientRequestId);
+
+    const QUuid requestId = QUuid::createUuid();
+    m_openRequestId = requestId;
     m_openStage = QStringLiteral("ping");
-    m_openRequestId = QUuid::createUuid();
+    emit requestStarted(requestId);
+    if (!isOpenRequestActive(requestId))
+        return requestId;
     setCapabilities({});
+    if (!isOpenRequestActive(requestId))
+        return requestId;
     setState(SourceSessionStateV2::Connecting);
-    emit requestStarted(m_openRequestId);
-    m_openClientRequestId = m_client->get(QStringLiteral("open.ping"), QStringLiteral("ping"));
-    return m_openRequestId;
+    if (!isOpenRequestActive(requestId))
+        return requestId;
+    const QUuid clientRequestId =
+        m_client->get(QStringLiteral("open.ping"), QStringLiteral("ping"));
+    if (!isOpenRequestActive(requestId)) {
+        m_client->cancel(clientRequestId);
+        return requestId;
+    }
+    m_openClientRequestId = clientRequestId;
+    return requestId;
 }
 
 void NavidromeSourceSession::close()
 {
-    if (m_state == SourceSessionStateV2::Closed && m_openClientRequestId.isNull()
+    if (m_state == SourceSessionStateV2::Closed && m_openRequestId.isNull()
+        && m_openClientRequestId.isNull()
         && m_legacyRequests.isEmpty() && m_localLegacyRequests.isEmpty())
         return;
-    setState(SourceSessionStateV2::Closing);
-    if (!m_openClientRequestId.isNull())
-        m_client->cancel(m_openClientRequestId);
+    const QUuid openClientRequestId = m_openClientRequestId;
     const QList<QUuid> legacyIds = m_legacyRequests.keys();
-    for (const QUuid &id : legacyIds)
-        m_client->cancel(id);
     m_openClientRequestId = {};
     m_openRequestId = {};
     m_openStage.clear();
     m_legacyRequests.clear();
     m_localLegacyRequests.clear();
     m_lyricsTracks.clear();
+    setState(SourceSessionStateV2::Closing);
+    if (!openClientRequestId.isNull())
+        m_client->cancel(openClientRequestId);
+    for (const QUuid &id : legacyIds)
+        m_client->cancel(id);
     setCapabilities({});
     setState(SourceSessionStateV2::Closed);
 }
 
 void NavidromeSourceSession::cancel(const QUuid &requestId)
 {
-    if (requestId == m_openRequestId) {
-        if (!m_openClientRequestId.isNull())
-            m_client->cancel(m_openClientRequestId);
+    if (!requestId.isNull() && requestId == m_openRequestId) {
+        const QUuid clientRequestId = m_openClientRequestId;
         m_openClientRequestId = {};
         m_openRequestId = {};
         m_openStage.clear();
+        if (!clientRequestId.isNull())
+            m_client->cancel(clientRequestId);
+        setCapabilities({});
         setState(SourceSessionStateV2::Closed);
         return;
     }
@@ -276,25 +297,21 @@ void NavidromeSourceSession::handleClientSuccess(const QUuid &requestId,
                                                  const QString &operation,
                                                  const QJsonObject &response)
 {
-    if (requestId == m_openClientRequestId) {
+    if (!m_openRequestId.isNull() && requestId == m_openClientRequestId) {
+        const QUuid openRequestId = m_openRequestId;
         m_openClientRequestId = {};
         if (operation == QStringLiteral("open.ping")) {
             CapabilitySetV2 next = m_capabilities;
             next.serverActions = conservativeServerActions();
             next.accountActions = unavailableAccountActions();
             setCapabilities(next);
-            startExtensions();
+            if (isOpenRequestActive(openRequestId))
+                startExtensions(openRequestId);
         } else if (operation == QStringLiteral("open.extensions")) {
-            const QJsonValue extensionsValue = response.value(QStringLiteral("openSubsonicExtensions"));
-            if (extensionsValue.isArray()) {
-                for (const QJsonValue &entryValue : extensionsValue.toArray()) {
-                    const QJsonObject entry = entryValue.toObject();
-                    if (!entryValue.isObject() || !entry.value(QStringLiteral("name")).isString()
-                        || !entry.value(QStringLiteral("versions")).isArray())
-                        break;
-                }
-            }
-            startCurrentUser();
+            // Every current v2 action has a standard Subsonic endpoint; Lyrics
+            // also has a standard fallback. Extensions therefore add no grants
+            // in Task 9, and the conservative post-ping action map stays intact.
+            startCurrentUser(openRequestId);
         } else if (operation == QStringLiteral("open.user")) {
             const QJsonValue userValue = response.value(QStringLiteral("user"));
             const QJsonObject user = userValue.toObject();
@@ -302,7 +319,7 @@ void NavidromeSourceSession::handleClientSuccess(const QUuid &requestId,
                 && user.value(QStringLiteral("username")).isString()
                 && user.value(QStringLiteral("username")).toString()
                     == m_configuration.parameters.value(QStringLiteral("username")).toString();
-            finishOpenReady(validUser, user);
+            finishOpenReady(openRequestId, validUser, user);
         }
         return;
     }
@@ -433,7 +450,8 @@ void NavidromeSourceSession::handleClientSuccess(const QUuid &requestId,
 void NavidromeSourceSession::handleClientFailure(const QUuid &requestId,
                                                  const SourceErrorV2 &error)
 {
-    if (requestId == m_openClientRequestId) {
+    if (!m_openRequestId.isNull() && requestId == m_openClientRequestId) {
+        const QUuid openRequestId = m_openRequestId;
         const QString stage = m_openStage;
         m_openClientRequestId = {};
         if (error.kind == SourceErrorKindV2::Unsupported
@@ -443,13 +461,13 @@ void NavidromeSourceSession::handleClientFailure(const QUuid &requestId,
             // layers already established after ping.
             if (!m_capabilities.serverActions.isEmpty()) {
                 if (stage == QStringLiteral("user"))
-                    finishOpenReady(false);
+                    finishOpenReady(openRequestId, false);
                 else if (stage == QStringLiteral("extensions"))
-                    startCurrentUser();
+                    startCurrentUser(openRequestId);
                 return;
             }
         }
-        failOpen(error);
+        failOpen(openRequestId, error);
         return;
     }
     auto pending = m_legacyRequests.find(requestId);
@@ -461,45 +479,69 @@ void NavidromeSourceSession::handleClientFailure(const QUuid &requestId,
     emit legacyRequestFailed(request.publicId, error);
 }
 
-void NavidromeSourceSession::startExtensions()
+bool NavidromeSourceSession::isOpenRequestActive(const QUuid &requestId) const
 {
-    m_openStage = QStringLiteral("extensions");
-    m_openClientRequestId = m_client->get(QStringLiteral("open.extensions"),
-                                           QStringLiteral("getOpenSubsonicExtensions"));
+    return !requestId.isNull() && m_openRequestId == requestId;
 }
 
-void NavidromeSourceSession::startCurrentUser()
+void NavidromeSourceSession::startExtensions(const QUuid &requestId)
 {
+    if (!isOpenRequestActive(requestId))
+        return;
+    m_openStage = QStringLiteral("extensions");
+    const QUuid clientRequestId = m_client->get(
+        QStringLiteral("open.extensions"), QStringLiteral("getOpenSubsonicExtensions"));
+    if (!isOpenRequestActive(requestId)) {
+        m_client->cancel(clientRequestId);
+        return;
+    }
+    m_openClientRequestId = clientRequestId;
+}
+
+void NavidromeSourceSession::startCurrentUser(const QUuid &requestId)
+{
+    if (!isOpenRequestActive(requestId))
+        return;
     m_openStage = QStringLiteral("user");
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("username"),
                        m_configuration.parameters.value(QStringLiteral("username")).toString());
-    m_openClientRequestId = m_client->get(QStringLiteral("open.user"),
-                                           QStringLiteral("getUser"), query);
+    const QUuid clientRequestId =
+        m_client->get(QStringLiteral("open.user"), QStringLiteral("getUser"), query);
+    if (!isOpenRequestActive(requestId)) {
+        m_client->cancel(clientRequestId);
+        return;
+    }
+    m_openClientRequestId = clientRequestId;
 }
 
-void NavidromeSourceSession::finishOpenReady(bool validUser, const QJsonObject &user)
+void NavidromeSourceSession::finishOpenReady(const QUuid &requestId, bool validUser,
+                                             const QJsonObject &user)
 {
+    if (!isOpenRequestActive(requestId))
+        return;
     CapabilitySetV2 next = m_capabilities;
     next.accountActions = validUser ? accountActions(user) : unavailableAccountActions();
     setCapabilities(next);
+    if (!isOpenRequestActive(requestId))
+        return;
     m_openClientRequestId = {};
     m_openRequestId = {};
     m_openStage.clear();
     setState(SourceSessionStateV2::Ready);
 }
 
-void NavidromeSourceSession::failOpen(const SourceErrorV2 &error)
+void NavidromeSourceSession::failOpen(const QUuid &requestId, const SourceErrorV2 &error)
 {
-    const QUuid publicId = m_openRequestId;
+    if (!isOpenRequestActive(requestId))
+        return;
     m_openClientRequestId = {};
     m_openRequestId = {};
     m_openStage.clear();
     setState(error.kind == SourceErrorKindV2::Authentication
                  ? SourceSessionStateV2::AuthenticationRequired
                  : SourceSessionStateV2::Failed);
-    if (!publicId.isNull())
-        emit requestFailed(publicId, error);
+    emit requestFailed(requestId, error);
 }
 
 void NavidromeSourceSession::setState(SourceSessionStateV2 state)

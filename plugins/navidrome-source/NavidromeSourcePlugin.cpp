@@ -2,15 +2,6 @@
 
 #include "NavidromeSourceSession.h"
 
-namespace {
-
-ActionAvailabilityV2 declaredAvailable()
-{
-    return {AvailabilityV2::Available, QStringLiteral("source.capability.declared"), {}};
-}
-
-} // namespace
-
 SourceDescriptorV2 NavidromeSourcePlugin::descriptor() const
 {
     SourceDescriptorV2 result;
@@ -19,16 +10,6 @@ SourceDescriptorV2 NavidromeSourcePlugin::descriptor() const
     result.name = QStringLiteral("Navidrome");
     result.version = QStringLiteral("1.0.0");
     result.sdkAbi = QUEMUSIC_MUSIC_SOURCE_SDK_V2_ABI;
-    for (SourceActionV2 action : {
-             SourceActionV2::Play, SourceActionV2::Artwork, SourceActionV2::Lyrics,
-             SourceActionV2::Download, SourceActionV2::Favorite, SourceActionV2::Unfavorite,
-             SourceActionV2::Rating, SourceActionV2::Scrobble,
-             SourceActionV2::CreatePlaylist, SourceActionV2::UpdatePlaylist,
-             SourceActionV2::DeletePlaylist, SourceActionV2::AddPlaylistTracks,
-             SourceActionV2::RemovePlaylistTracks, SourceActionV2::FetchPlayQueue,
-             SourceActionV2::SavePlayQueue, SourceActionV2::FetchBookmarks,
-             SourceActionV2::CreateBookmark, SourceActionV2::DeleteBookmark})
-        result.declaredActions.insert(action, declaredAvailable());
     return result;
 }
 
