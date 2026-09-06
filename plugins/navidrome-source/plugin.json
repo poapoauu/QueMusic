@@ -1,5 +1,5 @@
 {
     "Keys": ["org.quemusic.navidrome"],
     "sourceId": "navidrome",
-    "sdkVersion": "1.0"
+    "sdkAbi": 2
 }

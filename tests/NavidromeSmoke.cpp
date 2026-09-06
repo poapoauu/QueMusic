@@ -1,48 +1,37 @@
 #include "NavidromeSourceSession.h"
 
 #include <QCoreApplication>
-#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTextStream>
 #include <QTimer>
-
-#include <utility>
+#include <QUrlQuery>
 
 namespace {
 
-QString errorKindName(SourceErrorKind kind)
+QByteArray subsonicResponse(const QJsonObject &fields)
 {
-    switch (kind) {
-    case SourceErrorKind::Network:
-        return QStringLiteral("Network");
-    case SourceErrorKind::Authentication:
-        return QStringLiteral("Authentication");
-    case SourceErrorKind::Authorization:
-        return QStringLiteral("Authorization");
-    case SourceErrorKind::NotFound:
-        return QStringLiteral("NotFound");
-    case SourceErrorKind::RateLimited:
-        return QStringLiteral("RateLimited");
-    case SourceErrorKind::InvalidRequest:
-        return QStringLiteral("InvalidRequest");
-    case SourceErrorKind::Unavailable:
-        return QStringLiteral("Unavailable");
-    case SourceErrorKind::Unsupported:
-        return QStringLiteral("Unsupported");
-    case SourceErrorKind::Unknown:
-        return QStringLiteral("Unknown");
-    }
-    return QStringLiteral("Unknown");
+    QJsonObject response{{QStringLiteral("status"), QStringLiteral("ok")},
+                         {QStringLiteral("version"), QStringLiteral("1.16.1")},
+                         {QStringLiteral("type"), QStringLiteral("Navidrome")},
+                         {QStringLiteral("serverVersion"), QStringLiteral("0.59.0")},
+                         {QStringLiteral("openSubsonic"), true}};
+    for (auto it = fields.constBegin(); it != fields.constEnd(); ++it)
+        response.insert(it.key(), it.value());
+    return QJsonDocument(QJsonObject{{QStringLiteral("subsonic-response"), response}})
+        .toJson(QJsonDocument::Compact);
 }
 
-void printResult(QTextStream &stream, const QString &operation, const QString &outcome,
-                 const QString &kind, qint64 elapsedMs)
+bool available(const CapabilitySetV2 &capabilities, SourceActionV2 action)
 {
-    stream << operation << ' ' << outcome << ' ' << kind << ' ' << elapsedMs << "ms\n";
-    stream.flush();
+    return capabilities.serverAction(action).state == AvailabilityV2::Available
+        && capabilities.accountAction(action).state == AvailabilityV2::Available
+        && capabilities.action(action).state == AvailabilityV2::Available;
 }
 
 } // namespace
@@ -50,110 +39,145 @@ void printResult(QTextStream &stream, const QString &operation, const QString &o
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
-    const QByteArray serverUrl = qgetenv("QUEMUSIC_NAVIDROME_URL");
-    const QByteArray username = qgetenv("QUEMUSIC_NAVIDROME_USER");
-    QByteArray password = qgetenv("QUEMUSIC_NAVIDROME_PASSWORD");
-    QTextStream output(stdout);
     QTextStream errors(stderr);
-    QElapsedTimer elapsed;
-    elapsed.start();
+    QTcpServer server;
+    QHash<QTcpSocket *, QByteArray> requestBuffers;
+    const QString username = QStringLiteral("smoke-user");
+    const QStringList expectedPaths{
+        QStringLiteral("/rest/ping.view"),
+        QStringLiteral("/rest/getOpenSubsonicExtensions.view"),
+        QStringLiteral("/rest/getUser.view")};
+    QList<QByteArray> responses{
+        subsonicResponse({}),
+        subsonicResponse({
+            {QStringLiteral("openSubsonicExtensions"),
+             QJsonArray{
+                 QJsonObject{{QStringLiteral("name"), QStringLiteral("lyrics")},
+                             {QStringLiteral("versions"), QJsonArray{1}}},
+                 QJsonObject{{QStringLiteral("name"), QStringLiteral("songLyrics")},
+                             {QStringLiteral("versions"), QJsonArray{1}}}}}}),
+        subsonicResponse({
+            {QStringLiteral("user"),
+             QJsonObject{{QStringLiteral("username"), username},
+                         {QStringLiteral("streamRole"), true},
+                         {QStringLiteral("coverArtRole"), true},
+                         {QStringLiteral("downloadRole"), true},
+                         {QStringLiteral("playlistRole"), true}}}})};
+    int requestCount = 0;
+    QString failure;
 
-    if (serverUrl.isEmpty() || username.isEmpty() || password.isEmpty()) {
-        printResult(errors, QStringLiteral("configuration"), QStringLiteral("failure"),
-                    QStringLiteral("InvalidRequest"), elapsed.elapsed());
-        password.fill('\0');
-        return 64;
+    const auto fail = [&](const QString &message) {
+        if (failure.isEmpty())
+            failure = message;
+        app.exit(1);
+    };
+
+    QObject::connect(&server, &QTcpServer::newConnection, &server, [&] {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            requestBuffers.insert(socket, {});
+            QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                QByteArray &buffer = requestBuffers[socket];
+                buffer += socket->readAll();
+                if (!buffer.contains("\r\n\r\n"))
+                    return;
+
+                const QList<QByteArray> requestParts = buffer.split('\n').constFirst().trimmed().split(' ');
+                if (requestParts.size() < 2 || requestCount >= expectedPaths.size()
+                    || responses.isEmpty()) {
+                    fail(QStringLiteral("unexpected HTTP request"));
+                    socket->disconnectFromHost();
+                    return;
+                }
+
+                const QUrl url = QUrl::fromEncoded(requestParts.at(1));
+                const QUrlQuery query(url);
+                if (url.path() != expectedPaths.at(requestCount)
+                    || query.queryItemValue(QStringLiteral("u")) != username
+                    || query.hasQueryItem(QStringLiteral("p"))
+                    || !query.hasQueryItem(QStringLiteral("t"))
+                    || !query.hasQueryItem(QStringLiteral("s"))) {
+                    fail(QStringLiteral("unexpected authenticated request"));
+                    socket->disconnectFromHost();
+                    return;
+                }
+                if (requestCount == 2
+                    && query.queryItemValue(QStringLiteral("username")) != username) {
+                    fail(QStringLiteral("getUser did not request the configured user"));
+                    socket->disconnectFromHost();
+                    return;
+                }
+
+                ++requestCount;
+                const QByteArray response = responses.takeFirst();
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                              + QByteArray::number(response.size())
+                              + "\r\nConnection: close\r\n\r\n" + response);
+                socket->disconnectFromHost();
+            });
+            QObject::connect(socket, &QObject::destroyed, &server,
+                             [&, socket] { requestBuffers.remove(socket); });
+        }
+    });
+
+    if (!server.listen(QHostAddress::LocalHost)) {
+        errors << "failed to start local smoke server: " << server.errorString() << '\n';
+        return 1;
     }
 
-    SourceAccount account{QStringLiteral("navidrome"),
-                          QString::fromUtf8(username),
-                          QStringLiteral("Navidrome smoke test"),
-                          {{QStringLiteral("serverUrl"), QString::fromUtf8(serverUrl)},
-                           {QStringLiteral("username"), QString::fromUtf8(username)}},
-                          std::move(password)};
+    SourceConfigurationV2 configuration{
+        QStringLiteral("org.quemusic.source.navidrome"),
+        QStringLiteral("navidrome"),
+        QStringLiteral("navidrome/smoke"),
+        QStringLiteral("smoke"),
+        QStringLiteral("Navidrome smoke"),
+        {{QStringLiteral("serverUrl"),
+          QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())},
+         {QStringLiteral("username"), username},
+         {QStringLiteral("quality"), QStringLiteral("original")}},
+        QByteArrayLiteral("test-password")};
     QNetworkAccessManager network;
-    NavidromeSourceSession session(std::move(account), &network);
-    QHash<QUuid, QString> operations;
-    TrackRef selectedTrack;
+    NavidromeSourceSession session(std::move(configuration), &network);
+    bool requestStarted = false;
+
+    QObject::connect(&session, &IMusicSourceSessionV2::requestStarted, &app,
+                     [&](const QUuid &requestId) { requestStarted = !requestId.isNull(); });
+    QObject::connect(&session, &IMusicSourceSessionV2::requestFailed, &app,
+                     [&](const QUuid &, const SourceErrorV2 &error) {
+                         fail(QStringLiteral("open failed (%1): %2")
+                                  .arg(static_cast<int>(error.kind))
+                                  .arg(error.detail));
+                     });
+    QObject::connect(&session, &IMusicSourceSessionV2::stateChanged, &app,
+                     [&](SourceSessionStateV2 state) {
+        if (state != SourceSessionStateV2::Ready)
+            return;
+        const CapabilitySetV2 capabilities = session.capabilities();
+        if (requestCount != 3 || !available(capabilities, SourceActionV2::Play)
+            || !available(capabilities, SourceActionV2::Artwork)
+            || !available(capabilities, SourceActionV2::Lyrics)
+            || !available(capabilities, SourceActionV2::Download)
+            || !available(capabilities, SourceActionV2::CreatePlaylist)) {
+            fail(QStringLiteral("open completed without negotiated capabilities"));
+            return;
+        }
+        app.exit(0);
+    });
+
     QTimer timeout;
     timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &app,
+                     [&] { fail(QStringLiteral("open handshake timed out")); });
+    timeout.start(5000);
 
-    const auto finish = [&app, &timeout](int exitCode) {
-        timeout.stop();
-        app.exit(exitCode);
-    };
-    const auto start = [&operations](const QString &operation, const QUuid &requestId) {
-        operations.insert(requestId, operation);
-    };
+    const QUuid openRequest = session.open();
+    if (openRequest.isNull() || !requestStarted
+        || session.state() != SourceSessionStateV2::Connecting) {
+        errors << "open did not enter Connecting with a started request\n";
+        return 1;
+    }
 
-    QObject::connect(&timeout, &QTimer::timeout, &app, [&] {
-        printResult(errors, QStringLiteral("timeout"), QStringLiteral("failure"),
-                    QStringLiteral("Network"), elapsed.elapsed());
-        finish(1);
-    });
-    QObject::connect(&session, &IMusicSourceSession::requestFailed, &app,
-                     [&](const QUuid &requestId, const SourceError &error) {
-                         const QString operation = operations.take(requestId);
-                         printResult(errors,
-                                     operation.isEmpty() ? QStringLiteral("unknown") : operation,
-                                     QStringLiteral("failure"), errorKindName(error.kind),
-                                     elapsed.elapsed());
-                         finish(1);
-                     });
-    QObject::connect(&session, &IMusicSourceSession::requestSucceeded, &app,
-                     [&](const QUuid &requestId, const QString &operation, const QJsonValue &result) {
-                         operations.remove(requestId);
-                         printResult(output, operation, QStringLiteral("success"),
-                                     QStringLiteral("None"), elapsed.elapsed());
-
-                         if (operation == QStringLiteral("ping")) {
-                             start(QStringLiteral("search"),
-                                   session.search({QStringLiteral("a"), 10}));
-                             return;
-                         }
-                         if (operation == QStringLiteral("search")) {
-                             const QJsonArray items = result.toObject()
-                                                          .value(QStringLiteral("items"))
-                                                          .toArray();
-                             for (const QJsonValue &itemValue : items) {
-                                 const QJsonObject item = itemValue.toObject();
-                                 if (item.value(QStringLiteral("kind")).toString() ==
-                                     QStringLiteral("track")) {
-                                     selectedTrack = {item.value(QStringLiteral("sourceId")).toString(),
-                                                      item.value(QStringLiteral("id")).toString()};
-                                     break;
-                                 }
-                             }
-                             start(QStringLiteral("browse"), session.browse({}));
-                             return;
-                         }
-                         if (operation == QStringLiteral("browse")) {
-                             if (selectedTrack.nativeId.isEmpty()) {
-                                 printResult(errors, QStringLiteral("stream"),
-                                             QStringLiteral("failure"), QStringLiteral("NotFound"),
-                                             elapsed.elapsed());
-                                 finish(2);
-                                 return;
-                             }
-                             start(QStringLiteral("resolveStream"),
-                                   session.resolveStream(selectedTrack));
-                             return;
-                         }
-                         if (operation == QStringLiteral("resolveStream")) {
-                             start(QStringLiteral("fetchArtwork"),
-                                   session.fetchArtwork(selectedTrack));
-                             return;
-                         }
-                         if (operation == QStringLiteral("fetchArtwork")) {
-                             start(QStringLiteral("fetchLyrics"), session.fetchLyrics(selectedTrack));
-                             return;
-                         }
-                         if (operation == QStringLiteral("fetchLyrics")) {
-                             finish(0);
-                         }
-                     });
-
-    timeout.start(45000);
-    start(QStringLiteral("ping"), session.ping());
-    return app.exec();
+    const int exitCode = app.exec();
+    if (exitCode != 0)
+        errors << failure << '\n';
+    return exitCode;
 }

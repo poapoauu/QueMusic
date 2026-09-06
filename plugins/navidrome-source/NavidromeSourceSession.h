@@ -1,58 +1,78 @@
 #pragma once
 
-#include "IMusicSourceArtworkSession.h"
-#include "IMusicSourceSession.h"
+#include "NavidromeApiClient.h"
+#include "SourceTypes.h"
+#include "v2/IMusicSourceSessionV2.h"
 
-#include <QNetworkAccessManager>
 #include <QHash>
-#include <QPointer>
-#include <QUrlQuery>
+#include <QSet>
 
-class NavidromeSourceSession final : public IMusicSourceSession,
-                                     public IMusicSourceArtworkSession {
+class NavidromeSourceSession final : public IMusicSourceSessionV2 {
     Q_OBJECT
-    Q_INTERFACES(IMusicSourceArtworkSession)
 
 public:
-    NavidromeSourceSession(SourceAccount account, QNetworkAccessManager *network,
+    NavidromeSourceSession(SourceConfigurationV2 configuration,
+                           QNetworkAccessManager *network, QObject *parent = nullptr);
+    NavidromeSourceSession(SourceConfigurationV2 configuration,
+                           QNetworkAccessManager *network,
+                           NavidromeApiClient::SaltGenerator saltGenerator,
                            QObject *parent = nullptr);
     ~NavidromeSourceSession() override;
 
-    QUuid ping();
-    QUuid search(const SearchQuery &query) override;
-    QUuid browse(const BrowseQuery &query) override;
-    QUuid resolveStream(const TrackRef &track) override;
-    QUuid fetchArtwork(const TrackRef &track) override;
-    QUuid fetchLyrics(const TrackRef &track) override;
+    SourceIdentityV2 identity() const override;
+    SourceSessionStateV2 state() const override;
+    CapabilitySetV2 capabilities() const override;
+    QUuid open() override;
+    void close() override;
     void cancel(const QUuid &requestId) override;
 
+    // Kept concrete during the v2 migration so Task 10 can move the existing
+    // behavior onto IPageProviderV2 without losing its regression coverage.
+    QUuid ping();
+    QUuid search(const SearchQuery &query);
+    QUuid browse(const BrowseQuery &query);
+    QUuid resolveStream(const TrackRef &track);
+    QUuid fetchArtwork(const TrackRef &track);
+    QUuid fetchLyrics(const TrackRef &track);
+
+signals:
+    void legacyRequestSucceeded(QUuid requestId, QString operation, QJsonValue result);
+    void legacyRequestFailed(QUuid requestId, SourceErrorV2 error);
+
 private:
-    struct PendingRequest {
-        QUuid requestId;
+    struct LegacyRequest {
+        QUuid publicId;
         QString operation;
         QString stage;
-        QPointer<QNetworkReply> reply;
-        bool cancelled = false;
     };
+    struct TrackMetadata { QString artist; QString title; };
 
-    struct TrackMetadata {
-        QString artist;
-        QString title;
-    };
+    QUuid startLegacy(const QString &operation, const QString &endpoint,
+                      QUrlQuery query = {}, QUuid publicId = {});
+    QUuid scheduleLegacySuccess(const QString &operation, const QJsonValue &result);
+    QUuid scheduleLegacyFailure(const QString &operation, const SourceErrorV2 &error);
+    void handleClientSuccess(const QUuid &requestId, const QString &operation,
+                             const QJsonObject &response);
+    void handleClientFailure(const QUuid &requestId, const SourceErrorV2 &error);
+    void startExtensions();
+    void startCurrentUser();
+    void finishOpenReady(bool validUser, const QJsonObject &user = {});
+    void failOpen(const SourceErrorV2 &error);
+    void setState(SourceSessionStateV2 state);
+    void setCapabilities(const CapabilitySetV2 &capabilities);
+    static QHash<SourceActionV2, ActionAvailabilityV2> conservativeServerActions();
+    static QHash<SourceActionV2, ActionAvailabilityV2> unavailableAccountActions();
+    static QHash<SourceActionV2, ActionAvailabilityV2> accountActions(const QJsonObject &user);
 
-    QUuid startRequest(const QString &operation, const QString &endpoint,
-                       QUrlQuery query = {}, QUuid requestId = {});
-    bool buildAuthenticatedEndpointUrl(const QString &endpoint, QUrlQuery query, QUrl *url,
-                                      SourceError *error) const;
-    QUuid scheduleSuccess(const QString &operation, const QJsonValue &result);
-    QUuid scheduleFailure(const QString &operation, const SourceError &error);
-    void finishSuccess(const PendingRequest &pending, const QJsonValue &result);
-    void finishFailure(const PendingRequest &pending, const SourceError &error);
-    QUuid completeUnsupported(const QString &operation);
-
-    SourceAccount m_account;
-    QPointer<QNetworkAccessManager> m_network;
-    QHash<QUuid, PendingRequest> m_pendingRequests;
+    SourceConfigurationV2 m_configuration;
+    NavidromeApiClient *m_client = nullptr;
+    SourceSessionStateV2 m_state = SourceSessionStateV2::Closed;
+    CapabilitySetV2 m_capabilities;
+    QUuid m_openRequestId;
+    QUuid m_openClientRequestId;
+    QString m_openStage;
+    QHash<QUuid, LegacyRequest> m_legacyRequests;
+    QSet<QUuid> m_localLegacyRequests;
     QHash<QString, TrackMetadata> m_trackMetadata;
     QHash<QUuid, TrackRef> m_lyricsTracks;
 };

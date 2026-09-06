@@ -245,6 +245,8 @@ add_subdirectory(plugins/navidrome-source)
 
 qt_add_executable(quemusic_navidrome_smoke
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/NavidromeSmoke.cpp
+    plugins/navidrome-source/NavidromeApiClient.cpp
+    plugins/navidrome-source/NavidromeApiClient.h
     plugins/navidrome-source/NavidromeSourceSession.cpp
     plugins/navidrome-source/NavidromeSourceSession.h
 )
@@ -929,13 +931,8 @@ if(BUILD_TESTING)
 
     qt_add_executable(quemusic_media_bridge_test
         tests/tst_MediaBridge.cpp
-        plugins/navidrome-source/NavidromeSourceSession.cpp
-        plugins/navidrome-source/NavidromeSourceSession.h
     )
     target_compile_features(quemusic_media_bridge_test PRIVATE cxx_std_17)
-    target_include_directories(quemusic_media_bridge_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/plugins/navidrome-source
-    )
     target_compile_definitions(quemusic_media_bridge_test PRIVATE
         QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
     )

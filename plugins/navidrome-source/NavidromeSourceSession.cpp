@@ -1,33 +1,168 @@
 #include "NavidromeSourceSession.h"
 
-#include <QCryptographicHash>
 #include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonParseError>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QTimer>
 
 #include <utility>
 
-#include <optional>
+namespace {
 
-NavidromeSourceSession::NavidromeSourceSession(SourceAccount account,
-                                               QNetworkAccessManager *network, QObject *parent)
-    : IMusicSourceSession(parent), m_account(std::move(account)), m_network(network)
+ActionAvailabilityV2 available(const QString &reason = QStringLiteral("source.capability.available"))
 {
+    return {AvailabilityV2::Available, reason, {}};
+}
+
+ActionAvailabilityV2 unavailable(const QString &reason = QStringLiteral("source.permission.unknown"))
+{
+    return {AvailabilityV2::Unavailable, reason, {}};
+}
+
+const QList<SourceActionV2> allActions{
+    SourceActionV2::Play, SourceActionV2::Artwork, SourceActionV2::Lyrics,
+    SourceActionV2::Download, SourceActionV2::Favorite, SourceActionV2::Unfavorite,
+    SourceActionV2::Rating, SourceActionV2::Scrobble,
+    SourceActionV2::CreatePlaylist, SourceActionV2::UpdatePlaylist,
+    SourceActionV2::DeletePlaylist, SourceActionV2::AddPlaylistTracks,
+    SourceActionV2::RemovePlaylistTracks, SourceActionV2::FetchPlayQueue,
+    SourceActionV2::SavePlayQueue, SourceActionV2::FetchBookmarks,
+    SourceActionV2::CreateBookmark, SourceActionV2::DeleteBookmark};
+
+const QList<SourceActionV2> playlistActions{
+    SourceActionV2::CreatePlaylist, SourceActionV2::UpdatePlaylist,
+    SourceActionV2::DeletePlaylist, SourceActionV2::AddPlaylistTracks,
+    SourceActionV2::RemovePlaylistTracks};
+
+SourceErrorV2 invalidResponse(const QString &messageKey)
+{
+    return {SourceErrorKindV2::InvalidRequest, messageKey,
+            QStringLiteral("Navidrome returned an invalid response."), std::nullopt, false};
+}
+
+bool typedBool(const QJsonObject &object, const QString &key, bool *value)
+{
+    const QJsonValue field = object.value(key);
+    if (!field.isBool())
+        return false;
+    *value = field.toBool();
+    return true;
+}
+
+} // namespace
+
+NavidromeSourceSession::NavidromeSourceSession(SourceConfigurationV2 configuration,
+                                               QNetworkAccessManager *network, QObject *parent)
+    : NavidromeSourceSession(std::move(configuration), network,
+                             NavidromeApiClient::SaltGenerator{}, parent)
+{
+}
+
+NavidromeSourceSession::NavidromeSourceSession(
+    SourceConfigurationV2 configuration, QNetworkAccessManager *network,
+    NavidromeApiClient::SaltGenerator saltGenerator, QObject *parent)
+    : IMusicSourceSessionV2(parent), m_configuration(std::move(configuration))
+{
+    if (saltGenerator)
+        m_client = new NavidromeApiClient(m_configuration, network, std::move(saltGenerator), this);
+    else
+        m_client = new NavidromeApiClient(m_configuration, network, this);
+    connect(m_client, &NavidromeApiClient::succeeded, this,
+            &NavidromeSourceSession::handleClientSuccess);
+    connect(m_client, &NavidromeApiClient::failed, this,
+            &NavidromeSourceSession::handleClientFailure);
 }
 
 NavidromeSourceSession::~NavidromeSourceSession()
 {
-    m_account.secret.fill('\0');
-    m_account.secret.clear();
+    disconnect(m_client, nullptr, this, nullptr);
+    const QList<QUuid> legacyIds = m_legacyRequests.keys();
+    for (const QUuid &id : legacyIds)
+        m_client->cancel(id);
+    if (!m_openClientRequestId.isNull())
+        m_client->cancel(m_openClientRequestId);
+    m_configuration.secret.fill('\0');
+    m_configuration.secret.clear();
+}
+
+SourceIdentityV2 NavidromeSourceSession::identity() const
+{
+    return {m_configuration.sourceId, m_configuration.sourceInstanceId,
+            m_configuration.accountId, m_configuration.displayName};
+}
+
+SourceSessionStateV2 NavidromeSourceSession::state() const
+{
+    return m_state;
+}
+
+CapabilitySetV2 NavidromeSourceSession::capabilities() const
+{
+    return m_capabilities;
+}
+
+QUuid NavidromeSourceSession::open()
+{
+    if (!m_openClientRequestId.isNull())
+        m_client->cancel(m_openClientRequestId);
+    m_openClientRequestId = {};
+    m_openStage = QStringLiteral("ping");
+    m_openRequestId = QUuid::createUuid();
+    setCapabilities({});
+    setState(SourceSessionStateV2::Connecting);
+    emit requestStarted(m_openRequestId);
+    m_openClientRequestId = m_client->get(QStringLiteral("open.ping"), QStringLiteral("ping"));
+    return m_openRequestId;
+}
+
+void NavidromeSourceSession::close()
+{
+    if (m_state == SourceSessionStateV2::Closed && m_openClientRequestId.isNull()
+        && m_legacyRequests.isEmpty() && m_localLegacyRequests.isEmpty())
+        return;
+    setState(SourceSessionStateV2::Closing);
+    if (!m_openClientRequestId.isNull())
+        m_client->cancel(m_openClientRequestId);
+    const QList<QUuid> legacyIds = m_legacyRequests.keys();
+    for (const QUuid &id : legacyIds)
+        m_client->cancel(id);
+    m_openClientRequestId = {};
+    m_openRequestId = {};
+    m_openStage.clear();
+    m_legacyRequests.clear();
+    m_localLegacyRequests.clear();
+    m_lyricsTracks.clear();
+    setCapabilities({});
+    setState(SourceSessionStateV2::Closed);
+}
+
+void NavidromeSourceSession::cancel(const QUuid &requestId)
+{
+    if (requestId == m_openRequestId) {
+        if (!m_openClientRequestId.isNull())
+            m_client->cancel(m_openClientRequestId);
+        m_openClientRequestId = {};
+        m_openRequestId = {};
+        m_openStage.clear();
+        setState(SourceSessionStateV2::Closed);
+        return;
+    }
+    if (m_localLegacyRequests.remove(requestId)) {
+        m_lyricsTracks.remove(requestId);
+        return;
+    }
+    QList<QUuid> clientIds;
+    for (auto it = m_legacyRequests.cbegin(); it != m_legacyRequests.cend(); ++it)
+        if (it->publicId == requestId)
+            clientIds.append(it.key());
+    for (const QUuid &clientId : clientIds) {
+        m_legacyRequests.remove(clientId);
+        m_client->cancel(clientId);
+    }
+    m_lyricsTracks.remove(requestId);
 }
 
 QUuid NavidromeSourceSession::ping()
 {
-    return startRequest(QStringLiteral("ping"), QStringLiteral("ping"));
+    return startLegacy(QStringLiteral("ping"), QStringLiteral("ping"));
 }
 
 QUuid NavidromeSourceSession::search(const SearchQuery &query)
@@ -38,395 +173,388 @@ QUuid NavidromeSourceSession::search(const SearchQuery &query)
     parameters.addQueryItem(QStringLiteral("songCount"), QString::number(limit));
     parameters.addQueryItem(QStringLiteral("albumCount"), QString::number(limit));
     parameters.addQueryItem(QStringLiteral("artistCount"), QString::number(limit));
-    return startRequest(QStringLiteral("search"), QStringLiteral("search3"), parameters);
+    return startLegacy(QStringLiteral("search"), QStringLiteral("search3"), parameters);
 }
 
 QUuid NavidromeSourceSession::browse(const BrowseQuery &query)
 {
     QUrlQuery parameters;
-    if (query.path.isEmpty()) {
-        return startRequest(QStringLiteral("browse"), QStringLiteral("getIndexes"), parameters);
-    }
-
+    if (query.path.isEmpty())
+        return startLegacy(QStringLiteral("browse"), QStringLiteral("getIndexes"), parameters);
     parameters.addQueryItem(QStringLiteral("id"), query.path);
-    return startRequest(QStringLiteral("browse"), QStringLiteral("getMusicDirectory"), parameters);
+    return startLegacy(QStringLiteral("browse"), QStringLiteral("getMusicDirectory"), parameters);
 }
 
 QUuid NavidromeSourceSession::resolveStream(const TrackRef &track)
 {
-    QUrlQuery parameters;
-    parameters.addQueryItem(QStringLiteral("id"), track.nativeId);
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), track.nativeId);
     QUrl url;
-    SourceError error;
-    if (!buildAuthenticatedEndpointUrl(QStringLiteral("stream"), parameters, &url, &error)) {
-        return scheduleFailure(QStringLiteral("resolveStream"), error);
-    }
-
-    return scheduleSuccess(QStringLiteral("resolveStream"),
-                           QJsonObject{{QStringLiteral("track"),
-                                        QJsonObject{{QStringLiteral("sourceId"), track.sourceId},
-                                                    {QStringLiteral("nativeId"), track.nativeId}}},
-                                       {QStringLiteral("url"), url.toString(QUrl::FullyEncoded)},
-                                       {QStringLiteral("seekable"), true}});
+    SourceErrorV2 error;
+    if (!m_client->authenticatedUrl(QStringLiteral("stream"), query, &url, &error))
+        return scheduleLegacyFailure(QStringLiteral("resolveStream"), error);
+    return scheduleLegacySuccess(
+        QStringLiteral("resolveStream"),
+        QJsonObject{{QStringLiteral("track"),
+                     QJsonObject{{QStringLiteral("sourceId"), track.sourceId},
+                                 {QStringLiteral("nativeId"), track.nativeId}}},
+                    {QStringLiteral("url"), url.toString(QUrl::FullyEncoded)},
+                    {QStringLiteral("seekable"), true}});
 }
 
 QUuid NavidromeSourceSession::fetchArtwork(const TrackRef &track)
 {
-    QUrlQuery parameters;
-    parameters.addQueryItem(QStringLiteral("id"), track.nativeId);
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), track.nativeId);
     QUrl url;
-    SourceError error;
-    if (!buildAuthenticatedEndpointUrl(QStringLiteral("getCoverArt"), parameters, &url, &error)) {
-        return scheduleFailure(QStringLiteral("fetchArtwork"), error);
-    }
-
-    return scheduleSuccess(QStringLiteral("fetchArtwork"),
-                           QJsonObject{{QStringLiteral("track"),
-                                        QJsonObject{{QStringLiteral("sourceId"), track.sourceId},
-                                                    {QStringLiteral("nativeId"), track.nativeId}}},
-                                       {QStringLiteral("url"), url.toString(QUrl::FullyEncoded)}});
+    SourceErrorV2 error;
+    if (!m_client->authenticatedUrl(QStringLiteral("getCoverArt"), query, &url, &error))
+        return scheduleLegacyFailure(QStringLiteral("fetchArtwork"), error);
+    return scheduleLegacySuccess(
+        QStringLiteral("fetchArtwork"),
+        QJsonObject{{QStringLiteral("track"),
+                     QJsonObject{{QStringLiteral("sourceId"), track.sourceId},
+                                 {QStringLiteral("nativeId"), track.nativeId}}},
+                    {QStringLiteral("url"), url.toString(QUrl::FullyEncoded)}});
 }
 
 QUuid NavidromeSourceSession::fetchLyrics(const TrackRef &track)
 {
-    const QUuid requestId = QUuid::createUuid();
-    m_lyricsTracks.insert(requestId, track);
+    const QUuid publicId = QUuid::createUuid();
+    m_lyricsTracks.insert(publicId, track);
     const auto metadata = m_trackMetadata.constFind(track.nativeId);
+    QUrlQuery query;
     if (metadata != m_trackMetadata.cend()) {
-        QUrlQuery parameters;
-        parameters.addQueryItem(QStringLiteral("artist"), metadata->artist);
-        parameters.addQueryItem(QStringLiteral("title"), metadata->title);
-        return startRequest(QStringLiteral("fetchLyrics"), QStringLiteral("getLyrics"), parameters,
-                            requestId);
+        query.addQueryItem(QStringLiteral("artist"), metadata->artist);
+        query.addQueryItem(QStringLiteral("title"), metadata->title);
+        return startLegacy(QStringLiteral("fetchLyrics"), QStringLiteral("getLyrics"), query,
+                           publicId);
     }
-
-    QUrlQuery parameters;
-    parameters.addQueryItem(QStringLiteral("id"), track.nativeId);
-    return startRequest(QStringLiteral("fetchLyrics"), QStringLiteral("getSong"), parameters,
-                        requestId);
+    query.addQueryItem(QStringLiteral("id"), track.nativeId);
+    return startLegacy(QStringLiteral("fetchLyrics"), QStringLiteral("getSong"), query, publicId);
 }
 
-void NavidromeSourceSession::cancel(const QUuid &requestId)
+QUuid NavidromeSourceSession::startLegacy(const QString &operation, const QString &endpoint,
+                                          QUrlQuery query, QUuid publicId)
 {
-    auto pending = m_pendingRequests.find(requestId);
-    if (pending == m_pendingRequests.end()) {
+    if (publicId.isNull())
+        publicId = QUuid::createUuid();
+    const QUuid clientId = m_client->get(operation + QLatin1Char('.') + endpoint, endpoint,
+                                         std::move(query));
+    m_legacyRequests.insert(clientId, {publicId, operation, endpoint});
+    return publicId;
+}
+
+QUuid NavidromeSourceSession::scheduleLegacySuccess(const QString &operation,
+                                                    const QJsonValue &result)
+{
+    const QUuid id = QUuid::createUuid();
+    m_localLegacyRequests.insert(id);
+    QTimer::singleShot(0, this, [this, id, operation, result] {
+        if (!m_localLegacyRequests.remove(id))
+            return;
+        emit legacyRequestSucceeded(id, operation, result);
+    });
+    return id;
+}
+
+QUuid NavidromeSourceSession::scheduleLegacyFailure(const QString &operation,
+                                                    const SourceErrorV2 &error)
+{
+    Q_UNUSED(operation)
+    const QUuid id = QUuid::createUuid();
+    m_localLegacyRequests.insert(id);
+    QTimer::singleShot(0, this, [this, id, error] {
+        if (!m_localLegacyRequests.remove(id))
+            return;
+        emit legacyRequestFailed(id, error);
+    });
+    return id;
+}
+
+void NavidromeSourceSession::handleClientSuccess(const QUuid &requestId,
+                                                 const QString &operation,
+                                                 const QJsonObject &response)
+{
+    if (requestId == m_openClientRequestId) {
+        m_openClientRequestId = {};
+        if (operation == QStringLiteral("open.ping")) {
+            CapabilitySetV2 next = m_capabilities;
+            next.serverActions = conservativeServerActions();
+            next.accountActions = unavailableAccountActions();
+            setCapabilities(next);
+            startExtensions();
+        } else if (operation == QStringLiteral("open.extensions")) {
+            const QJsonValue extensionsValue = response.value(QStringLiteral("openSubsonicExtensions"));
+            if (extensionsValue.isArray()) {
+                for (const QJsonValue &entryValue : extensionsValue.toArray()) {
+                    const QJsonObject entry = entryValue.toObject();
+                    if (!entryValue.isObject() || !entry.value(QStringLiteral("name")).isString()
+                        || !entry.value(QStringLiteral("versions")).isArray())
+                        break;
+                }
+            }
+            startCurrentUser();
+        } else if (operation == QStringLiteral("open.user")) {
+            const QJsonValue userValue = response.value(QStringLiteral("user"));
+            const QJsonObject user = userValue.toObject();
+            const bool validUser = userValue.isObject()
+                && user.value(QStringLiteral("username")).isString()
+                && user.value(QStringLiteral("username")).toString()
+                    == m_configuration.parameters.value(QStringLiteral("username")).toString();
+            finishOpenReady(validUser, user);
+        }
         return;
     }
 
-    pending->cancelled = true;
-    if (pending->operation == QStringLiteral("fetchLyrics")) {
-        m_lyricsTracks.remove(requestId);
-    }
-    const QPointer<QNetworkReply> reply = pending->reply;
-    m_pendingRequests.erase(pending);
-    if (!reply.isNull()) {
-        reply->abort();
-        reply->deleteLater();
-    }
-}
-
-QUuid NavidromeSourceSession::startRequest(const QString &operation, const QString &endpoint,
-                                           QUrlQuery query, QUuid requestId)
-{
-    if (m_network.isNull()) {
-        return scheduleFailure(operation,
-                               {SourceErrorKind::Unavailable,
-                                QStringLiteral("Navidrome network manager is unavailable"),
-                                std::nullopt});
-    }
-
-    QUrl url;
-    SourceError error;
-    if (!buildAuthenticatedEndpointUrl(endpoint, query, &url, &error)) {
-        return scheduleFailure(operation, error);
-    }
-
-    QNetworkRequest request(url);
-    request.setRawHeader("Accept", "application/json");
-    QNetworkReply *reply = m_network->get(request);
-    const QUuid publicRequestId = requestId.isNull() ? QUuid::createUuid() : requestId;
-    m_pendingRequests.insert(publicRequestId,
-                             {publicRequestId, operation, endpoint, reply, false});
-
-    connect(reply, &QNetworkReply::finished, this, [this, publicRequestId] {
-        auto pending = m_pendingRequests.find(publicRequestId);
-        if (pending == m_pendingRequests.end()) {
+    auto pending = m_legacyRequests.find(requestId);
+    if (pending == m_legacyRequests.end())
+        return;
+    const LegacyRequest request = pending.value();
+    m_legacyRequests.erase(pending);
+    if (request.operation == QStringLiteral("search")) {
+        const QJsonValue resultValue = response.value(QStringLiteral("searchResult3"));
+        if (!resultValue.isObject()) {
+            emit legacyRequestFailed(request.publicId,
+                                     invalidResponse(QStringLiteral("source.search.invalid")));
             return;
         }
-
-        const PendingRequest request = pending.value();
-        m_pendingRequests.erase(pending);
-        if (request.cancelled || request.reply.isNull()) {
-            return;
-        }
-
-        QNetworkReply *reply = request.reply;
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray payload = reply->readAll();
-        if (reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
-            reply->deleteLater();
-            finishFailure(request,
-                          {SourceErrorKind::Network,
-                           QStringLiteral("Navidrome request failed"),
-                           status > 0 ? std::optional<int>(status) : std::nullopt});
-            return;
-        }
-        reply->deleteLater();
-
-        QJsonParseError parseError;
-        const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
-        const QJsonObject response = document.object().value(QStringLiteral("subsonic-response")).toObject();
-        if (parseError.error != QJsonParseError::NoError || response.isEmpty()) {
-            finishFailure(request,
-                          {SourceErrorKind::InvalidRequest,
-                           QStringLiteral("Navidrome returned an invalid JSON response"), status});
-            return;
-        }
-        if (response.value(QStringLiteral("status")).toString() != QStringLiteral("ok")) {
-            const int code = response.value(QStringLiteral("error")).toObject()
-                                 .value(QStringLiteral("code"))
-                                 .toInt();
-            SourceErrorKind kind = SourceErrorKind::InvalidRequest;
-            if (code == 40 || code == 41) {
-                kind = SourceErrorKind::Authentication;
-            } else if (code == 50) {
-                kind = SourceErrorKind::Authorization;
-            } else if (code == 70) {
-                kind = SourceErrorKind::NotFound;
+        QJsonArray items;
+        const auto append = [this, &items](const QJsonArray &values, const QString &kind) {
+            for (const QJsonValue &value : values) {
+                const QJsonObject item = value.toObject();
+                QJsonObject normalized{{QStringLiteral("kind"), kind},
+                                       {QStringLiteral("id"), item.value(QStringLiteral("id"))},
+                                       {QStringLiteral("sourceId"), QStringLiteral("navidrome")}};
+                if (kind == QStringLiteral("track")) {
+                    normalized.insert(QStringLiteral("title"), item.value(QStringLiteral("title")));
+                    normalized.insert(QStringLiteral("artist"), item.value(QStringLiteral("artist")));
+                    normalized.insert(QStringLiteral("album"), item.value(QStringLiteral("album")));
+                    normalized.insert(QStringLiteral("duration"), item.value(QStringLiteral("duration")));
+                    normalized.insert(QStringLiteral("coverArtId"), item.value(QStringLiteral("coverArt")));
+                    const QString artist = item.value(QStringLiteral("artist")).toString();
+                    const QString title = item.value(QStringLiteral("title")).toString();
+                    if (!artist.isEmpty() && !title.isEmpty())
+                        m_trackMetadata.insert(item.value(QStringLiteral("id")).toString(),
+                                               {artist, title});
+                } else {
+                    normalized.insert(QStringLiteral("title"), item.value(QStringLiteral("name")));
+                    normalized.insert(QStringLiteral("artist"), item.value(QStringLiteral("artist")));
+                }
+                items.append(normalized);
             }
-            finishFailure(request,
-                          {kind,
-                           QStringLiteral("Navidrome rejected the request"), status});
-            return;
-        }
-
-        if (request.operation == QStringLiteral("search")) {
-            const QJsonValue searchResultValue = response.value(QStringLiteral("searchResult3"));
-            if (!searchResultValue.isObject()) {
-                finishFailure(request,
-                              {SourceErrorKind::InvalidRequest,
-                               QStringLiteral("Navidrome search response is missing searchResult3"), status});
+        };
+        const QJsonObject result = resultValue.toObject();
+        append(result.value(QStringLiteral("song")).toArray(), QStringLiteral("track"));
+        append(result.value(QStringLiteral("album")).toArray(), QStringLiteral("album"));
+        append(result.value(QStringLiteral("artist")).toArray(), QStringLiteral("artist"));
+        emit legacyRequestSucceeded(request.publicId, request.operation,
+                                    QJsonObject{{QStringLiteral("items"), items}});
+        return;
+    }
+    if (request.operation == QStringLiteral("browse")) {
+        QJsonArray items;
+        if (request.stage == QStringLiteral("getIndexes")) {
+            const QJsonObject indexes = response.value(QStringLiteral("indexes")).toObject();
+            if (indexes.isEmpty()) {
+                emit legacyRequestFailed(request.publicId,
+                                         invalidResponse(QStringLiteral("source.browse.invalid")));
                 return;
             }
-            const QJsonObject searchResult = searchResultValue.toObject();
-
-            QJsonArray items;
-            const auto appendItems = [this, &items](const QJsonArray &source, const QString &kind) {
-                for (const QJsonValue &value : source) {
-                    const QJsonObject item = value.toObject();
-                    QJsonObject normalized{{QStringLiteral("kind"), kind},
-                                           {QStringLiteral("id"), item.value(QStringLiteral("id"))},
-                                           {QStringLiteral("sourceId"), QStringLiteral("navidrome")}};
-                    if (kind == QStringLiteral("track")) {
-                        normalized.insert(QStringLiteral("title"), item.value(QStringLiteral("title")));
-                        normalized.insert(QStringLiteral("artist"), item.value(QStringLiteral("artist")));
-                        normalized.insert(QStringLiteral("album"), item.value(QStringLiteral("album")));
-                        normalized.insert(QStringLiteral("duration"), item.value(QStringLiteral("duration")));
-                        normalized.insert(QStringLiteral("coverArtId"), item.value(QStringLiteral("coverArt")));
-                        const QString artist = item.value(QStringLiteral("artist")).toString();
-                        const QString title = item.value(QStringLiteral("title")).toString();
-                        if (!artist.isEmpty() && !title.isEmpty()) {
-                            m_trackMetadata.insert(item.value(QStringLiteral("id")).toString(),
-                                                   {artist, title});
-                        }
-                    } else {
-                        normalized.insert(QStringLiteral("title"), item.value(QStringLiteral("name")));
-                        normalized.insert(QStringLiteral("artist"), item.value(QStringLiteral("artist")));
-                    }
-                    items.append(normalized);
-                }
-            };
-            appendItems(searchResult.value(QStringLiteral("song")).toArray(), QStringLiteral("track"));
-            appendItems(searchResult.value(QStringLiteral("album")).toArray(), QStringLiteral("album"));
-            appendItems(searchResult.value(QStringLiteral("artist")).toArray(), QStringLiteral("artist"));
-            finishSuccess(request, QJsonObject{{QStringLiteral("items"), items}});
-            return;
-        }
-
-        if (request.operation == QStringLiteral("browse")) {
-            QJsonArray items;
-            if (request.stage == QStringLiteral("getIndexes")) {
-                const QJsonObject indexes = response.value(QStringLiteral("indexes")).toObject();
-                if (indexes.isEmpty()) {
-                    finishFailure(request,
-                                  {SourceErrorKind::InvalidRequest,
-                                   QStringLiteral("Navidrome browse response is missing indexes"), status});
-                    return;
-                }
-                for (const QJsonValue &value : indexes.value(QStringLiteral("artist")).toArray()) {
-                    const QJsonObject artist = value.toObject();
-                    items.append(QJsonObject{{QStringLiteral("kind"), QStringLiteral("artist")},
-                                             {QStringLiteral("id"), artist.value(QStringLiteral("id"))},
-                                             {QStringLiteral("sourceId"), QStringLiteral("navidrome")},
-                                             {QStringLiteral("title"), artist.value(QStringLiteral("name"))}});
-                }
-            } else {
-                const QJsonObject directory = response.value(QStringLiteral("directory")).toObject();
-                if (directory.isEmpty()) {
-                    finishFailure(request,
-                                  {SourceErrorKind::InvalidRequest,
-                                   QStringLiteral("Navidrome browse response is missing directory"), status});
-                    return;
-                }
-                for (const QJsonValue &value : directory.value(QStringLiteral("child")).toArray()) {
-                    const QJsonObject child = value.toObject();
-                    const bool directoryChild = child.value(QStringLiteral("isDir")).toBool();
-                    items.append(QJsonObject{{QStringLiteral("kind"),
-                                              directoryChild ? QStringLiteral("directory")
-                                                             : QStringLiteral("track")},
-                                             {QStringLiteral("id"), child.value(QStringLiteral("id"))},
-                                             {QStringLiteral("sourceId"), QStringLiteral("navidrome")},
-                                             {QStringLiteral("title"), child.value(QStringLiteral("title"))},
-                                             {QStringLiteral("artist"), child.value(QStringLiteral("artist"))}});
-                    if (!directoryChild) {
-                        const QString artist = child.value(QStringLiteral("artist")).toString();
-                        const QString title = child.value(QStringLiteral("title")).toString();
-                        if (!artist.isEmpty() && !title.isEmpty()) {
-                            m_trackMetadata.insert(child.value(QStringLiteral("id")).toString(),
-                                                   {artist, title});
-                        }
-                    }
-                }
+            for (const QJsonValue &value : indexes.value(QStringLiteral("artist")).toArray()) {
+                const QJsonObject artist = value.toObject();
+                items.append(QJsonObject{
+                    {QStringLiteral("kind"), QStringLiteral("artist")},
+                    {QStringLiteral("id"), artist.value(QStringLiteral("id"))},
+                    {QStringLiteral("sourceId"), QStringLiteral("navidrome")},
+                    {QStringLiteral("title"), artist.value(QStringLiteral("name"))}});
             }
-            finishSuccess(request, QJsonObject{{QStringLiteral("items"), items}});
-            return;
-        }
-
-        if (request.operation == QStringLiteral("fetchLyrics")) {
-            const TrackRef track = m_lyricsTracks.value(request.requestId);
-            if (request.stage == QStringLiteral("getSong")) {
-                const QJsonObject song = response.value(QStringLiteral("song")).toObject();
-                const QString artist = song.value(QStringLiteral("artist")).toString();
-                const QString title = song.value(QStringLiteral("title")).toString();
-                if (song.isEmpty() || artist.isEmpty() || title.isEmpty()) {
-                    finishFailure(request,
-                                  {SourceErrorKind::InvalidRequest,
-                                   QStringLiteral("Navidrome song metadata is incomplete"), status});
-                    return;
-                }
-                m_trackMetadata.insert(track.nativeId, {artist, title});
-                QUrlQuery parameters;
-                parameters.addQueryItem(QStringLiteral("artist"), artist);
-                parameters.addQueryItem(QStringLiteral("title"), title);
-                startRequest(QStringLiteral("fetchLyrics"), QStringLiteral("getLyrics"), parameters,
-                             request.requestId);
+        } else {
+            const QJsonObject directory = response.value(QStringLiteral("directory")).toObject();
+            if (directory.isEmpty()) {
+                emit legacyRequestFailed(request.publicId,
+                                         invalidResponse(QStringLiteral("source.browse.invalid")));
                 return;
             }
-
-            const QJsonObject lyrics = response.value(QStringLiteral("lyrics")).toObject();
-            if (lyrics.isEmpty()) {
-                finishFailure(request,
-                              {SourceErrorKind::InvalidRequest,
-                               QStringLiteral("Navidrome lyrics response is missing lyrics"), status});
+            for (const QJsonValue &value : directory.value(QStringLiteral("child")).toArray()) {
+                const QJsonObject child = value.toObject();
+                const bool directoryChild = child.value(QStringLiteral("isDir")).toBool();
+                items.append(QJsonObject{{QStringLiteral("kind"),
+                                          directoryChild ? QStringLiteral("directory")
+                                                         : QStringLiteral("track")},
+                                         {QStringLiteral("id"), child.value(QStringLiteral("id"))},
+                                         {QStringLiteral("sourceId"), QStringLiteral("navidrome")},
+                                         {QStringLiteral("title"), child.value(QStringLiteral("title"))},
+                                         {QStringLiteral("artist"), child.value(QStringLiteral("artist"))}});
+            }
+        }
+        emit legacyRequestSucceeded(request.publicId, request.operation,
+                                    QJsonObject{{QStringLiteral("items"), items}});
+        return;
+    }
+    if (request.operation == QStringLiteral("fetchLyrics")) {
+        const TrackRef track = m_lyricsTracks.value(request.publicId);
+        if (request.stage == QStringLiteral("getSong")) {
+            const QJsonObject song = response.value(QStringLiteral("song")).toObject();
+            const QString artist = song.value(QStringLiteral("artist")).toString();
+            const QString title = song.value(QStringLiteral("title")).toString();
+            if (song.isEmpty() || artist.isEmpty() || title.isEmpty()) {
+                m_lyricsTracks.remove(request.publicId);
+                emit legacyRequestFailed(request.publicId,
+                                         invalidResponse(QStringLiteral("source.lyrics.invalid")));
                 return;
             }
-            m_lyricsTracks.remove(request.requestId);
-            finishSuccess(request,
-                          QJsonObject{{QStringLiteral("track"),
-                                       QJsonObject{{QStringLiteral("sourceId"), track.sourceId},
-                                                   {QStringLiteral("nativeId"), track.nativeId}}},
-                                      {QStringLiteral("lyrics"), lyrics.value(QStringLiteral("value"))},
-                                      {QStringLiteral("synced"), lyrics.value(QStringLiteral("synced"))}});
+            m_trackMetadata.insert(track.nativeId, {artist, title});
+            QUrlQuery query;
+            query.addQueryItem(QStringLiteral("artist"), artist);
+            query.addQueryItem(QStringLiteral("title"), title);
+            startLegacy(request.operation, QStringLiteral("getLyrics"), query, request.publicId);
             return;
         }
-
-        finishSuccess(request, response);
-    });
-
-    return publicRequestId;
-}
-
-bool NavidromeSourceSession::buildAuthenticatedEndpointUrl(const QString &endpoint, QUrlQuery query,
-                                                           QUrl *url, SourceError *error) const
-{
-    const QUrl serverUrl(m_account.parameters.value(QStringLiteral("serverUrl")).toString());
-    const QString username = m_account.parameters.value(QStringLiteral("username")).toString();
-    if (!serverUrl.isValid() || serverUrl.host().isEmpty() ||
-        (serverUrl.scheme() != QStringLiteral("http") && serverUrl.scheme() != QStringLiteral("https")) ||
-        username.isEmpty() || m_account.secret.isEmpty()) {
-        *error = {SourceErrorKind::InvalidRequest,
-                  QStringLiteral("Navidrome account configuration is incomplete or invalid"),
-                  std::nullopt};
-        return false;
-    }
-
-    *url = serverUrl;
-    QString path = url->path();
-    while (path.endsWith(QLatin1Char('/'))) {
-        path.chop(1);
-    }
-    if (!path.endsWith(QStringLiteral("/rest"))) {
-        path += QStringLiteral("/rest");
-    }
-    url->setPath(path + QLatin1Char('/') + endpoint + QStringLiteral(".view"));
-
-    const QString salt = QUuid::createUuid().toString(QUuid::WithoutBraces).remove(QLatin1Char('-'));
-    const QByteArray token = QCryptographicHash::hash(m_account.secret + salt.toUtf8(),
-                                                       QCryptographicHash::Md5)
-                                 .toHex();
-    query.addQueryItem(QStringLiteral("u"), username);
-    query.addQueryItem(QStringLiteral("t"), QString::fromLatin1(token));
-    query.addQueryItem(QStringLiteral("s"), salt);
-    query.addQueryItem(QStringLiteral("v"), QStringLiteral("1.16.1"));
-    query.addQueryItem(QStringLiteral("c"), QStringLiteral("QueMusic"));
-    query.addQueryItem(QStringLiteral("f"), QStringLiteral("json"));
-    url->setQuery(query);
-    return true;
-}
-
-QUuid NavidromeSourceSession::scheduleSuccess(const QString &operation, const QJsonValue &result)
-{
-    const QUuid requestId = QUuid::createUuid();
-    m_pendingRequests.insert(requestId,
-                             {requestId, operation, QStringLiteral("local"), nullptr, false});
-    QTimer::singleShot(0, this, [this, requestId, result] {
-        auto pending = m_pendingRequests.find(requestId);
-        if (pending == m_pendingRequests.end() || pending->cancelled) {
+        const QJsonObject lyrics = response.value(QStringLiteral("lyrics")).toObject();
+        m_lyricsTracks.remove(request.publicId);
+        if (lyrics.isEmpty()) {
+            emit legacyRequestFailed(request.publicId,
+                                     invalidResponse(QStringLiteral("source.lyrics.invalid")));
             return;
         }
-
-        const PendingRequest request = pending.value();
-        m_pendingRequests.erase(pending);
-        finishSuccess(request, result);
-    });
-    return requestId;
-}
-
-QUuid NavidromeSourceSession::scheduleFailure(const QString &operation, const SourceError &error)
-{
-    const QUuid requestId = QUuid::createUuid();
-    m_pendingRequests.insert(requestId,
-                             {requestId, operation, QStringLiteral("validation"), nullptr, false});
-    QTimer::singleShot(0, this, [this, requestId, error] {
-        auto pending = m_pendingRequests.find(requestId);
-        if (pending == m_pendingRequests.end() || pending->cancelled) {
-            return;
-        }
-
-        const PendingRequest request = pending.value();
-        m_pendingRequests.erase(pending);
-        finishFailure(request, error);
-    });
-    return requestId;
-}
-
-void NavidromeSourceSession::finishSuccess(const PendingRequest &pending, const QJsonValue &result)
-{
-    emit requestSucceeded(pending.requestId, pending.operation, result);
-}
-
-void NavidromeSourceSession::finishFailure(const PendingRequest &pending, const SourceError &error)
-{
-    if (pending.operation == QStringLiteral("fetchLyrics")) {
-        m_lyricsTracks.remove(pending.requestId);
+        emit legacyRequestSucceeded(
+            request.publicId, request.operation,
+            QJsonObject{{QStringLiteral("track"),
+                         QJsonObject{{QStringLiteral("sourceId"), track.sourceId},
+                                     {QStringLiteral("nativeId"), track.nativeId}}},
+                        {QStringLiteral("lyrics"), lyrics.value(QStringLiteral("value"))},
+                        {QStringLiteral("synced"), lyrics.value(QStringLiteral("synced"))}});
+        return;
     }
-    emit requestFailed(pending.requestId, error);
+    emit legacyRequestSucceeded(request.publicId, request.operation, response);
 }
 
-QUuid NavidromeSourceSession::completeUnsupported(const QString &operation)
+void NavidromeSourceSession::handleClientFailure(const QUuid &requestId,
+                                                 const SourceErrorV2 &error)
 {
-    return scheduleFailure(operation,
-                           {SourceErrorKind::Unsupported,
-                            QStringLiteral("Navidrome operation is not implemented: %1").arg(operation),
-                            std::nullopt});
+    if (requestId == m_openClientRequestId) {
+        const QString stage = m_openStage;
+        m_openClientRequestId = {};
+        if (error.kind == SourceErrorKindV2::Unsupported
+            || error.kind == SourceErrorKindV2::Authorization
+            || error.kind == SourceErrorKindV2::InvalidRequest) {
+            // Optional negotiation stages are identified from the server/account
+            // layers already established after ping.
+            if (!m_capabilities.serverActions.isEmpty()) {
+                if (stage == QStringLiteral("user"))
+                    finishOpenReady(false);
+                else if (stage == QStringLiteral("extensions"))
+                    startCurrentUser();
+                return;
+            }
+        }
+        failOpen(error);
+        return;
+    }
+    auto pending = m_legacyRequests.find(requestId);
+    if (pending == m_legacyRequests.end())
+        return;
+    const LegacyRequest request = pending.value();
+    m_legacyRequests.erase(pending);
+    m_lyricsTracks.remove(request.publicId);
+    emit legacyRequestFailed(request.publicId, error);
+}
+
+void NavidromeSourceSession::startExtensions()
+{
+    m_openStage = QStringLiteral("extensions");
+    m_openClientRequestId = m_client->get(QStringLiteral("open.extensions"),
+                                           QStringLiteral("getOpenSubsonicExtensions"));
+}
+
+void NavidromeSourceSession::startCurrentUser()
+{
+    m_openStage = QStringLiteral("user");
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("username"),
+                       m_configuration.parameters.value(QStringLiteral("username")).toString());
+    m_openClientRequestId = m_client->get(QStringLiteral("open.user"),
+                                           QStringLiteral("getUser"), query);
+}
+
+void NavidromeSourceSession::finishOpenReady(bool validUser, const QJsonObject &user)
+{
+    CapabilitySetV2 next = m_capabilities;
+    next.accountActions = validUser ? accountActions(user) : unavailableAccountActions();
+    setCapabilities(next);
+    m_openClientRequestId = {};
+    m_openRequestId = {};
+    m_openStage.clear();
+    setState(SourceSessionStateV2::Ready);
+}
+
+void NavidromeSourceSession::failOpen(const SourceErrorV2 &error)
+{
+    const QUuid publicId = m_openRequestId;
+    m_openClientRequestId = {};
+    m_openRequestId = {};
+    m_openStage.clear();
+    setState(error.kind == SourceErrorKindV2::Authentication
+                 ? SourceSessionStateV2::AuthenticationRequired
+                 : SourceSessionStateV2::Failed);
+    if (!publicId.isNull())
+        emit requestFailed(publicId, error);
+}
+
+void NavidromeSourceSession::setState(SourceSessionStateV2 state)
+{
+    if (m_state == state)
+        return;
+    m_state = state;
+    emit stateChanged(m_state);
+}
+
+void NavidromeSourceSession::setCapabilities(const CapabilitySetV2 &capabilities)
+{
+    if (m_capabilities.serverActions == capabilities.serverActions
+        && m_capabilities.accountActions == capabilities.accountActions)
+        return;
+    m_capabilities = capabilities;
+    emit capabilitiesChanged(m_capabilities);
+}
+
+QHash<SourceActionV2, ActionAvailabilityV2>
+NavidromeSourceSession::conservativeServerActions()
+{
+    QHash<SourceActionV2, ActionAvailabilityV2> result;
+    for (SourceActionV2 action : allActions)
+        result.insert(action, available());
+    return result;
+}
+
+QHash<SourceActionV2, ActionAvailabilityV2>
+NavidromeSourceSession::unavailableAccountActions()
+{
+    QHash<SourceActionV2, ActionAvailabilityV2> result;
+    for (SourceActionV2 action : allActions)
+        result.insert(action, unavailable());
+    return result;
+}
+
+QHash<SourceActionV2, ActionAvailabilityV2>
+NavidromeSourceSession::accountActions(const QJsonObject &user)
+{
+    QHash<SourceActionV2, ActionAvailabilityV2> result;
+    for (SourceActionV2 action : allActions)
+        result.insert(action, available(QStringLiteral("source.permission.available")));
+    const auto applyRole = [&result, &user](const QString &field,
+                                            const QList<SourceActionV2> &actions) {
+        bool granted = false;
+        const bool typed = typedBool(user, field, &granted);
+        for (SourceActionV2 action : actions)
+            result.insert(action, typed && granted
+                                      ? available(QStringLiteral("source.permission.available"))
+                                      : unavailable(QStringLiteral("source.permission.denied")));
+    };
+    applyRole(QStringLiteral("streamRole"), {SourceActionV2::Play});
+    applyRole(QStringLiteral("coverArtRole"), {SourceActionV2::Artwork});
+    applyRole(QStringLiteral("downloadRole"), {SourceActionV2::Download});
+    applyRole(QStringLiteral("playlistRole"), playlistActions);
+    return result;
 }

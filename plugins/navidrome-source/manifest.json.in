@@ -12,11 +12,14 @@
   },
   "interfaces": [
     {
-      "id": "org.quemusic.MusicSourcePlugin/1.0",
-      "version": "1.0"
+      "id": "org.quemusic.MusicSourcePlugin/2.0",
+      "version": "2.0"
     }
   ],
   "runtimeRequirements": {
-    "qtMajor": 6
+    "sourceSdkAbi": 2,
+    "qtMajor": @Qt6Core_VERSION_MAJOR@,
+    "architecture": "@QUEMUSIC_NAVIDROME_ARCHITECTURE@",
+    "buildKey": "@QUEMUSIC_NAVIDROME_BUILD_KEY@"
   }
 }

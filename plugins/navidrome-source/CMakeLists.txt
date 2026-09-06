@@ -1,4 +1,6 @@
 add_library(quemusic_navidrome_source MODULE
+    NavidromeApiClient.cpp
+    NavidromeApiClient.h
     NavidromeSourcePlugin.cpp
     NavidromeSourcePlugin.h
     NavidromeSourceSession.cpp
@@ -18,6 +20,23 @@ set_target_properties(quemusic_navidrome_source PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/navidrome"
 )
+set(QUEMUSIC_NAVIDROME_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    list(LENGTH CMAKE_OSX_ARCHITECTURES navidrome_architecture_count)
+    if(navidrome_architecture_count GREATER 1)
+        set(QUEMUSIC_NAVIDROME_ARCHITECTURE "universal")
+    else()
+        list(GET CMAKE_OSX_ARCHITECTURES 0 QUEMUSIC_NAVIDROME_ARCHITECTURE)
+    endif()
+endif()
+string(TOLOWER "${QUEMUSIC_NAVIDROME_ARCHITECTURE}" QUEMUSIC_NAVIDROME_ARCHITECTURE)
+if(QUEMUSIC_NAVIDROME_ARCHITECTURE STREQUAL "amd64"
+        OR QUEMUSIC_NAVIDROME_ARCHITECTURE STREQUAL "x64")
+    set(QUEMUSIC_NAVIDROME_ARCHITECTURE "x86_64")
+elseif(QUEMUSIC_NAVIDROME_ARCHITECTURE STREQUAL "aarch64")
+    set(QUEMUSIC_NAVIDROME_ARCHITECTURE "arm64")
+endif()
+set(QUEMUSIC_NAVIDROME_BUILD_KEY "$<IF:$<CONFIG:Debug>,Debug,Release>")
 configure_file(
     manifest.json.in
     "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in"
@@ -35,6 +54,8 @@ if(BUILD_TESTING)
 
     qt_add_executable(quemusic_navidrome_source_test
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tst_NavidromeSource.cpp
+        NavidromeApiClient.cpp
+        NavidromeApiClient.h
         NavidromeSourcePlugin.cpp
         NavidromeSourcePlugin.h
         NavidromeSourceSession.cpp

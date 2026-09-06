@@ -1,5 +1,5 @@
 #include "MediaBridge.h"
-#include "NavidromeSourceSession.h"
+#include "IMusicSourceSession.h"
 #include "PluginManager.h"
 #include "SourceAccountStore.h"
 #include "SourceManager.h"
@@ -9,14 +9,19 @@
 #undef private
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QHash>
 #include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QPointer>
 #include <QSettings>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrlQuery>
 
 namespace {
 
@@ -138,6 +143,139 @@ public:
     QList<QByteArray> requestLines;
 };
 
+class NavidromeMappingSession final : public IMusicSourceSession {
+public:
+    NavidromeMappingSession(SourceAccount account, QNetworkAccessManager *network,
+                             QObject *parent = nullptr)
+        : IMusicSourceSession(parent), m_account(std::move(account)), m_network(network)
+    {
+    }
+
+    QUuid search(const SearchQuery &query) override
+    {
+        QUrlQuery parameters;
+        parameters.addQueryItem(QStringLiteral("query"), query.query);
+        parameters.addQueryItem(QStringLiteral("songCount"), QString::number(query.limit));
+        parameters.addQueryItem(QStringLiteral("albumCount"), QString::number(query.limit));
+        parameters.addQueryItem(QStringLiteral("artistCount"), QString::number(query.limit));
+        return start(QStringLiteral("search"), QStringLiteral("search3"), parameters);
+    }
+
+    QUuid browse(const BrowseQuery &query) override
+    {
+        QUrlQuery parameters;
+        if (query.path.isEmpty())
+            return start(QStringLiteral("browse"), QStringLiteral("getIndexes"), parameters);
+        parameters.addQueryItem(QStringLiteral("id"), query.path);
+        return start(QStringLiteral("browse"), QStringLiteral("getMusicDirectory"), parameters);
+    }
+
+    QUuid resolveStream(const TrackRef &) override { return {}; }
+    QUuid fetchArtwork(const TrackRef &) override { return {}; }
+    QUuid fetchLyrics(const TrackRef &) override { return {}; }
+
+    void cancel(const QUuid &requestId) override
+    {
+        const QPointer<QNetworkReply> reply = m_pending.take(requestId);
+        if (reply) {
+            disconnect(reply, nullptr, this, nullptr);
+            reply->abort();
+            reply->deleteLater();
+        }
+    }
+
+private:
+    QUuid start(const QString &operation, const QString &endpoint, QUrlQuery query)
+    {
+        const QUuid requestId = QUuid::createUuid();
+        QUrl url(m_account.parameters.value(QStringLiteral("serverUrl")).toString());
+        url.setPath(QStringLiteral("/rest/%1.view").arg(endpoint));
+        url.setQuery(query);
+        QNetworkReply *reply = m_network->get(QNetworkRequest(url));
+        m_pending.insert(requestId, reply);
+        connect(reply, &QNetworkReply::finished, this,
+                [this, requestId, operation, endpoint, reply] {
+            if (m_pending.take(requestId) != reply)
+                return;
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray payload = reply->readAll();
+            const QNetworkReply::NetworkError networkError = reply->error();
+            reply->deleteLater();
+            if (networkError != QNetworkReply::NoError || status < 200 || status >= 300) {
+                emit requestFailed(requestId,
+                                   {SourceErrorKind::Network,
+                                    QStringLiteral("Fixture request failed"), status});
+                return;
+            }
+            const QJsonObject response = QJsonDocument::fromJson(payload).object()
+                                             .value(QStringLiteral("subsonic-response"))
+                                             .toObject();
+            if (response.value(QStringLiteral("status")).toString() != QStringLiteral("ok")) {
+                emit requestFailed(requestId,
+                                   {SourceErrorKind::InvalidRequest,
+                                    QStringLiteral("Fixture response is invalid"), status});
+                return;
+            }
+            QJsonArray items;
+            if (operation == QStringLiteral("search")) {
+                const QJsonObject result = response.value(QStringLiteral("searchResult3")).toObject();
+                const auto append = [&items](const QJsonArray &values, const QString &kind) {
+                    for (const QJsonValue &value : values) {
+                        const QJsonObject item = value.toObject();
+                        QJsonObject mapped{{QStringLiteral("kind"), kind},
+                                           {QStringLiteral("id"), item.value(QStringLiteral("id"))},
+                                           {QStringLiteral("sourceId"), QStringLiteral("navidrome")}};
+                        mapped.insert(QStringLiteral("title"),
+                                      kind == QStringLiteral("track")
+                                          ? item.value(QStringLiteral("title"))
+                                          : item.value(QStringLiteral("name")));
+                        mapped.insert(QStringLiteral("artist"), item.value(QStringLiteral("artist")));
+                        if (kind == QStringLiteral("track")) {
+                            mapped.insert(QStringLiteral("album"), item.value(QStringLiteral("album")));
+                            mapped.insert(QStringLiteral("duration"), item.value(QStringLiteral("duration")));
+                            mapped.insert(QStringLiteral("coverArtId"), item.value(QStringLiteral("coverArt")));
+                        }
+                        items.append(mapped);
+                    }
+                };
+                append(result.value(QStringLiteral("song")).toArray(), QStringLiteral("track"));
+                append(result.value(QStringLiteral("album")).toArray(), QStringLiteral("album"));
+                append(result.value(QStringLiteral("artist")).toArray(), QStringLiteral("artist"));
+            } else if (endpoint == QStringLiteral("getIndexes")) {
+                const QJsonObject indexes = response.value(QStringLiteral("indexes")).toObject();
+                const QJsonArray artists = indexes.value(QStringLiteral("artist")).toArray();
+                for (const QJsonValue &value : artists) {
+                    const QJsonObject artist = value.toObject();
+                    items.append(QJsonObject{{QStringLiteral("kind"), QStringLiteral("artist")},
+                                             {QStringLiteral("id"), artist.value(QStringLiteral("id"))},
+                                             {QStringLiteral("sourceId"), QStringLiteral("navidrome")},
+                                             {QStringLiteral("title"), artist.value(QStringLiteral("name"))}});
+                }
+            } else {
+                const QJsonObject directory = response.value(QStringLiteral("directory")).toObject();
+                for (const QJsonValue &value : directory.value(QStringLiteral("child")).toArray()) {
+                    const QJsonObject child = value.toObject();
+                    items.append(QJsonObject{{QStringLiteral("kind"),
+                                              child.value(QStringLiteral("isDir")).toBool()
+                                                  ? QStringLiteral("directory")
+                                                  : QStringLiteral("track")},
+                                             {QStringLiteral("id"), child.value(QStringLiteral("id"))},
+                                             {QStringLiteral("sourceId"), QStringLiteral("navidrome")},
+                                             {QStringLiteral("title"), child.value(QStringLiteral("title"))},
+                                             {QStringLiteral("artist"), child.value(QStringLiteral("artist"))}});
+                }
+            }
+            emit requestSucceeded(requestId, operation,
+                                  QJsonObject{{QStringLiteral("items"), items}});
+        });
+        return requestId;
+    }
+
+    SourceAccount m_account;
+    QPointer<QNetworkAccessManager> m_network;
+    QHash<QUuid, QPointer<QNetworkReply>> m_pending;
+};
+
 class LateSession final : public IMusicSourceSession {
 public:
     using IMusicSourceSession::IMusicSourceSession;
@@ -197,8 +335,9 @@ void MediaBridgeTest::mapsNormalizedNavidromeSearchIntoFixedRoles()
     SourceSessionRegistry registry(nullptr, nullptr);
     QNetworkAccessManager network;
     const MediaId id{QStringLiteral("navidrome"), QStringLiteral("home")};
-    installSession(&registry, id, new NavidromeSourceSession(navidromeAccount(fixture.server.serverPort()),
-                                                              &network, &registry));
+    installSession(&registry, id, new NavidromeMappingSession(
+                                      navidromeAccount(fixture.server.serverPort()), &network,
+                                      &registry));
     MediaBridge bridge(&registry);
 
     bridge.search(QStringLiteral("navidrome/home"), QStringLiteral("Song"), 20);
@@ -240,8 +379,9 @@ void MediaBridgeTest::mapsRootAndDirectoryBrowseResponses()
     SourceSessionRegistry registry(nullptr, nullptr);
     QNetworkAccessManager network;
     const MediaId id{QStringLiteral("navidrome"), QStringLiteral("home")};
-    installSession(&registry, id, new NavidromeSourceSession(navidromeAccount(fixture.server.serverPort()),
-                                                              &network, &registry));
+    installSession(&registry, id, new NavidromeMappingSession(
+                                      navidromeAccount(fixture.server.serverPort()), &network,
+                                      &registry));
     MediaBridge bridge(&registry);
 
     bridge.browse(id.sourceId, id.accountId, {}, static_cast<int>(MediaKind::Directory), 20);
@@ -275,8 +415,9 @@ void MediaBridgeTest::mapsEmptyAndFailureStatesAndRetriesSavedIntent()
     SourceSessionRegistry registry(nullptr, nullptr);
     QNetworkAccessManager network;
     const MediaId id{QStringLiteral("navidrome"), QStringLiteral("home")};
-    installSession(&registry, id, new NavidromeSourceSession(navidromeAccount(fixture.server.serverPort()),
-                                                              &network, &registry));
+    installSession(&registry, id, new NavidromeMappingSession(
+                                      navidromeAccount(fixture.server.serverPort()), &network,
+                                      &registry));
     MediaBridge bridge(&registry);
 
     bridge.search(QStringLiteral("navidrome/home"), QStringLiteral("Missing"), 7);
