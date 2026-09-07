@@ -77,6 +77,7 @@ private:
     QUuid scheduleV2Failure(const SourceErrorV2 &error, QUuid publicId = {});
     bool isOpenRequestActive(const QUuid &requestId) const;
     bool validMedia(const MediaRefV2 &media) const;
+    bool validArtworkMedia(const MediaRefV2 &media) const;
     void startExtensions(const QUuid &requestId);
     void startCurrentUser(const QUuid &requestId);
     void finishOpenReady(const QUuid &requestId, bool validUser,

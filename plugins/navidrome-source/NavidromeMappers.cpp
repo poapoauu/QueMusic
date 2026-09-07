@@ -46,9 +46,10 @@ MediaItemV2 song(const QJsonObject &value,const SourceIdentityV2 &source)
     if (!isrc.isEmpty()) item.externalIds.insert(QStringLiteral("isrc"),isrc);
     const QString mbid=value.value(QStringLiteral("musicBrainzId")).toString();
     if (!mbid.isEmpty()) item.externalIds.insert(QStringLiteral("musicBrainzRecordingId"),mbid);
-    for (SourceActionV2 action:{SourceActionV2::Play,SourceActionV2::Artwork,
-                                SourceActionV2::Lyrics,SourceActionV2::Download})
+    for (SourceActionV2 action:{SourceActionV2::Play,SourceActionV2::Lyrics,
+                                SourceActionV2::Download})
         item.availableActions.insert(action,available());
+    if (!item.artworkId.isEmpty()) item.availableActions.insert(SourceActionV2::Artwork,available());
     sourceBadge(item,source); return item;
 }
 MediaItemV2 album(const QJsonObject &value,const SourceIdentityV2 &source)
@@ -70,7 +71,6 @@ MediaItemV2 artist(const QJsonObject &value,const SourceIdentityV2 &source)
     item.artworkId=value.value(QStringLiteral("coverArt")).toString();
     const QString mbid=value.value(QStringLiteral("musicBrainzId")).toString();
     if (!mbid.isEmpty()) item.externalIds.insert(QStringLiteral("musicBrainzArtistId"),mbid);
-    if (!item.artworkId.isEmpty()) item.availableActions.insert(SourceActionV2::Artwork,available());
     sourceBadge(item,source); return item;
 }
 MediaItemV2 playlist(const QJsonObject &value,const SourceIdentityV2 &source)
@@ -78,7 +78,6 @@ MediaItemV2 playlist(const QJsonObject &value,const SourceIdentityV2 &source)
     MediaItemV2 item; item.ref=ref(value,source,MediaEntityTypeV2::Playlist);
     item.title=value.value(QStringLiteral("name")).toString();
     item.artworkId=value.value(QStringLiteral("coverArt")).toString();
-    if (!item.artworkId.isEmpty()) item.availableActions.insert(SourceActionV2::Artwork,available());
     sourceBadge(item,source); return item;
 }
 PageSectionV2 albums(PageSectionKindV2 kind,const QJsonObject &response,
@@ -105,11 +104,11 @@ QList<PageSectionV2> starred(const QJsonObject &response,const SourceIdentityV2 
 QList<PageSectionV2> search(const QJsonObject &response,const SourceIdentityV2 &source)
 {
     const auto root=response.value(QStringLiteral("searchResult3")).toObject();
-    auto result=section(PageSectionKindV2::SearchResults,QStringLiteral("search-results"),
-                        QStringLiteral("music.section.searchResults"));
-    for (const auto &value:root.value(QStringLiteral("song")).toArray()) if (value.isObject()) result.items.append(song(value.toObject(),source));
-    for (const auto &value:root.value(QStringLiteral("album")).toArray()) if (value.isObject()) result.items.append(album(value.toObject(),source));
-    for (const auto &value:root.value(QStringLiteral("artist")).toArray()) if (value.isObject()) result.items.append(artist(value.toObject(),source));
-    return {result};
+    return {mapped(PageSectionKindV2::Tracks,QStringLiteral("search-tracks"),
+                   QStringLiteral("music.section.tracks"),root.value("song").toArray(),source,song),
+            mapped(PageSectionKindV2::Albums,QStringLiteral("search-albums"),
+                   QStringLiteral("music.section.albums"),root.value("album").toArray(),source,album),
+            mapped(PageSectionKindV2::Artists,QStringLiteral("search-artists"),
+                   QStringLiteral("music.section.artists"),root.value("artist").toArray(),source,artist)};
 }
 }

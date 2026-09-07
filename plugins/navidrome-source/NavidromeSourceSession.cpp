@@ -275,9 +275,19 @@ QUuid NavidromeSourceSession::fetchPage(const PageQueryV2 &query)
         add(QStringLiteral("artist"),PageSectionKindV2::FavoriteArtists);
     } else if (query.page==MusicPageKindV2::Search) {
         endpoint=QStringLiteral("search3"); parameters.addQueryItem(QStringLiteral("query"),query.searchText);
-        for (const QString &prefix:{QStringLiteral("song"),QStringLiteral("album"),QStringLiteral("artist")}) {
-            parameters.addQueryItem(prefix+QStringLiteral("Count"),QString::number(query.limit));
-            parameters.addQueryItem(prefix+QStringLiteral("Offset"),QString::number(offset));
+        const QList<QPair<QString,PageSectionKindV2>> categories{
+            {QStringLiteral("song"),PageSectionKindV2::Tracks},
+            {QStringLiteral("album"),PageSectionKindV2::Albums},
+            {QStringLiteral("artist"),PageSectionKindV2::Artists}};
+        if (!query.cursor.isEmpty() && query.section!=PageSectionKindV2::Tracks
+            && query.section!=PageSectionKindV2::Albums
+            && query.section!=PageSectionKindV2::Artists) return invalid();
+        for (const auto &[prefix,kind]:categories) {
+            const bool selected=query.cursor.isEmpty() || query.section==kind;
+            parameters.addQueryItem(prefix+QStringLiteral("Count"),
+                                    QString::number(selected?query.limit:0));
+            parameters.addQueryItem(prefix+QStringLiteral("Offset"),
+                                    QString::number(query.section==kind?offset:0));
         }
     } else {
         switch (query.section) {
@@ -308,6 +318,15 @@ bool NavidromeSourceSession::validMedia(const MediaRefV2 &media) const
         && media.accountId==m_configuration.accountId
         && media.entityType==MediaEntityTypeV2::Track && !media.entityId.isEmpty();
 }
+bool NavidromeSourceSession::validArtworkMedia(const MediaRefV2 &media) const
+{
+    return media.sourcePluginId==m_configuration.pluginPackageId
+        && media.sourceInstanceId==m_configuration.sourceInstanceId
+        && media.accountId==m_configuration.accountId
+        && (media.entityType==MediaEntityTypeV2::Track
+            || media.entityType==MediaEntityTypeV2::Album)
+        && !media.entityId.isEmpty();
+}
 QUuid NavidromeSourceSession::resolveStream(const MediaRefV2 &media)
 {
     const QUuid id=QUuid::createUuid(); m_localV2Requests.insert(id); emit requestStarted(id);
@@ -330,13 +349,14 @@ QUuid NavidromeSourceSession::fetchArtwork(const MediaRefV2 &media)
 {
     const QUuid id=QUuid::createUuid(); m_localV2Requests.insert(id); emit requestStarted(id);
     if (!m_localV2Requests.contains(id)) return id;
-    if (!validMedia(media)) return scheduleV2Failure(
+    if (!validArtworkMedia(media)) return scheduleV2Failure(
         {SourceErrorKindV2::InvalidRequest,QStringLiteral("source.media.invalid"),
          QStringLiteral("The Navidrome media reference is invalid."),{},false},id);
     m_localV2Requests.remove(id); QUrlQuery query; query.addQueryItem(QStringLiteral("id"),media.entityId);
-    const QUuid clientId=m_client->getBinary(QStringLiteral("v2.artwork"),QStringLiteral("getCoverArt"),
-                                              query,32ll*1024*1024);
-    m_v2Requests.insert(clientId,{id,QStringLiteral("artwork"),QStringLiteral("getCoverArt"),{},media,{},0});
+    const QString endpoint=media.entityType==MediaEntityTypeV2::Track
+        ? QStringLiteral("getSong") : QStringLiteral("getAlbum");
+    const QUuid clientId=m_client->get(QStringLiteral("v2.artwork.resolve"),endpoint,query);
+    m_v2Requests.insert(clientId,{id,QStringLiteral("artwork.resolve"),endpoint,{},media,{},0});
     return id;
 }
 QUuid NavidromeSourceSession::fetchLyrics(const MediaRefV2 &media)
@@ -371,7 +391,8 @@ QUuid NavidromeSourceSession::download(const MediaRefV2 &media,const QUrl &desti
     const QFileInfo parent(target.dir().absolutePath());
     if (!validMedia(media) || !destination.isValid() || !destination.isLocalFile()
         || !destination.host().isEmpty() || path.isEmpty() || !target.isAbsolute()
-        || target.exists() || target.fileName().isEmpty() || !parent.exists() || !parent.isDir())
+        || target.exists() || target.isSymLink() || target.fileName().isEmpty()
+        || !parent.exists() || !parent.isDir())
         return scheduleV2Failure({SourceErrorKindV2::InvalidRequest,
                                   QStringLiteral("source.download.destinationInvalid"),
                                   QStringLiteral("The download destination is invalid."),{},false},id);
@@ -579,7 +600,11 @@ void NavidromeSourceSession::finishPage(const V2Request &request,const QJsonObje
         } else page.sections=sections;
     } else if (request.endpoint==QStringLiteral("search3")) {
         auto sections=NavidromeMappers::search(response,source);
-        if (!sections.isEmpty()) page.sections={paginate(sections.takeFirst(),false)};
+        for (auto &section:sections) section=paginate(section,false);
+        if (!request.pageQuery.cursor.isEmpty()) {
+            for (const auto &section:sections) if (section.kind==request.pageQuery.section)
+                page.sections={section};
+        } else page.sections=sections;
     }
     emit pageReady(request.publicId,page);
 }
@@ -593,6 +618,23 @@ void NavidromeSourceSession::handleClientSuccess(const QUuid &requestId,
         const V2Request request=v2.value(); m_v2Requests.erase(v2);
         if (request.operation==QStringLiteral("page")) {
             finishPage(request,response);
+        } else if (request.operation==QStringLiteral("artwork.resolve")) {
+            const QString key=request.media.entityType==MediaEntityTypeV2::Track
+                ? QStringLiteral("song") : QStringLiteral("album");
+            const QString coverArt=response.value(key).toObject()
+                                       .value(QStringLiteral("coverArt")).toString();
+            if (coverArt.isEmpty()) {
+                emit requestFailed(request.publicId,
+                                   invalidResponse(QStringLiteral("source.artwork.invalid")));
+            } else {
+                QUrlQuery query; query.addQueryItem(QStringLiteral("id"),coverArt);
+                const QUuid next=m_client->getBinary(QStringLiteral("v2.artwork"),
+                                                      QStringLiteral("getCoverArt"),query,
+                                                      32ll*1024*1024);
+                V2Request continuation=request; continuation.operation=QStringLiteral("artwork");
+                continuation.endpoint=QStringLiteral("getCoverArt");
+                m_v2Requests.insert(next,continuation);
+            }
         } else if (request.operation==QStringLiteral("lyrics.song")) {
             const auto song=response.value(QStringLiteral("song")).toObject();
             const QString artist=song.value(QStringLiteral("artist")).toString();

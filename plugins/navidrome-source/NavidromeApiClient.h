@@ -17,11 +17,19 @@ class NavidromeApiClient final : public QObject {
 
 public:
     using SaltGenerator = std::function<QString()>;
+    using DownloadWriter = std::function<qint64(QTemporaryFile &,const QByteArray &)>;
+    using DownloadFlusher = std::function<bool(QTemporaryFile &)>;
 
     explicit NavidromeApiClient(SourceConfigurationV2 configuration,
                                 QNetworkAccessManager *network, QObject *parent = nullptr);
     NavidromeApiClient(SourceConfigurationV2 configuration, QNetworkAccessManager *network,
                        SaltGenerator saltGenerator, QObject *parent = nullptr);
+    NavidromeApiClient(SourceConfigurationV2 configuration, QNetworkAccessManager *network,
+                       SaltGenerator saltGenerator, DownloadFlusher downloadFlusher,
+                       QObject *parent = nullptr);
+    NavidromeApiClient(SourceConfigurationV2 configuration, QNetworkAccessManager *network,
+                       SaltGenerator saltGenerator, DownloadWriter downloadWriter,
+                       DownloadFlusher downloadFlusher, QObject *parent = nullptr);
     ~NavidromeApiClient() override;
 
     QUuid get(const QString &operation, const QString &endpoint, QUrlQuery query = {});
@@ -63,5 +71,7 @@ private:
     SourceConfigurationV2 m_configuration;
     QPointer<QNetworkAccessManager> m_network;
     SaltGenerator m_saltGenerator;
+    DownloadWriter m_downloadWriter;
+    DownloadFlusher m_downloadFlusher;
     QHash<QUuid, PendingRequest> m_pending;
 };

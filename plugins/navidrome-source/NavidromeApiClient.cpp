@@ -55,8 +55,31 @@ NavidromeApiClient::NavidromeApiClient(SourceConfigurationV2 configuration,
 NavidromeApiClient::NavidromeApiClient(SourceConfigurationV2 configuration,
                                        QNetworkAccessManager *network,
                                        SaltGenerator saltGenerator, QObject *parent)
+    : NavidromeApiClient(std::move(configuration),network,std::move(saltGenerator),
+                         [](QTemporaryFile &file) { return file.flush(); },parent)
+{
+}
+
+NavidromeApiClient::NavidromeApiClient(SourceConfigurationV2 configuration,
+                                       QNetworkAccessManager *network,
+                                       SaltGenerator saltGenerator,
+                                       DownloadFlusher downloadFlusher,QObject *parent)
+    : NavidromeApiClient(std::move(configuration),network,std::move(saltGenerator),
+                         [](QTemporaryFile &file,const QByteArray &bytes) {
+                             return file.write(bytes);
+                         },std::move(downloadFlusher),parent)
+{
+}
+
+NavidromeApiClient::NavidromeApiClient(SourceConfigurationV2 configuration,
+                                       QNetworkAccessManager *network,
+                                       SaltGenerator saltGenerator,
+                                       DownloadWriter downloadWriter,
+                                       DownloadFlusher downloadFlusher,QObject *parent)
     : QObject(parent), m_configuration(std::move(configuration)), m_network(network),
-      m_saltGenerator(std::move(saltGenerator))
+      m_saltGenerator(std::move(saltGenerator)),
+      m_downloadWriter(std::move(downloadWriter)),
+      m_downloadFlusher(std::move(downloadFlusher))
 {
 }
 
@@ -314,10 +337,6 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
                                    .section(QLatin1Char(';'),0,0).trimmed();
     if (request.mode!=PendingRequest::Mode::Json
         && responseMime.contains(QStringLiteral("json"),Qt::CaseInsensitive)) {
-        if (request.mode==PendingRequest::Mode::Download && request.temporaryFile) {
-            request.temporaryFile->flush(); request.temporaryFile->seek(0);
-            payload=request.temporaryFile->read(64*1024);
-        }
         const auto responseValue=QJsonDocument::fromJson(payload).object()
                                      .value(QStringLiteral("subsonic-response"));
         const auto response=responseValue.toObject(); discardTemporary();
@@ -343,7 +362,15 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
                                         QStringLiteral("The download temporary file was lost.")));
             return;
         }
-        request.temporaryFile->flush(); request.temporaryFile->close();
+        if (!m_downloadFlusher || !m_downloadFlusher(*request.temporaryFile)
+            || request.temporaryFile->error()!=QFileDevice::NoError) {
+            delete request.temporaryFile.data();
+            emit failed(requestId,error(SourceErrorKindV2::Unavailable,
+                                        QStringLiteral("source.download.ioFailed"),
+                                        QStringLiteral("The downloaded bytes could not be flushed.")));
+            return;
+        }
+        request.temporaryFile->close();
         const QString temporaryPath=request.temporaryFile->fileName();
         if (QFileInfo::exists(request.destinationPath)
             || !QFile::rename(temporaryPath,request.destinationPath)) {
@@ -385,6 +412,19 @@ void NavidromeApiClient::consumeReply(const QUuid &requestId)
     auto pending=m_pending.find(requestId);
     if (pending==m_pending.end() || !pending->reply
         || pending->mode==PendingRequest::Mode::Json) return;
+    const int status=pending->reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString mime=pending->reply->header(QNetworkRequest::ContentTypeHeader).toString()
+                           .section(QLatin1Char(';'),0,0).trimmed();
+    const bool json=mime.contains(QStringLiteral("json"),Qt::CaseInsensitive);
+    const bool successfulHttp=status>=200 && status<300;
+    if (!successfulHttp || json) {
+        constexpr qsizetype maximumErrorBytes=64*1024;
+        const qsizetype remaining=maximumErrorBytes-pending->bytes.size();
+        if (remaining>0) pending->bytes.append(pending->reply->read(remaining));
+        while (pending->reply->bytesAvailable()>0)
+            pending->reply->read(qMin<qint64>(64*1024,pending->reply->bytesAvailable()));
+        return;
+    }
     const QVariant declared=pending->reply->header(QNetworkRequest::ContentLengthHeader);
     if (pending->mode==PendingRequest::Mode::Binary && declared.isValid()
         && declared.toLongLong()>pending->maximumBytes) {
@@ -404,7 +444,9 @@ void NavidromeApiClient::consumeReply(const QUuid &requestId)
         pending->bytes.append(chunk);
     } else if (!chunk.isEmpty()
                && (!pending->temporaryFile
-                   || pending->temporaryFile->write(chunk)!=chunk.size())) {
+                   || !m_downloadWriter
+                   || m_downloadWriter(*pending->temporaryFile,chunk)!=chunk.size()
+                   || pending->temporaryFile->error()!=QFileDevice::NoError)) {
         failTransfer(requestId,error(SourceErrorKindV2::Unavailable,
                                      QStringLiteral("source.download.ioFailed"),
                                      QStringLiteral("The downloaded bytes could not be written.")));
