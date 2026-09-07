@@ -10,6 +10,7 @@
 #include <QStandardPaths>
 #include <QThreadPool>
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <list>
 
@@ -36,6 +37,31 @@ QJsonObject allowedMap(const QVariantMap &map, const QStringList &strings,
             out.insert(key,QJsonValue::fromVariant(value)); break;
         default: break;
         }
+    }
+    return out;
+}
+QJsonObject allowedMetadata(const QVariantMap &map)
+{
+    QJsonObject out=allowedMap(map,{"genre"},{"year","trackNumber","discNumber","rating","bitRate","sampleRate"});
+    const QVariant playlistId=map.value(QStringLiteral("playlistId"));
+    const QVariant playlistIndex=map.value(QStringLiteral("playlistIndex"));
+    if (playlistId.metaType().id()==QMetaType::QString && !playlistId.toString().isEmpty()
+        && playlistIndex.metaType().id()==QMetaType::Int && playlistIndex.toInt()>=0) {
+        out.insert(QStringLiteral("playlistId"),playlistId.toString());
+        out.insert(QStringLiteral("playlistIndex"),playlistIndex.toInt());
+    }
+    return out;
+}
+QVariantMap readMetadata(const QJsonObject &object)
+{
+    QVariantMap out=allowedMap(object.toVariantMap(),{"genre"},{"year","trackNumber","discNumber","rating","bitRate","sampleRate"}).toVariantMap();
+    const QJsonValue playlistId=object.value(QStringLiteral("playlistId"));
+    const QJsonValue playlistIndex=object.value(QStringLiteral("playlistIndex"));
+    const double index=playlistIndex.toDouble(-1);
+    if (playlistId.isString() && !playlistId.toString().isEmpty() && playlistIndex.isDouble()
+        && std::isfinite(index) && std::floor(index)==index && index>=0 && index<=INT_MAX) {
+        out.insert(QStringLiteral("playlistId"),playlistId.toString());
+        out.insert(QStringLiteral("playlistIndex"),int(index));
     }
     return out;
 }
@@ -103,7 +129,7 @@ QJsonObject itemJson(const MediaItemV2 &i)
             {"album",i.album},{"durationMs",i.durationMs},
             {"artworkId",i.artworkId.contains(":") || i.artworkId.contains('?') ? QString{} : i.artworkId},
             {"externalIds",allowedMap(i.externalIds,{"isrc","musicBrainzRecordingId"})},
-            {"metadata",allowedMap(i.metadata,{"genre"},{"year","trackNumber","discNumber","rating","bitRate","sampleRate"})},
+            {"metadata",allowedMetadata(i.metadata)},
             {"actions",actions}};
 }
 QJsonObject pageJson(const PageResultV2 &page)
@@ -148,7 +174,7 @@ std::optional<PageResultV2> readPage(const QJsonObject &object)
             item.album=i.value("album").toString(); item.durationMs=i.value("durationMs").toInteger();
             item.artworkId=i.value("artworkId").toString();
             item.externalIds=allowedMap(i.value("externalIds").toObject().toVariantMap(),{"isrc","musicBrainzRecordingId"}).toVariantMap();
-            item.metadata=allowedMap(i.value("metadata").toObject().toVariantMap(),{"genre"},{"year","trackNumber","discNumber","rating","bitRate","sampleRate"}).toVariantMap();
+            item.metadata=readMetadata(i.value("metadata").toObject());
             const auto actions=i.value("actions").toObject();
             for (auto it=actions.begin();it!=actions.end();++it) {
                 bool ok=false; int action=it.key().toInt(&ok);

@@ -5,6 +5,7 @@
 #include "v2/SourceSecretsV2.h"
 
 #include <QCryptographicHash>
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -15,6 +16,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTest>
+#include <QTemporaryDir>
 #include <QUrlQuery>
 
 #include <cstring>
@@ -34,6 +36,8 @@ public:
         QByteArray body;
         QList<QPair<QByteArray, QByteArray>> headers;
         bool respond = true;
+        QByteArray contentType = "application/json";
+        qint64 declaredLength = -1;
     };
 
     explicit FakeNavidromeServer(QObject *parent = nullptr) : QTcpServer(parent)
@@ -65,10 +69,14 @@ public:
                     const Response response = m_responses.takeFirst();
                     const QByteArray statusText = response.status == 200 ? "OK" : "Error";
                     QByteArray wire = "HTTP/1.1 " + QByteArray::number(response.status) + " "
-                                      + statusText + "\r\nContent-Type: application/json\r\n";
+                                      + statusText + "\r\nContent-Type: "
+                                      + response.contentType + "\r\n";
                     for (const auto &header : response.headers)
                         wire += header.first + ": " + header.second + "\r\n";
-                    wire += "Content-Length: " + QByteArray::number(response.body.size())
+                    wire += "Content-Length: "
+                            + QByteArray::number(response.declaredLength >= 0
+                                                     ? response.declaredLength
+                                                     : response.body.size())
                             + "\r\nConnection: close\r\n\r\n" + response.body;
                     socket->write(wire);
                     socket->disconnectFromHost();
@@ -81,13 +89,19 @@ public:
     void enqueue(const QJsonObject &response, int status = 200)
     {
         m_responses.append({status, QJsonDocument(response).toJson(QJsonDocument::Compact),
-                            {}, true});
+                            {}, true, "application/json", -1});
     }
     void enqueueRaw(QByteArray body, int status = 200)
     {
-        m_responses.append({status, std::move(body), {}, true});
+        m_responses.append({status, std::move(body), {}, true, "application/json", -1});
     }
-    void enqueueHeld() { m_responses.append({200, {}, {}, false}); }
+    void enqueueBytes(QByteArray body, QByteArray contentType = "application/octet-stream",
+                      qint64 declaredLength = -1)
+    {
+        m_responses.append({200, std::move(body), {}, true, std::move(contentType),
+                            declaredLength});
+    }
+    void enqueueHeld() { m_responses.append({200, {}, {}, false, "application/octet-stream", -1}); }
     const QList<CapturedRequest> &requests() const { return m_requests; }
 
 private:
@@ -189,6 +203,9 @@ const QList<SourceActionV2> allSourceActions{
     SourceActionV2::RemovePlaylistTracks, SourceActionV2::FetchPlayQueue,
     SourceActionV2::SavePlayQueue, SourceActionV2::FetchBookmarks,
     SourceActionV2::CreateBookmark, SourceActionV2::DeleteBookmark};
+const QList<SourceActionV2> implementedSourceActions{
+    SourceActionV2::Play, SourceActionV2::Artwork, SourceActionV2::Lyrics,
+    SourceActionV2::Download};
 
 class ImmediateReply final : public QNetworkReply {
 public:
@@ -248,6 +265,22 @@ void enqueueSuccessfulHandshake(FakeNavidromeServer &server,
     server.enqueue(std::move(user));
 }
 
+MediaRefV2 media(QString id = QStringLiteral("42"))
+{
+    return {QStringLiteral("org.quemusic.source.navidrome"),
+            QStringLiteral("navidrome/admin"), QStringLiteral("admin"),
+            MediaEntityTypeV2::Track, std::move(id)};
+}
+
+PageQueryV2 pageQuery(PageSectionKindV2 section)
+{
+    PageQueryV2 query;
+    query.section = section;
+    query.scope.sourceInstanceId = QStringLiteral("navidrome/admin");
+    query.limit = 2;
+    return query;
+}
+
 } // namespace
 
 class NavidromeSourceTest : public QObject {
@@ -256,8 +289,8 @@ class NavidromeSourceTest : public QObject {
 private slots:
     void packageAndQtMetadataAdvertiseV2();
     void pluginAdvertisesV2AndGenericSettings();
-    void pluginCreatesOnlyBaseV2Session();
-    void descriptorMatchesAbsentV2Providers();
+    void pluginCreatesImplementedV2ProvidersOnly();
+    void descriptorMatchesImplementedV2Providers();
     void legacyAndNamedSecretsProduceEquivalentControlledTokens();
     void malformedOrMissingPasswordFailsBeforeNetwork();
     void transportPreservesBasePathAndUsesFreshSalt();
@@ -283,6 +316,19 @@ private slots:
     void mapsSubsonicErrorsAndMalformedJson();
     void cancelsLyricsSecondStageWithoutTerminalSignal();
     void lyricsUsesCachedSearchMetadata();
+    void pageEndpoint_data();
+    void pageEndpoint();
+    void drillDownUsesTypedFilterEndpoint_data();
+    void drillDownUsesTypedFilterEndpoint();
+    void favoritesMapsSongsAlbumsAndArtists();
+    void playlistTracksCarryAbsoluteOccurrenceMetadata();
+    void streamDescriptorUsesAuthenticatedUrlWithoutPersistingIt();
+    void artworkPayloadIsBoundedAndTyped();
+    void lyricsUsesNegotiatedEndpoint();
+    void downloadRejectsInvalidDestinationsBeforeNetwork();
+    void downloadWritesRequestedLocalFileAtomically();
+    void downloadRenameRaceAndCancellationLeaveNoPartialFiles();
+    void binaryMediaRejectsSubsonicErrorBodiesAndCleansUp();
 };
 
 void NavidromeSourceTest::packageAndQtMetadataAdvertiseV2()
@@ -335,38 +381,43 @@ void NavidromeSourceTest::pluginAdvertisesV2AndGenericSettings()
     QCOMPARE(quality.defaultValue, QVariant(QStringLiteral("original")));
 }
 
-void NavidromeSourceTest::pluginCreatesOnlyBaseV2Session()
+void NavidromeSourceTest::pluginCreatesImplementedV2ProvidersOnly()
 {
     NavidromeSourcePlugin plugin;
     IMusicSourceSessionV2 *session = plugin.createSession(configuration(8533), &plugin);
     QVERIFY(session != nullptr);
     QCOMPARE(session->parent(), &plugin);
-    QVERIFY(qobject_cast<IPageProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) == nullptr);
+    // Missing Q_INTERFACES declarations makes implemented providers invisible to the host.
+    QVERIFY(qobject_cast<IPageProviderV2 *>(session) != nullptr);
+    QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IRatingProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) != nullptr);
 }
 
-void NavidromeSourceTest::descriptorMatchesAbsentV2Providers()
+void NavidromeSourceTest::descriptorMatchesImplementedV2Providers()
 {
     NavidromeSourcePlugin plugin;
     const SourceDescriptorV2 descriptor = plugin.descriptor();
     IMusicSourceSessionV2 *session = plugin.createSession(configuration(8533), &plugin);
     QVERIFY(session != nullptr);
-    QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IRatingProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IPlayQueueProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IBookmarkProviderV2 *>(session) == nullptr);
-    QCOMPARE(descriptor.declaredActions.size(), 0);
+    QCOMPARE(descriptor.declaredActions.size(), 4);
+    for (SourceActionV2 action : {SourceActionV2::Play, SourceActionV2::Artwork,
+                                  SourceActionV2::Lyrics, SourceActionV2::Download})
+        QCOMPARE(descriptor.declaredActions.value(action).state, AvailabilityV2::Available);
     for (SourceActionV2 action : allSourceActions)
-        QCOMPARE(descriptor.declaredActions.value(action).state, AvailabilityV2::Unsupported);
+        if (!descriptor.declaredActions.contains(action))
+            QCOMPARE(descriptor.declaredActions.value(action).state, AvailabilityV2::Unsupported);
 }
 
 void NavidromeSourceTest::legacyAndNamedSecretsProduceEquivalentControlledTokens()
@@ -683,8 +734,11 @@ void NavidromeSourceTest::extensionsRetainConservativeCapabilities()
     QCOMPARE(server.requests().size(), 3);
     const CapabilitySetV2 capabilities = session.capabilities();
     QCOMPARE(capabilities.serverActions.size(), allSourceActions.size());
+    // Advertising a Task 11 action here lets the router expose an absent provider method.
     for (SourceActionV2 action : allSourceActions)
-        QCOMPARE(capabilities.serverAction(action).state, AvailabilityV2::Available);
+        QCOMPARE(capabilities.serverAction(action).state,
+                 implementedSourceActions.contains(action) ? AvailabilityV2::Available
+                                                           : AvailabilityV2::Unsupported);
 }
 
 void NavidromeSourceTest::roleMappingIsLiteralAndIndependent()
@@ -699,17 +753,15 @@ void NavidromeSourceTest::roleMappingIsLiteralAndIndependent()
     QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
     const CapabilitySetV2 caps = session.capabilities();
     for (SourceActionV2 action : {SourceActionV2::Play, SourceActionV2::Artwork,
-                                  SourceActionV2::Download, SourceActionV2::CreatePlaylist,
-                                  SourceActionV2::UpdatePlaylist, SourceActionV2::DeletePlaylist,
-                                  SourceActionV2::AddPlaylistTracks,
-                                  SourceActionV2::RemovePlaylistTracks}) {
+                                  SourceActionV2::Download}) {
         QCOMPARE(caps.serverAction(action).state, AvailabilityV2::Available);
         QCOMPARE(caps.accountAction(action).state, AvailabilityV2::Unavailable);
         QCOMPARE(caps.action(action).state, AvailabilityV2::Unavailable);
     }
-    QCOMPARE(caps.accountAction(SourceActionV2::Rating).state, AvailabilityV2::Available);
-    QCOMPARE(caps.accountAction(SourceActionV2::Scrobble).state, AvailabilityV2::Available);
     QCOMPARE(caps.accountAction(SourceActionV2::Lyrics).state, AvailabilityV2::Available);
+    for (SourceActionV2 action : allSourceActions)
+        if (!implementedSourceActions.contains(action))
+            QCOMPARE(caps.action(action).state,AvailabilityV2::Unsupported);
 }
 
 void NavidromeSourceTest::unsupportedOrMalformedRoleResponseKeepsReadSessionReady()
@@ -764,7 +816,7 @@ void NavidromeSourceTest::unsupportedOrMalformedRoleResponseKeepsReadSessionRead
         QCOMPARE(session.capabilities().accountAction(SourceActionV2::Download).state,
                  AvailabilityV2::Available);
         QCOMPARE(session.capabilities().accountAction(SourceActionV2::Rating).state,
-                 AvailabilityV2::Available);
+                 AvailabilityV2::Unsupported);
     }
 }
 
@@ -956,7 +1008,7 @@ void NavidromeSourceTest::resolveStreamReturnsAuthenticatedStreamDto()
                                    [] { return QStringLiteral("stream-salt"); });
     QSignalSpy succeeded(&session, &NavidromeSourceSession::legacyRequestSucceeded);
     const QUuid requestId = session.resolveStream(
-        {QStringLiteral("navidrome"), QStringLiteral("song-1")});
+        TrackRef{QStringLiteral("navidrome"), QStringLiteral("song-1")});
     QVERIFY(succeeded.wait(1000));
     QCOMPARE(succeeded.constFirst().at(0).toUuid(), requestId);
     const QJsonObject result = succeeded.constFirst().at(2).value<QJsonValue>().toObject();
@@ -975,7 +1027,7 @@ void NavidromeSourceTest::artworkReturnsAuthenticatedArtworkDto()
     NavidromeSourceSession session(configuration(8533), &network,
                                    [] { return QStringLiteral("art-salt"); });
     QSignalSpy succeeded(&session, &NavidromeSourceSession::legacyRequestSucceeded);
-    session.fetchArtwork({QStringLiteral("navidrome"), QStringLiteral("cover-1")});
+    session.fetchArtwork(TrackRef{QStringLiteral("navidrome"), QStringLiteral("cover-1")});
     QVERIFY(succeeded.wait(1000));
     const QUrl url(succeeded.constFirst().at(2).value<QJsonValue>().toObject()
                        .value(QStringLiteral("url")).toString());
@@ -999,7 +1051,7 @@ void NavidromeSourceTest::lyricsFetchesSongMetadataThenLyrics()
     NavidromeSourceSession session(configuration(server.serverPort()), &network);
     QSignalSpy succeeded(&session, &NavidromeSourceSession::legacyRequestSucceeded);
     const QUuid requestId = session.fetchLyrics(
-        {QStringLiteral("navidrome"), QStringLiteral("song-1")});
+        TrackRef{QStringLiteral("navidrome"), QStringLiteral("song-1")});
     QVERIFY(succeeded.wait(1000));
     QCOMPARE(succeeded.count(), 1);
     QCOMPARE(succeeded.constFirst().at(0).toUuid(), requestId);
@@ -1047,7 +1099,7 @@ void NavidromeSourceTest::cancelsLyricsSecondStageWithoutTerminalSignal()
     QSignalSpy succeeded(&session, &NavidromeSourceSession::legacyRequestSucceeded);
     QSignalSpy failed(&session, &NavidromeSourceSession::legacyRequestFailed);
     const QUuid requestId = session.fetchLyrics(
-        {QStringLiteral("navidrome"), QStringLiteral("song-1")});
+        TrackRef{QStringLiteral("navidrome"), QStringLiteral("song-1")});
     QTRY_COMPARE(server.requests().size(), 2);
     session.cancel(requestId);
     QTest::qWait(50);
@@ -1074,10 +1126,271 @@ void NavidromeSourceTest::lyricsUsesCachedSearchMetadata()
     session.search({QStringLiteral("Song"), 1});
     QVERIFY(succeeded.wait(1000));
     succeeded.clear();
-    session.fetchLyrics({QStringLiteral("navidrome"), QStringLiteral("song-1")});
+    session.fetchLyrics(TrackRef{QStringLiteral("navidrome"), QStringLiteral("song-1")});
     QVERIFY(succeeded.wait(1000));
     QCOMPARE(server.requests().size(), 2);
     QCOMPARE(server.requests().at(1).url.path(), QStringLiteral("/rest/getLyrics.view"));
+}
+
+void NavidromeSourceTest::pageEndpoint_data()
+{
+    QTest::addColumn<PageSectionKindV2>("section");
+    QTest::addColumn<QString>("endpoint");
+    QTest::addColumn<QString>("type");
+    QTest::newRow("random") << PageSectionKindV2::Random << "getAlbumList2" << "random";
+    QTest::newRow("newest") << PageSectionKindV2::Newest << "getAlbumList2" << "newest";
+    QTest::newRow("recent") << PageSectionKindV2::RecentlyPlayed << "getAlbumList2" << "recent";
+    QTest::newRow("frequent") << PageSectionKindV2::FrequentlyPlayed << "getAlbumList2" << "frequent";
+    QTest::newRow("highest") << PageSectionKindV2::HighestRated << "getAlbumList2" << "highest";
+    QTest::newRow("genres") << PageSectionKindV2::Genres << "getGenres" << "";
+    QTest::newRow("artists") << PageSectionKindV2::Artists << "getArtists" << "";
+}
+
+void NavidromeSourceTest::pageEndpoint()
+{
+    // A wrong dispatch table silently feeds a section from the wrong Subsonic collection.
+    QFETCH(PageSectionKindV2, section); QFETCH(QString, endpoint); QFETCH(QString, type);
+    FakeNavidromeServer server; QVERIFY(server.start());
+    if (endpoint == QStringLiteral("getAlbumList2"))
+        server.enqueue(subsonicOk({{"albumList2",QJsonObject{{"album",QJsonArray{
+            QJsonObject{{"id","album-1"},{"name","Album"},{"artist","Artist"}}}}}}}));
+    else if (endpoint == QStringLiteral("getGenres"))
+        server.enqueue(subsonicOk({{"genres",QJsonObject{{"genre",QJsonArray{
+            QJsonObject{{"value","Jazz"},{"songCount",2},{"albumCount",1}}}}}}}));
+    else
+        server.enqueue(subsonicOk({{"artists",QJsonObject{{"index",QJsonArray{
+            QJsonObject{{"name","A"},{"artist",QJsonArray{QJsonObject{{"id","artist-1"},{"name","Artist"}}}}}}}}}}));
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    auto *provider=qobject_cast<IPageProviderV2 *>(&session); QVERIFY(provider);
+    QSignalSpy pages(&session,&IMusicSourceSessionV2::pageReady);
+    const auto id=provider->fetchPage(pageQuery(section)); QTRY_COMPARE(pages.size(),1);
+    QCOMPARE(pages[0][0].toUuid(),id);
+    const auto result=qvariant_cast<PageResultV2>(pages[0][1]);
+    QCOMPARE(result.sections.size(),1); QCOMPARE(result.sections[0].kind,section);
+    QCOMPARE(result.sections[0].items.size(),1);
+    QCOMPARE(result.sections[0].items[0].ref.sourceInstanceId,QString("navidrome/admin"));
+    QCOMPARE(server.requests().size(),1);
+    QCOMPARE(server.requests()[0].url.path(),QString("/rest/")+endpoint+QString(".view"));
+    QCOMPARE(QUrlQuery(server.requests()[0].url).queryItemValue("type"),type);
+    if (endpoint==QStringLiteral("getAlbumList2"))
+        QCOMPARE(QUrlQuery(server.requests()[0].url).queryItemValue("size"),QString("2"));
+}
+
+void NavidromeSourceTest::drillDownUsesTypedFilterEndpoint_data()
+{
+    QTest::addColumn<QString>("filterKey"); QTest::addColumn<QString>("endpoint");
+    QTest::newRow("artist") << "artistId" << "getArtist";
+    QTest::newRow("album") << "albumId" << "getAlbum";
+    QTest::newRow("song") << "songId" << "getSong";
+    QTest::newRow("genre") << "genre" << "getSongsByGenre";
+    QTest::newRow("playlist") << "playlistId" << "getPlaylist";
+}
+
+void NavidromeSourceTest::drillDownUsesTypedFilterEndpoint()
+{
+    // Treating typed IDs interchangeably sends valid IDs to incompatible endpoints.
+    QFETCH(QString,filterKey); QFETCH(QString,endpoint);
+    FakeNavidromeServer server; QVERIFY(server.start());
+    QJsonObject fields;
+    const QJsonObject album{{"id","a1"},{"name","Album"}};
+    const QJsonObject song{{"id","s1"},{"title","Song"}};
+    if (endpoint==QStringLiteral("getArtist"))
+        fields.insert("artist",QJsonObject{{"album",QJsonArray{album}}});
+    else if (endpoint==QStringLiteral("getAlbum"))
+        fields.insert("album",QJsonObject{{"song",QJsonArray{song}}});
+    else if (endpoint==QStringLiteral("getSong"))
+        fields.insert("song",song);
+    else if (endpoint==QStringLiteral("getSongsByGenre"))
+        fields.insert("songsByGenre",QJsonObject{{"song",QJsonArray{song}}});
+    else
+        fields.insert("playlist",QJsonObject{{"id","p1"},{"entry",QJsonArray{song}}});
+    server.enqueue(subsonicOk(fields));
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    PageQueryV2 query=pageQuery(filterKey==QStringLiteral("artistId")
+                                    ? PageSectionKindV2::Albums : PageSectionKindV2::Tracks);
+    query.filters={{filterKey,filterKey==QStringLiteral("genre")?QString("Jazz"):QString("p1")}};
+    QSignalSpy pages(&session,&IMusicSourceSessionV2::pageReady);
+    qobject_cast<IPageProviderV2 *>(&session)->fetchPage(query); QTRY_COMPARE(pages.size(),1);
+    QCOMPARE(server.requests()[0].url.path(),QString("/rest/")+endpoint+QString(".view"));
+}
+
+void NavidromeSourceTest::favoritesMapsSongsAlbumsAndArtists()
+{
+    // Flattening getStarred2 loses the typed three-section favorites contract.
+    FakeNavidromeServer server; QVERIFY(server.start());
+    QJsonObject starred;
+    starred.insert("song",QJsonArray{QJsonObject{{"id","s1"},{"title","Song"}}});
+    starred.insert("album",QJsonArray{QJsonObject{{"id","a1"},{"name","Album"}}});
+    starred.insert("artist",QJsonArray{QJsonObject{{"id","r1"},{"name","Artist"}}});
+    server.enqueue(subsonicOk({{"starred2",starred}}));
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    PageQueryV2 query=pageQuery(PageSectionKindV2::FavoriteTracks); query.page=MusicPageKindV2::Favorites;
+    QSignalSpy pages(&session,&IMusicSourceSessionV2::pageReady);
+    qobject_cast<IPageProviderV2 *>(&session)->fetchPage(query); QTRY_COMPARE(pages.size(),1);
+    const auto result=qvariant_cast<PageResultV2>(pages[0][1]);
+    QCOMPARE(result.sections.size(),3);
+    QCOMPARE(result.sections[0].kind,PageSectionKindV2::FavoriteTracks);
+    QCOMPARE(result.sections[1].kind,PageSectionKindV2::FavoriteAlbums);
+    QCOMPARE(result.sections[2].kind,PageSectionKindV2::FavoriteArtists);
+}
+
+void NavidromeSourceTest::playlistTracksCarryAbsoluteOccurrenceMetadata()
+{
+    // Using a rendered row or track number corrupts occurrence identity after slicing.
+    FakeNavidromeServer server; QVERIFY(server.start());
+    QJsonArray entries;
+    for (int index=0;index<3;++index)
+        entries.append(QJsonObject{{"id",index==1?"same":"song"},{"title",QString("Song %1").arg(index)},
+                                   {"track",99},{"isrc","CN-A01-24-00001"}});
+    server.enqueue(subsonicOk({{"playlist",QJsonObject{{"id","p1"},{"entry",entries}}}}));
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    auto query=pageQuery(PageSectionKindV2::Tracks); query.limit=1; query.cursor="1";
+    query.filters={{"playlistId",QString("p1")}};
+    QSignalSpy pages(&session,&IMusicSourceSessionV2::pageReady);
+    qobject_cast<IPageProviderV2 *>(&session)->fetchPage(query); QTRY_COMPARE(pages.size(),1);
+    const auto section=qvariant_cast<PageResultV2>(pages[0][1]).sections[0];
+    QCOMPARE(section.items.size(),1);
+    QCOMPARE(section.items[0].metadata.value("playlistId"),QVariant(QString("p1")));
+    QCOMPARE(section.items[0].metadata.value("playlistIndex").metaType().id(),QMetaType::Int);
+    QCOMPARE(section.items[0].metadata.value("playlistIndex").toInt(),1);
+    QVERIFY(section.hasMore); QCOMPARE(section.nextCursor,QString("2"));
+}
+
+void NavidromeSourceTest::streamDescriptorUsesAuthenticatedUrlWithoutPersistingIt()
+{
+    // Returning a stream URL through an action/page payload makes credentials cacheable.
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(8533),&network);
+    QSignalSpy started(&session,&IMusicSourceSessionV2::requestStarted);
+    QSignalSpy streams(&session,&IMusicSourceSessionV2::streamReady);
+    const auto id=qobject_cast<IPlaybackProviderV2 *>(&session)->resolveStream(media());
+    QCOMPARE(started.size(),1); QCOMPARE(started[0][0].toUuid(),id);
+    QTRY_COMPARE(streams.size(),1);
+    const auto stream=qvariant_cast<StreamDescriptorV2>(streams[0][1]);
+    QVERIFY(stream.url.path().endsWith("/rest/stream.view"));
+    QCOMPARE(QUrlQuery(stream.url).queryItemValue("id"),QString("42"));
+    QCOMPARE(stream.media,media());
+}
+
+void NavidromeSourceTest::artworkPayloadIsBoundedAndTyped()
+{
+    // Unbounded readAll permits an oversized cover to exhaust host memory.
+    FakeNavidromeServer server; QVERIFY(server.start());
+    server.enqueueBytes("image-bytes","image/jpeg");
+    server.enqueueBytes("x","image/jpeg",32ll*1024*1024+1);
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    QSignalSpy completed(&session,&IMusicSourceSessionV2::actionCompleted);
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    auto *provider=qobject_cast<IPlaybackProviderV2 *>(&session);
+    provider->fetchArtwork(media()); QTRY_COMPARE(completed.size(),1);
+    const auto result=qvariant_cast<ActionResultV2>(completed[0][1]);
+    QCOMPARE(result.action,SourceActionV2::Artwork);
+    QCOMPARE(result.payload.value("bytes").metaType().id(),QMetaType::QByteArray);
+    QCOMPARE(result.payload.value("bytes").toByteArray(),QByteArray("image-bytes"));
+    QCOMPARE(result.payload.value("mimeType"),QVariant(QString("image/jpeg")));
+    QVERIFY(!result.payload.contains("url"));
+    provider->fetchArtwork(media("43")); QTRY_COMPARE(failed.size(),1);
+    const auto error=qvariant_cast<SourceErrorV2>(failed[0][1]);
+    QCOMPARE(error.kind,SourceErrorKindV2::Unavailable); QVERIFY(!error.retryable);
+    QVERIFY(!error.detail.contains("http")); QVERIFY(!error.detail.contains("token"));
+}
+
+void NavidromeSourceTest::lyricsUsesNegotiatedEndpoint()
+{
+    // Ignoring the negotiated songLyrics extension forces a lossy artist/title fallback.
+    FakeNavidromeServer server; QVERIFY(server.start()); enqueueSuccessfulHandshake(server);
+    server.enqueue(subsonicOk({{"lyricsList",QJsonObject{{"structuredLyrics",QJsonArray{
+        QJsonObject{{"line",QJsonArray{QJsonObject{{"start",1000},{"value","line one"}},
+                                                   QJsonObject{{"start",2000},{"value","line two"}}}}}}}}}}));
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    session.open(); QTRY_COMPARE(session.state(),SourceSessionStateV2::Ready);
+    QSignalSpy completed(&session,&IMusicSourceSessionV2::actionCompleted);
+    qobject_cast<IPlaybackProviderV2 *>(&session)->fetchLyrics(media());
+    QTRY_COMPARE(completed.size(),1);
+    const auto result=qvariant_cast<ActionResultV2>(completed[0][1]);
+    QCOMPARE(result.action,SourceActionV2::Lyrics);
+    QCOMPARE(result.payload.value("lyrics"),QVariant(QString("line one\nline two")));
+    QCOMPARE(server.requests().last().url.path(),QString("/rest/getLyricsBySongId.view"));
+}
+
+void NavidromeSourceTest::downloadRejectsInvalidDestinationsBeforeNetwork()
+{
+    // Deferring destination validation can leak credentials on requests that can never commit.
+    FakeNavidromeServer server; QVERIFY(server.start()); QTemporaryDir dir; QVERIFY(dir.isValid());
+    const QString existingPath=dir.filePath("existing.mp3"); QFile existing(existingPath);
+    QVERIFY(existing.open(QIODevice::WriteOnly)); existing.write("keep"); existing.close();
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    auto *provider=qobject_cast<IDownloadProviderV2 *>(&session);
+    const QList<QUrl> invalid{QUrl("https://example.invalid/song.mp3"),QUrl("relative.mp3"),
+                              QUrl::fromLocalFile(existingPath),
+                              QUrl::fromLocalFile(dir.filePath("missing/song.mp3"))};
+    for (const auto &destination:invalid) provider->download(media(),destination);
+    QTRY_COMPARE(failed.size(),invalid.size()); QCOMPARE(server.requests().size(),0);
+    for (const auto &args:failed)
+        QCOMPARE(qvariant_cast<SourceErrorV2>(args[1]).kind,SourceErrorKindV2::InvalidRequest);
+    QVERIFY(existing.open(QIODevice::ReadOnly)); QCOMPARE(existing.readAll(),QByteArray("keep"));
+}
+
+void NavidromeSourceTest::downloadWritesRequestedLocalFileAtomically()
+{
+    // Emitting completion before rename exposes a path that does not contain the requested bytes.
+    FakeNavidromeServer server; QVERIFY(server.start()); server.enqueueBytes("audio-bytes","audio/mpeg");
+    QTemporaryDir dir; QVERIFY(dir.isValid()); const QUrl destination=QUrl::fromLocalFile(dir.filePath("song.mp3"));
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    QSignalSpy completed(&session,&IMusicSourceSessionV2::actionCompleted); bool existedAtSignal=false;
+    connect(&session,&IMusicSourceSessionV2::actionCompleted,&session,[&](QUuid,const ActionResultV2 &) {
+        existedAtSignal=QFileInfo::exists(destination.toLocalFile());
+    });
+    const auto id=qobject_cast<IDownloadProviderV2 *>(&session)->download(media(),destination);
+    QTRY_COMPARE(completed.size(),1); QCOMPARE(completed[0][0].toUuid(),id); QVERIFY(existedAtSignal);
+    const auto result=qvariant_cast<ActionResultV2>(completed[0][1]);
+    QCOMPARE(result.action,SourceActionV2::Download);
+    QCOMPARE(result.payload,QVariantMap({{"destination",destination}}));
+    QFile file(destination.toLocalFile()); QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(),QByteArray("audio-bytes"));
+    QCOMPARE(QDir(dir.path()).entryList(QDir::Files).size(),1);
+}
+
+void NavidromeSourceTest::downloadRenameRaceAndCancellationLeaveNoPartialFiles()
+{
+    // Overwriting a raced destination or retaining temp files violates atomic no-overwrite semantics.
+    FakeNavidromeServer server; QVERIFY(server.start()); server.enqueueBytes("incoming"); server.enqueueHeld();
+    QTemporaryDir dir; QVERIFY(dir.isValid()); QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    QSignalSpy completed(&session,&IMusicSourceSessionV2::actionCompleted);
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    auto *provider=qobject_cast<IDownloadProviderV2 *>(&session);
+    const QString racedPath=dir.filePath("raced.mp3");
+    provider->download(media(),QUrl::fromLocalFile(racedPath));
+    QFile raced(racedPath); QVERIFY(raced.open(QIODevice::WriteOnly)); raced.write("winner"); raced.close();
+    QTRY_COMPARE(failed.size(),1); QCOMPARE(completed.size(),0);
+    QVERIFY(raced.open(QIODevice::ReadOnly)); QCOMPARE(raced.readAll(),QByteArray("winner")); raced.close();
+    QCOMPARE(QDir(dir.path()).entryList(QDir::Files),QStringList({"raced.mp3"}));
+    const QString cancelledPath=dir.filePath("cancelled.mp3");
+    const auto cancelled=provider->download(media("44"),QUrl::fromLocalFile(cancelledPath));
+    QTRY_COMPARE(server.requests().size(),2); session.cancel(cancelled); QTest::qWait(20);
+    QCOMPARE(completed.size(),0); QVERIFY(!QFileInfo::exists(cancelledPath));
+    QCOMPARE(QDir(dir.path()).entryList(QDir::Files),QStringList({"raced.mp3"}));
+}
+
+void NavidromeSourceTest::binaryMediaRejectsSubsonicErrorBodiesAndCleansUp()
+{
+    // Treating a 200 JSON error as media publishes error text as artwork or a song file.
+    FakeNavidromeServer server; QVERIFY(server.start());
+    server.enqueue(subsonicError(50,QStringLiteral("Denied")));
+    server.enqueue(subsonicError(50,QStringLiteral("Denied")));
+    QTemporaryDir dir; QVERIFY(dir.isValid()); const QUrl destination=QUrl::fromLocalFile(dir.filePath("song.mp3"));
+    QNetworkAccessManager network; NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    QSignalSpy completed(&session,&IMusicSourceSessionV2::actionCompleted);
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    qobject_cast<IPlaybackProviderV2 *>(&session)->fetchArtwork(media());
+    QTRY_COMPARE(failed.size(),1);
+    qobject_cast<IDownloadProviderV2 *>(&session)->download(media(),destination);
+    QTRY_COMPARE(failed.size(),2);
+    QCOMPARE(completed.size(),0); QVERIFY(!QFileInfo::exists(destination.toLocalFile()));
+    QVERIFY(QDir(dir.path()).entryList(QDir::Files).isEmpty());
+    for (const auto &args:failed)
+        QCOMPARE(qvariant_cast<SourceErrorV2>(args[1]).kind,SourceErrorKindV2::Authorization);
 }
 
 QTEST_MAIN(NavidromeSourceTest)

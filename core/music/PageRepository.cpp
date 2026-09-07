@@ -43,6 +43,7 @@ struct PageRepository::Group {
     bool cacheInvalidated=false;
     bool fannedOut=false;
     bool finishing=false;
+    bool sourceOrdered=false;
 };
 
 PageRepository::PageRepository(SourceRegistry *sources,AggregateComposer *composer,
@@ -78,13 +79,17 @@ void PageRepository::begin(const QUuid &id)
         || int(q.section)<0 || int(q.section)>int(PageSectionKindV2::SearchResults)) {
         fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
     }
+    g->sourceOrdered=q.filters.contains(QStringLiteral("playlistId"));
+    if (g->sourceOrdered && q.scope.isAggregate()) {
+        fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
+    }
     for (auto it=q.filters.begin();it!=q.filters.end();++it) {
         switch (it->metaType().id()) {
         case QMetaType::QString: case QMetaType::Bool: case QMetaType::Int:
         case QMetaType::LongLong: case QMetaType::Double: break;
         default: fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
         }
-        if (!QStringList{"genre","artistId","albumId","year","sort","favorite"}.contains(it.key())) g->cacheable=false;
+        if (!QStringList{"genre","artistId","albumId","playlistId","year","sort","favorite"}.contains(it.key())) g->cacheable=false;
     }
     for (const auto &d:m_sources->enabledInstances())
         if (d.enabled && (q.scope.isAggregate() || q.scope.sourceInstanceId==d.sourceInstanceId))
@@ -216,7 +221,10 @@ void PageRepository::finish(const QUuid &id)
         key.query.section=section.kind;
         sectionScopes.insert(section.kind,PageCache::queryScope(key));
     }
-    auto result=m_composer->compose(inputs,g->key.query.limit,g->key.query.cursor,g->scope,sectionScopes);
+    auto result=m_composer->compose(inputs,g->key.query.limit,g->key.query.cursor,g->scope,
+                                    sectionScopes,g->sourceOrdered
+                                        ? AggregateCompositionMode::SourceOrdered
+                                        : AggregateCompositionMode::Discovery);
     if (!result.complete) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
     result.cached=false; result.complete=true;
     if (!g->cacheable || inputs.isEmpty()) {

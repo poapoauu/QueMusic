@@ -345,6 +345,54 @@ private slots:
         QCOMPARE(terminals,1); QVERIFY(model.finishGeneration(generation,1));
         QCOMPARE(model.rowCount(),3); QCOMPARE(model.state(),PageLoadStateV2::Ready);
     }
+    // Letting an aggregate playlist query fan out gives an undefined cross-provider order.
+    void aggregatePlaylistFailsBeforeProviderDispatch()
+    {
+        PageHarness h; QVERIFY(h.init());
+        PageQueryV2 q; q.section=PageSectionKindV2::Tracks;
+        q.filters={{"playlistId",QString("native-playlist")}};
+        QSignalSpy failed(&h.repo,&PageRepository::pageFailed);
+        h.repo.requestPage(q,1);
+        QTRY_COMPARE(failed.size(),1);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][2]).kind,
+                 SourceErrorKindV2::InvalidRequest);
+        QCOMPARE(h.session("home")->property("calls").toInt(),0);
+        QCOMPARE(h.session("office")->property("calls").toInt(),0);
+    }
+    // Discovery composition would deduplicate repeated ISRC occurrences in a native playlist.
+    void specificPlaylistPreservesProviderOrderAndDuplicatesAcrossContinuation()
+    {
+        PageHarness h; QVERIFY(h.init()); auto *session=h.session("home");
+        PageQueryV2 q; q.section=PageSectionKindV2::Tracks; q.limit=1;
+        q.scope.sourceInstanceId="task5/home";
+        q.filters={{"playlistId",QString("native-playlist")}};
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady);
+        h.repo.requestPage(q,1); QTRY_COMPARE(session->property("calls").toInt(),1);
+        auto provider=sample("home",{"first","second","third"});
+        provider.sections[0].kind=PageSectionKindV2::Tracks;
+        for (int index=0;index<provider.sections[0].items.size();++index) {
+            auto &item=provider.sections[0].items[index];
+            item.externalIds={{"isrc","CN-A01-24-00001"}};
+            item.metadata={{"playlistId",QString("native-playlist")},
+                           {"playlistIndex",index}};
+        }
+        emit session->pageReady(session->property("lastRequest").toUuid(),provider);
+        QTRY_COMPARE(ready.size(),1);
+        QStringList actual;
+        for (int step=0;step<3;++step) {
+            const auto page=qvariant_cast<PageResultV2>(ready.last()[2]);
+            QCOMPARE(page.sections[0].items.size(),1);
+            actual.append(page.sections[0].items[0].ref.entityId);
+            QCOMPARE(page.sections[0].items[0].metadata.value("playlistIndex").toInt(),step);
+            if (step<2) {
+                q.cursor=page.sections[0].nextCursor;
+                QVERIFY(!q.cursor.isEmpty());
+                h.repo.requestPage(q,step+2); QTRY_COMPARE(ready.size(),step+2);
+            }
+        }
+        QCOMPARE(actual,QStringList({"first","second","third"}));
+        QCOMPARE(session->property("calls").toInt(),1);
+    }
     void siblingContinuationsRemainIndependentThroughRemoteBoundary()
     {
         PageHarness h; QVERIFY(h.init()); auto a=h.session("home"), b=h.session("office");

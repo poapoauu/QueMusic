@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QNetworkAccessManager>
 #include <QPointer>
+#include <QTemporaryFile>
 #include <QUrlQuery>
 
 #include <functional>
@@ -24,23 +25,39 @@ public:
     ~NavidromeApiClient() override;
 
     QUuid get(const QString &operation, const QString &endpoint, QUrlQuery query = {});
+    QUuid getBinary(const QString &operation, const QString &endpoint, QUrlQuery query,
+                    qint64 maximumBytes);
+    QUuid downloadToFile(const QString &operation, const QString &endpoint, QUrlQuery query,
+                         const QString &destinationPath);
     void cancel(const QUuid &requestId);
 
 signals:
     void succeeded(QUuid requestId, QString operation, QJsonObject subsonicResponse);
+    void binarySucceeded(QUuid requestId, QString operation, QByteArray bytes, QString mimeType);
+    void downloadSucceeded(QUuid requestId, QString operation);
     void failed(QUuid requestId, SourceErrorV2 error);
 
 private:
     friend class NavidromeSourceSession;
 
     struct PendingRequest {
+        enum class Mode { Json, Binary, Download };
         QString operation;
         QPointer<QNetworkReply> reply;
+        Mode mode = Mode::Json;
+        QByteArray bytes;
+        qint64 maximumBytes = 0;
+        QPointer<QTemporaryFile> temporaryFile;
+        QString destinationPath;
     };
 
     bool authenticatedUrl(const QString &endpoint, QUrlQuery query, QUrl *url,
                           SourceErrorV2 *error);
     void finishReply(const QUuid &requestId);
+    void consumeReply(const QUuid &requestId);
+    void failTransfer(const QUuid &requestId, const SourceErrorV2 &error);
+    QUuid start(const QString &operation, const QString &endpoint, QUrlQuery query,
+                PendingRequest request);
     void scheduleFailure(const QUuid &requestId, const SourceErrorV2 &error);
 
     SourceConfigurationV2 m_configuration;

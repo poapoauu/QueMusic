@@ -44,6 +44,38 @@ public:
 class MusicCachesTest : public QObject {
     Q_OBJECT
 private slots:
+    // Generic numeric sanitization either drops valid occurrence data or accepts fractional indexes.
+    void playlistOccurrenceMetadataIsAtomicAndStrictAcrossLiveAndDisk()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid()); PageCache cache(dir.path());
+        PageCacheKeyV2 key; key.sourceInstanceIds={"navidrome/home"};
+        key.query.scope.sourceInstanceId="navidrome/home";
+        key.query.filters={{"playlistId",QString("p1")}};
+        PageSectionV2 section; section.kind=PageSectionKindV2::Tracks;
+        const auto makeItem=[](QVariant id,QVariant index) {
+            MediaItemV2 item;
+            item.ref={"navidrome","navidrome/home","home",MediaEntityTypeV2::Track,"song"};
+            item.metadata={{"playlistId",id},{"playlistIndex",index},{"unknown",QString("drop")}};
+            return item;
+        };
+        section.items={makeItem(QString("p1"),QVariant::fromValue(7)),
+                       makeItem(QString(),QVariant::fromValue(8)),
+                       makeItem(QString("p1"),7.5),
+                       makeItem(QString("p1"),QVariant::fromValue<qlonglong>(qlonglong(INT_MAX)+1))};
+        PageResultV2 page{{section},{},false,true};
+        const auto live=PageCache::sanitized(page);
+        QCOMPARE(live.sections[0].items[0].metadata,
+                 QVariantMap({{"playlistId",QString("p1")},{"playlistIndex",7}}));
+        for (int index=1;index<live.sections[0].items.size();++index)
+            QVERIFY(live.sections[0].items[index].metadata.isEmpty());
+        const auto now=QDateTime::currentDateTimeUtc();
+        QVERIFY(cache.store(key,page,now));
+        auto disk=cache.lookup(key,now,std::chrono::seconds(60)); QVERIFY(disk);
+        QCOMPARE(disk->page.sections[0].items[0].metadata,
+                 QVariantMap({{"playlistId",QString("p1")},{"playlistIndex",7}}));
+        for (int index=1;index<disk->page.sections[0].items.size();++index)
+            QVERIFY(disk->page.sections[0].items[index].metadata.isEmpty());
+    }
     // A disk-only lookup fails after the backing file disappears; a memory hit
     // must return the sanitized DTO and recompute staleness for the new time.
     void memoryHitSurvivesMissingDiskAndRecomputesStaleness()

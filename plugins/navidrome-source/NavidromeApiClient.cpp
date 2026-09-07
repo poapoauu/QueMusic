@@ -7,6 +7,7 @@
 #include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QFileInfo>
 #include <QTimer>
 #include <QUuid>
 
@@ -70,16 +71,48 @@ NavidromeApiClient::~NavidromeApiClient()
 
 QUuid NavidromeApiClient::get(const QString &operation, const QString &endpoint, QUrlQuery query)
 {
+    PendingRequest request; request.operation=operation;
+    return start(operation,endpoint,std::move(query),std::move(request));
+}
+
+QUuid NavidromeApiClient::getBinary(const QString &operation,const QString &endpoint,
+                                    QUrlQuery query,qint64 maximumBytes)
+{
+    PendingRequest request; request.operation=operation; request.mode=PendingRequest::Mode::Binary;
+    request.maximumBytes=maximumBytes;
+    return start(operation,endpoint,std::move(query),std::move(request));
+}
+
+QUuid NavidromeApiClient::downloadToFile(const QString &operation,const QString &endpoint,
+                                         QUrlQuery query,const QString &destinationPath)
+{
+    PendingRequest request; request.operation=operation; request.mode=PendingRequest::Mode::Download;
+    request.destinationPath=destinationPath;
+    auto *temporary=new QTemporaryFile(destinationPath+QStringLiteral(".quemusic-XXXXXX.part"),this);
+    temporary->setAutoRemove(true); request.temporaryFile=temporary;
+    if (!temporary->open()) {
+        const QUuid id=QUuid::createUuid(); m_pending.insert(id,request);
+        scheduleFailure(id,error(SourceErrorKindV2::Unavailable,
+                                  QStringLiteral("source.download.ioFailed"),
+                                  QStringLiteral("The download temporary file could not be created.")));
+        return id;
+    }
+    return start(operation,endpoint,std::move(query),std::move(request));
+}
+
+QUuid NavidromeApiClient::start(const QString &operation,const QString &endpoint,QUrlQuery query,
+                                PendingRequest pendingRequest)
+{
     const QUuid requestId = QUuid::createUuid();
     QUrl url;
     SourceErrorV2 validationError;
     if (!authenticatedUrl(endpoint, std::move(query), &url, &validationError)) {
-        m_pending.insert(requestId, {operation, nullptr});
+        m_pending.insert(requestId, pendingRequest);
         scheduleFailure(requestId, validationError);
         return requestId;
     }
     if (m_network.isNull()) {
-        m_pending.insert(requestId, {operation, nullptr});
+        m_pending.insert(requestId, pendingRequest);
         scheduleFailure(requestId,
                         error(SourceErrorKindV2::Unavailable,
                               QStringLiteral("source.network.unavailable"),
@@ -91,14 +124,17 @@ QUuid NavidromeApiClient::get(const QString &operation, const QString &endpoint,
     request.setRawHeader("Accept", "application/json");
     QNetworkReply *reply = m_network->get(request);
     if (reply == nullptr) {
-        m_pending.insert(requestId, {operation, nullptr});
+        m_pending.insert(requestId, pendingRequest);
         scheduleFailure(requestId,
                         error(SourceErrorKindV2::Network,
                               QStringLiteral("source.network.failed"),
                               QStringLiteral("The Navidrome request could not be started.")));
         return requestId;
     }
-    m_pending.insert(requestId, {operation, reply});
+    pendingRequest.reply=reply;
+    m_pending.insert(requestId,pendingRequest);
+    connect(reply,&QIODevice::readyRead,this,[this,requestId] { consumeReply(requestId); });
+    connect(reply,&QNetworkReply::metaDataChanged,this,[this,requestId] { consumeReply(requestId); });
     connect(reply, &QNetworkReply::finished, this,
             [this, requestId] { finishReply(requestId); });
     connect(reply, &QObject::destroyed, this, [this, requestId] {
@@ -108,9 +144,8 @@ QUuid NavidromeApiClient::get(const QString &operation, const QString &endpoint,
         const SourceErrorV2 networkError = error(
             SourceErrorKindV2::Network, QStringLiteral("source.network.failed"),
             QStringLiteral("The Navidrome request ended unexpectedly."));
-        const QString operation = pending->operation;
+        if (pending->temporaryFile) pending->temporaryFile->deleteLater();
         m_pending.erase(pending);
-        Q_UNUSED(operation)
         emit failed(requestId, networkError);
     });
     if (reply->isFinished())
@@ -124,12 +159,14 @@ void NavidromeApiClient::cancel(const QUuid &requestId)
     if (pending == m_pending.end())
         return;
     QPointer<QNetworkReply> reply = pending->reply;
+    QPointer<QTemporaryFile> temporary=pending->temporaryFile;
     m_pending.erase(pending);
     if (reply) {
         disconnect(reply, nullptr, this, nullptr);
         reply->abort();
         delete reply;
     }
+    if (temporary) delete temporary;
 }
 
 bool NavidromeApiClient::authenticatedUrl(const QString &endpoint, QUrlQuery query,
@@ -223,6 +260,7 @@ bool NavidromeApiClient::authenticatedUrl(const QString &endpoint, QUrlQuery que
 
 void NavidromeApiClient::finishReply(const QUuid &requestId)
 {
+    consumeReply(requestId);
     auto pending = m_pending.find(requestId);
     if (pending == m_pending.end() || pending->reply.isNull())
         return;
@@ -232,11 +270,16 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
     disconnect(reply, nullptr, this, nullptr);
     const int rawStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const std::optional<int> status = rawStatus > 0 ? std::optional<int>(rawStatus) : std::nullopt;
-    const QByteArray payload = reply->readAll();
+    QByteArray payload = request.mode==PendingRequest::Mode::Json ? reply->readAll()
+                                                                  : request.bytes;
     const QNetworkReply::NetworkError networkCode = reply->error();
     reply->deleteLater();
+    const auto discardTemporary=[&request] {
+        if (request.temporaryFile) delete request.temporaryFile.data();
+    };
 
     if (rawStatus == 404 || rawStatus == 405 || rawStatus == 501) {
+        discardTemporary();
         emit failed(requestId,
                     error(SourceErrorKindV2::Unsupported,
                           QStringLiteral("source.endpoint.unsupported"),
@@ -244,6 +287,7 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
         return;
     }
     if (rawStatus == 401) {
+        discardTemporary();
         emit failed(requestId,
                     error(SourceErrorKindV2::Authentication,
                           QStringLiteral("source.authentication.required"),
@@ -251,6 +295,7 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
         return;
     }
     if (rawStatus == 403) {
+        discardTemporary();
         emit failed(requestId,
                     error(SourceErrorKindV2::Authorization,
                           QStringLiteral("source.authorization.denied"),
@@ -258,10 +303,58 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
         return;
     }
     if (networkCode != QNetworkReply::NoError || rawStatus < 200 || rawStatus >= 300) {
+        discardTemporary();
         emit failed(requestId,
                     error(SourceErrorKindV2::Network, QStringLiteral("source.network.failed"),
                           QStringLiteral("The Navidrome request failed."), status));
         return;
+    }
+
+    const QString responseMime=reply->header(QNetworkRequest::ContentTypeHeader).toString()
+                                   .section(QLatin1Char(';'),0,0).trimmed();
+    if (request.mode!=PendingRequest::Mode::Json
+        && responseMime.contains(QStringLiteral("json"),Qt::CaseInsensitive)) {
+        if (request.mode==PendingRequest::Mode::Download && request.temporaryFile) {
+            request.temporaryFile->flush(); request.temporaryFile->seek(0);
+            payload=request.temporaryFile->read(64*1024);
+        }
+        const auto responseValue=QJsonDocument::fromJson(payload).object()
+                                     .value(QStringLiteral("subsonic-response"));
+        const auto response=responseValue.toObject(); discardTemporary();
+        if (responseValue.isObject()
+            && response.value(QStringLiteral("status")).toString()==QStringLiteral("failed"))
+            emit failed(requestId,subsonicFailure(response.value(QStringLiteral("error")).toObject()
+                                                      .value(QStringLiteral("code")).toInt(-1),rawStatus));
+        else
+            emit failed(requestId,error(SourceErrorKindV2::InvalidRequest,
+                                        QStringLiteral("source.response.invalid"),
+                                        QStringLiteral("Navidrome returned an invalid media response."),status));
+        return;
+    }
+
+    if (request.mode==PendingRequest::Mode::Binary) {
+        emit binarySucceeded(requestId,request.operation,payload,responseMime);
+        return;
+    }
+    if (request.mode==PendingRequest::Mode::Download) {
+        if (!request.temporaryFile) {
+            emit failed(requestId,error(SourceErrorKindV2::Unavailable,
+                                        QStringLiteral("source.download.ioFailed"),
+                                        QStringLiteral("The download temporary file was lost.")));
+            return;
+        }
+        request.temporaryFile->flush(); request.temporaryFile->close();
+        const QString temporaryPath=request.temporaryFile->fileName();
+        if (QFileInfo::exists(request.destinationPath)
+            || !QFile::rename(temporaryPath,request.destinationPath)) {
+            delete request.temporaryFile.data();
+            emit failed(requestId,error(SourceErrorKindV2::Unavailable,
+                                        QStringLiteral("source.download.commitFailed"),
+                                        QStringLiteral("The downloaded file could not be committed.")));
+            return;
+        }
+        request.temporaryFile->setAutoRemove(false); delete request.temporaryFile.data();
+        emit downloadSucceeded(requestId,request.operation); return;
     }
 
     QJsonParseError parseError;
@@ -287,12 +380,55 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
     emit succeeded(requestId, request.operation, response);
 }
 
+void NavidromeApiClient::consumeReply(const QUuid &requestId)
+{
+    auto pending=m_pending.find(requestId);
+    if (pending==m_pending.end() || !pending->reply
+        || pending->mode==PendingRequest::Mode::Json) return;
+    const QVariant declared=pending->reply->header(QNetworkRequest::ContentLengthHeader);
+    if (pending->mode==PendingRequest::Mode::Binary && declared.isValid()
+        && declared.toLongLong()>pending->maximumBytes) {
+        failTransfer(requestId,error(SourceErrorKindV2::Unavailable,
+                                     QStringLiteral("source.artwork.tooLarge"),
+                                     QStringLiteral("The Navidrome artwork response exceeded 32 MiB.")));
+        return;
+    }
+    const QByteArray chunk=pending->reply->readAll();
+    if (pending->mode==PendingRequest::Mode::Binary) {
+        if (pending->bytes.size()>pending->maximumBytes-chunk.size()) {
+            failTransfer(requestId,error(SourceErrorKindV2::Unavailable,
+                                         QStringLiteral("source.artwork.tooLarge"),
+                                         QStringLiteral("The Navidrome artwork response exceeded 32 MiB.")));
+            return;
+        }
+        pending->bytes.append(chunk);
+    } else if (!chunk.isEmpty()
+               && (!pending->temporaryFile
+                   || pending->temporaryFile->write(chunk)!=chunk.size())) {
+        failTransfer(requestId,error(SourceErrorKindV2::Unavailable,
+                                     QStringLiteral("source.download.ioFailed"),
+                                     QStringLiteral("The downloaded bytes could not be written.")));
+    }
+}
+
+void NavidromeApiClient::failTransfer(const QUuid &requestId,const SourceErrorV2 &failure)
+{
+    auto pending=m_pending.find(requestId); if (pending==m_pending.end()) return;
+    QPointer<QNetworkReply> reply=pending->reply;
+    QPointer<QTemporaryFile> temporary=pending->temporaryFile;
+    m_pending.erase(pending);
+    if (reply) { disconnect(reply,nullptr,this,nullptr); reply->abort(); reply->deleteLater(); }
+    if (temporary) delete temporary.data();
+    emit failed(requestId,failure);
+}
+
 void NavidromeApiClient::scheduleFailure(const QUuid &requestId, const SourceErrorV2 &failure)
 {
     QTimer::singleShot(0, this, [this, requestId, failure] {
         auto pending = m_pending.find(requestId);
         if (pending == m_pending.end())
             return;
+        if (pending->temporaryFile) delete pending->temporaryFile.data();
         m_pending.erase(pending);
         emit failed(requestId, failure);
     });

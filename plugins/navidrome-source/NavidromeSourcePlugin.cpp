@@ -10,6 +10,9 @@ SourceDescriptorV2 NavidromeSourcePlugin::descriptor() const
     result.name = QStringLiteral("Navidrome");
     result.version = QStringLiteral("1.0.0");
     result.sdkAbi = QUEMUSIC_MUSIC_SOURCE_SDK_V2_ABI;
+    for (SourceActionV2 action : {SourceActionV2::Play, SourceActionV2::Artwork,
+                                  SourceActionV2::Lyrics, SourceActionV2::Download})
+        result.declaredActions.insert(action,{AvailabilityV2::Available,{},{}});
     return result;
 }
 

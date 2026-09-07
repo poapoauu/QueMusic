@@ -48,7 +48,8 @@ QList<MediaItemV2> AggregateComposer::composeItems(const QList<QList<MediaItemV2
 PageResultV2 AggregateComposer::compose(const QList<SourcePageResultV2> &inputs,
                                         int limit, const QString &cursor,
                                         const QString &scope,
-                                        const QHash<PageSectionKindV2,QString> &sectionScopes) const
+                                        const QHash<PageSectionKindV2,QString> &sectionScopes,
+                                        AggregateCompositionMode mode) const
 {
     PageResultV2 out;
     AggregateCursorState prior;
@@ -56,6 +57,12 @@ PageResultV2 AggregateComposer::compose(const QList<SourcePageResultV2> &inputs,
         auto value = decodeCursor(cursor, scope);
         if (!value) { out.complete = false; return out; }
         prior = *value;
+        if (prior.mode != mode) { out.complete = false; return out; }
+    }
+    if (mode == AggregateCompositionMode::SourceOrdered
+        && ((cursor.isEmpty() && inputs.size() != 1) || inputs.size() > 1)) {
+        out.complete = false;
+        return out;
     }
     // A continuation contains one rendered section, including every source's
     // residual rows. New inputs replace only sources that have been refetched.
@@ -66,9 +73,14 @@ PageResultV2 AggregateComposer::compose(const QList<SourcePageResultV2> &inputs,
         });
         if (found == merged.end()) merged.append(input); else *found = input;
     }
-    std::sort(merged.begin(), merged.end(), [](const auto &a, const auto &b) {
-        return a.sourceInstanceId < b.sourceInstanceId;
-    });
+    if (mode == AggregateCompositionMode::Discovery)
+        std::sort(merged.begin(), merged.end(), [](const auto &a, const auto &b) {
+            return a.sourceInstanceId < b.sourceInstanceId;
+        });
+    if (mode == AggregateCompositionMode::SourceOrdered && merged.size() != 1) {
+        out.complete = false;
+        return out;
+    }
     QMap<int, PageSectionV2> sections;
     for (const auto &input : merged) {
         bool empty = true;
@@ -85,7 +97,10 @@ PageResultV2 AggregateComposer::compose(const QList<SourcePageResultV2> &inputs,
         // Root responses may have several standard sections. Each token binds
         // the query identity with that returned section substituted into it.
         state.scope = sectionScopes.value(section.kind,scope);
-        state.nextSource = prior.nextSource; state.seenIds = prior.seenIds;
+        state.mode = mode;
+        state.nextSource = prior.nextSource;
+        if (mode == AggregateCompositionMode::Discovery)
+            state.seenIds = prior.seenIds;
         QList<QList<MediaItemV2>> rows;
         for (const auto &input : merged) {
             SourcePageResultV2 buffered{input.sourceInstanceId, {}, input.error};
@@ -100,7 +115,13 @@ PageResultV2 AggregateComposer::compose(const QList<SourcePageResultV2> &inputs,
                 state.sourceCursors.insert(input.sourceInstanceId, sourceSection.nextCursor);
             else state.exhaustedSources.insert(input.sourceInstanceId);
         }
-        section.items = drain(rows, limit, state.nextSource, state.seenIds);
+        if (mode == AggregateCompositionMode::SourceOrdered) {
+            section.items.clear();
+            while (section.items.size() < limit && !rows[0].isEmpty())
+                section.items.append(rows[0].takeFirst());
+        } else {
+            section.items = drain(rows, limit, state.nextSource, state.seenIds);
+        }
         bool more = !state.sourceCursors.isEmpty();
         for (int i = 0; i < rows.size(); ++i) {
             state.buffered[i].page.sections[0].items = rows[i];

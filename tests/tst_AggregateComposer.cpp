@@ -114,6 +114,33 @@ private slots:
         QCOMPARE(ids(c.compose({},1,recent.sections[0].nextCursor,"recent-query",scopes)),QStringList({"o2"}));
         QCOMPARE(ids(c.compose({},1,frequent.sections[0].nextCursor,"frequent-query",scopes)),QStringList({"fo2"}));
     }
+    // Reusing discovery drain here drops the second occurrence because its ISRC repeats.
+    void sourceOrderedModePreservesOrderAndReliableIdDuplicatesAcrossContinuation()
+    {
+        AggregateComposer c;
+        auto native=page("home",{"first","second","third"});
+        for (auto &item:native.page.sections[0].items)
+            item.externalIds={{"isrc","CN-A01-24-00001"}};
+        auto first=c.compose({native},1,{},"playlist-scope",{},
+                             AggregateCompositionMode::SourceOrdered);
+        QCOMPARE(ids(first),QStringList({"first"}));
+        QVERIFY(first.sections[0].hasMore);
+        auto second=c.compose({},1,first.sections[0].nextCursor,"playlist-scope",{},
+                              AggregateCompositionMode::SourceOrdered);
+        QCOMPARE(ids(second),QStringList({"second"}));
+        auto third=c.compose({},1,second.sections[0].nextCursor,"playlist-scope",{},
+                             AggregateCompositionMode::SourceOrdered);
+        QCOMPARE(ids(third),QStringList({"third"}));
+        QVERIFY(!third.sections[0].hasMore);
+    }
+    // Source-ordered composition with multiple providers would invent a cross-source order.
+    void sourceOrderedModeRejectsMultipleSources()
+    {
+        AggregateComposer c;
+        auto result=c.compose({page("home",{"h1"}),page("office",{"o1"})},10,
+                              {},"playlist-scope",{},AggregateCompositionMode::SourceOrdered);
+        QVERIFY(!result.complete);
+    }
 };
 QTEST_GUILESS_MAIN(AggregateComposerTest)
 #include "tst_AggregateComposer.moc"

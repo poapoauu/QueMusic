@@ -1,6 +1,8 @@
 add_library(quemusic_navidrome_source MODULE
     NavidromeApiClient.cpp
     NavidromeApiClient.h
+    NavidromeMappers.cpp
+    NavidromeMappers.h
     NavidromeSourcePlugin.cpp
     NavidromeSourcePlugin.h
     NavidromeSourceSession.cpp
@@ -13,6 +15,12 @@ target_link_libraries(quemusic_navidrome_source PRIVATE
     Qt6::Network
     quemusic_source_sdk
 )
+# The root smoke executable compiles the concrete session directly. Add the
+# Task 10 mapper implementation after that parent-directory target is declared
+# without changing the protected root CMakeLists.txt.
+cmake_language(DEFER DIRECTORY "${PROJECT_SOURCE_DIR}" CALL target_sources
+    quemusic_navidrome_smoke PRIVATE
+    "${PROJECT_SOURCE_DIR}/plugins/navidrome-source/NavidromeMappers.cpp")
 set_target_properties(quemusic_navidrome_source PROPERTIES
     # Keep a package directory directly below <build>/plugins so it matches
     # SourceStartup's development search root for both single- and multi-config
@@ -56,6 +64,8 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tst_NavidromeSource.cpp
         NavidromeApiClient.cpp
         NavidromeApiClient.h
+        NavidromeMappers.cpp
+        NavidromeMappers.h
         NavidromeSourcePlugin.cpp
         NavidromeSourcePlugin.h
         NavidromeSourceSession.cpp
