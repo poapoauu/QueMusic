@@ -2,6 +2,7 @@
 #include "NavidromeMappers.h"
 #include "NavidromeSourcePlugin.h"
 #include "NavidromeSourceSession.h"
+#include "PageCache.h"
 #include "v2/ISourceProvidersV2.h"
 #include "v2/SourceSecretsV2.h"
 
@@ -282,6 +283,159 @@ protected:
     }
 };
 
+struct ReadObservation {
+    QList<qint64> requestedSizes;
+    qint64 bytesRead = 0;
+    qint64 configuredReadBufferSize = -1;
+};
+
+class SingleAvailableChunkReply final : public QNetworkReply {
+public:
+    SingleAvailableChunkReply(const QNetworkRequest &request,QByteArray body,
+                              QString mimeType,ReadObservation *observation,QObject *parent)
+        : QNetworkReply(parent),m_body(std::move(body)),m_observation(observation)
+    {
+        setRequest(request);
+        setUrl(request.url());
+        setOperation(QNetworkAccessManager::GetOperation);
+        setAttribute(QNetworkRequest::HttpStatusCodeAttribute,200);
+        setHeader(QNetworkRequest::ContentTypeHeader,std::move(mimeType));
+        open(QIODevice::ReadOnly|QIODevice::Unbuffered);
+        setFinished(true);
+    }
+    qint64 bytesAvailable() const override
+    {
+        return m_body.size()-m_offset+QNetworkReply::bytesAvailable();
+    }
+    void abort() override {}
+protected:
+    qint64 readData(char *data,qint64 maxSize) override
+    {
+        m_observation->requestedSizes.append(maxSize);
+        m_observation->configuredReadBufferSize=readBufferSize();
+        const qint64 count=qMin(maxSize,qint64(m_body.size()-m_offset));
+        if (count<=0) return -1;
+        memcpy(data,m_body.constData()+m_offset,size_t(count));
+        m_offset+=count;
+        m_observation->bytesRead+=count;
+        return count;
+    }
+private:
+    QByteArray m_body;
+    ReadObservation *m_observation;
+    qint64 m_offset=0;
+};
+
+class SingleAvailableChunkNetwork final : public QNetworkAccessManager {
+public:
+    SingleAvailableChunkNetwork(QByteArray body,QString mimeType,
+                                ReadObservation *observation,QObject *parent=nullptr)
+        : QNetworkAccessManager(parent),m_body(std::move(body)),m_mimeType(std::move(mimeType)),
+          m_observation(observation)
+    {
+    }
+protected:
+    QNetworkReply *createRequest(Operation operation,const QNetworkRequest &request,
+                                 QIODevice *outgoingData) override
+    {
+        Q_UNUSED(operation)
+        Q_UNUSED(outgoingData)
+        return new SingleAvailableChunkReply(request,m_body,m_mimeType,m_observation,this);
+    }
+private:
+    QByteArray m_body;
+    QString m_mimeType;
+    ReadObservation *m_observation;
+};
+
+QVariant mediaRefDto(const MediaRefV2 &ref)
+{
+    return QVariantMap{{QStringLiteral("sourcePluginId"),ref.sourcePluginId},
+                       {QStringLiteral("sourceInstanceId"),ref.sourceInstanceId},
+                       {QStringLiteral("accountId"),ref.accountId},
+                       {QStringLiteral("entityType"),int(ref.entityType)},
+                       {QStringLiteral("entityId"),ref.entityId}};
+}
+
+QVariant pageDto(const PageResultV2 &page)
+{
+    QVariantList sections;
+    for (const auto &section:page.sections) {
+        QVariantList items;
+        for (const auto &item:section.items) {
+            QVariantMap actions;
+            for (auto action=item.availableActions.cbegin();action!=item.availableActions.cend();++action)
+                actions.insert(QString::number(int(action.key())),
+                               QVariantMap{{QStringLiteral("state"),int(action->state)},
+                                           {QStringLiteral("reasonKey"),action->reasonKey},
+                                           {QStringLiteral("constraints"),action->constraints}});
+            items.append(QVariantMap{{QStringLiteral("ref"),mediaRefDto(item.ref)},
+                                     {QStringLiteral("title"),item.title},
+                                     {QStringLiteral("subtitle"),item.subtitle},
+                                     {QStringLiteral("artists"),item.artists},
+                                     {QStringLiteral("album"),item.album},
+                                     {QStringLiteral("durationMs"),item.durationMs},
+                                     {QStringLiteral("artworkId"),item.artworkId},
+                                     {QStringLiteral("externalIds"),item.externalIds},
+                                     {QStringLiteral("metadata"),item.metadata},
+                                     {QStringLiteral("availableActions"),actions}});
+        }
+        sections.append(QVariantMap{{QStringLiteral("sectionId"),section.sectionId},
+                                    {QStringLiteral("titleKey"),section.titleKey},
+                                    {QStringLiteral("kind"),int(section.kind)},
+                                    {QStringLiteral("layoutHint"),section.layoutHint},
+                                    {QStringLiteral("items"),items},
+                                    {QStringLiteral("nextCursor"),section.nextCursor},
+                                    {QStringLiteral("hasMore"),section.hasMore}});
+    }
+    QVariantMap states;
+    for (auto state=page.sourceStates.cbegin();state!=page.sourceStates.cend();++state) {
+        QVariantMap value{{QStringLiteral("state"),int(state->state)}};
+        if (state->error)
+            value.insert(QStringLiteral("error"),
+                         QVariantMap{{QStringLiteral("kind"),int(state->error->kind)},
+                                     {QStringLiteral("messageKey"),state->error->messageKey},
+                                     {QStringLiteral("detail"),state->error->detail},
+                                     {QStringLiteral("httpStatus"),state->error->httpStatus
+                                          ? QVariant(*state->error->httpStatus):QVariant()},
+                                     {QStringLiteral("retryable"),state->error->retryable}});
+        states.insert(state.key(),value);
+    }
+    return QVariantMap{{QStringLiteral("sections"),sections},
+                       {QStringLiteral("sourceStates"),states},
+                       {QStringLiteral("cached"),page.cached},
+                       {QStringLiteral("complete"),page.complete}};
+}
+
+bool variantContains(const QVariant &value,const QList<QByteArray> &needles)
+{
+    const auto containsNeedle=[&needles](const QByteArray &bytes) {
+        for (const auto &needle:needles)
+            if (bytes.contains(needle)) return true;
+        return false;
+    };
+    if (value.metaType().id()==QMetaType::QVariantMap) {
+        const QVariantMap map=value.toMap();
+        for (auto it=map.cbegin();it!=map.cend();++it)
+            if (containsNeedle(it.key().toUtf8()) || variantContains(it.value(),needles)) return true;
+        return false;
+    }
+    if (value.metaType().id()==QMetaType::QVariantList) {
+        for (const auto &item:value.toList())
+            if (variantContains(item,needles)) return true;
+        return false;
+    }
+    if (value.metaType().id()==QMetaType::QStringList) {
+        for (const auto &item:value.toStringList())
+            if (containsNeedle(item.toUtf8())) return true;
+        return false;
+    }
+    if (value.metaType().id()==QMetaType::QByteArray) return containsNeedle(value.toByteArray());
+    if (value.canConvert<QUrl>()) return containsNeedle(value.toUrl().toEncoded());
+    if (value.canConvert<QString>()) return containsNeedle(value.toString().toUtf8());
+    return false;
+}
+
 void enqueueSuccessfulHandshake(FakeNavidromeServer &server,
                                 QJsonObject user = userResponse())
 {
@@ -355,6 +509,8 @@ private slots:
     void artworkResolvesStableServerCoverIdsAndAdvertisesOnlySupportedEntities();
     void artworkPayloadIsBoundedAndTyped();
     void artworkBoundaryAcceptsExactAndRejectsAccumulatedOverflow();
+    void successfulMediaReadsAreBounded_data();
+    void successfulMediaReadsAreBounded();
     void lyricsUsesNegotiatedEndpoint();
     void downloadRejectsInvalidDestinationsBeforeNetwork();
     void downloadRejectsDanglingSymlinkBeforeNetwork();
@@ -369,6 +525,8 @@ private slots:
     void task10RequestStartedReentrancy_data();
     void task10RequestStartedReentrancy();
     void cancelledPageDropsLateServerResponse();
+    void artworkSecondStageTeardownDropsLateResponse_data();
+    void artworkSecondStageTeardownDropsLateResponse();
     void closeAndDestructionCleanDownloadTemporaryFiles();
     void pageDtoDoesNotLeakAuthenticatedRequestData();
 };
@@ -1545,6 +1703,60 @@ void NavidromeSourceTest::artworkBoundaryAcceptsExactAndRejectsAccumulatedOverfl
     }
 }
 
+void NavidromeSourceTest::successfulMediaReadsAreBounded_data()
+{
+    QTest::addColumn<bool>("download");
+    QTest::newRow("binary-oversized-single-chunk") << false;
+    QTest::newRow("download-single-chunk") << true;
+}
+
+void NavidromeSourceTest::successfulMediaReadsAreBounded()
+{
+    // A successful reply with one large available chunk made readAll allocate the whole chunk.
+    QFETCH(bool,download);
+    constexpr qint64 maximumArtworkBytes=32ll*1024*1024;
+    constexpr qint64 expectedReadBound=64ll*1024;
+    const QByteArray body(download ? 3*expectedReadBound+17
+                                   : maximumArtworkBytes+expectedReadBound,'m');
+    ReadObservation observation;
+    SingleAvailableChunkNetwork network(body,download ? QStringLiteral("audio/mpeg")
+                                                       : QStringLiteral("image/jpeg"),
+                                        &observation);
+    NavidromeApiClient client(configuration(8533),&network,
+                              [] { return QStringLiteral("bounded-read-salt"); });
+    QSignalSpy binaryDone(&client,&NavidromeApiClient::binarySucceeded);
+    QSignalSpy downloadDone(&client,&NavidromeApiClient::downloadSucceeded);
+    QSignalSpy failed(&client,&NavidromeApiClient::failed);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString destination=dir.filePath(QStringLiteral("media.bin"));
+    if (download)
+        client.downloadToFile(QStringLiteral("download"),QStringLiteral("download"),{},destination);
+    else
+        client.getBinary(QStringLiteral("artwork"),QStringLiteral("getCoverArt"),{},
+                         maximumArtworkBytes);
+
+    if (download) {
+        QTRY_COMPARE(downloadDone.size(),1);
+        QCOMPARE(failed.size(),0);
+        QFile file(destination);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(),body);
+        QCOMPARE(observation.bytesRead,qint64(body.size()));
+    } else {
+        QTRY_COMPARE(failed.size(),1);
+        QCOMPARE(binaryDone.size(),0);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed.constFirst().at(1)).messageKey,
+                 QStringLiteral("source.artwork.tooLarge"));
+        QCOMPARE(observation.bytesRead,maximumArtworkBytes+1);
+    }
+    QVERIFY(observation.requestedSizes.size()>1);
+    for (qint64 requested:observation.requestedSizes)
+        QVERIFY2(requested<=expectedReadBound,qPrintable(QStringLiteral("unbounded read request: %1")
+                                                              .arg(requested)));
+    QCOMPARE(observation.configuredReadBufferSize,expectedReadBound);
+}
+
 void NavidromeSourceTest::lyricsUsesNegotiatedEndpoint()
 {
     // Ignoring the negotiated songLyrics extension forces a lossy artist/title fallback.
@@ -1885,6 +2097,45 @@ void NavidromeSourceTest::cancelledPageDropsLateServerResponse()
     QCOMPARE(failed.size(),0);
 }
 
+void NavidromeSourceTest::artworkSecondStageTeardownDropsLateResponse_data()
+{
+    QTest::addColumn<int>("teardown");
+    QTest::newRow("cancel") << 0;
+    QTest::newRow("close") << 1;
+    QTest::newRow("destroy") << 2;
+}
+
+void NavidromeSourceTest::artworkSecondStageTeardownDropsLateResponse()
+{
+    // Losing correlation only after getCoverArt starts can emit a late artwork terminal.
+    QFETCH(int,teardown);
+    FakeNavidromeServer server;
+    QVERIFY(server.start());
+    server.enqueue(subsonicOk({{"song",QJsonObject{{"id","42"},{"coverArt","held-cover"}}}}));
+    server.enqueueHeld("late-image","image/jpeg");
+    QNetworkAccessManager network;
+    auto session=std::make_unique<NavidromeSourceSession>(
+        configuration(server.serverPort()),&network);
+    int completed=0;
+    int failed=0;
+    connect(session.get(),&IMusicSourceSessionV2::actionCompleted,this,
+            [&completed] { ++completed; });
+    connect(session.get(),&IMusicSourceSessionV2::requestFailed,this,
+            [&failed] { ++failed; });
+    const QUuid id=qobject_cast<IPlaybackProviderV2 *>(session.get())->fetchArtwork(media());
+    QTRY_COMPARE(server.requests().size(),2);
+    QVERIFY(server.requests().constLast().url.path().endsWith(QStringLiteral("/getCoverArt.view")));
+    QCOMPARE(QUrlQuery(server.requests().constLast().url).queryItemValue(QStringLiteral("id")),
+             QStringLiteral("held-cover"));
+    if (teardown==0) session->cancel(id);
+    else if (teardown==1) session->close();
+    else session.reset();
+    server.releaseHeld();
+    QTest::qWait(50);
+    QCOMPARE(completed,0);
+    QCOMPARE(failed,0);
+}
+
 void NavidromeSourceTest::closeAndDestructionCleanDownloadTemporaryFiles()
 {
     // Close or destruction with an active transfer must remove the same-directory temp file.
@@ -1914,7 +2165,7 @@ void NavidromeSourceTest::closeAndDestructionCleanDownloadTemporaryFiles()
 
 void NavidromeSourceTest::pageDtoDoesNotLeakAuthenticatedRequestData()
 {
-    // Copying transport JSON or request data into mapped DTOs can persist credentials in PageCache.
+    // Scanning selected live fields misses credentials in other DTO fields or disk hydration.
     FakeNavidromeServer server;
     QVERIFY(server.start());
     server.enqueue(subsonicOk({{"albumList2",QJsonObject{{"album",QJsonArray{QJsonObject{
@@ -1929,20 +2180,45 @@ void NavidromeSourceTest::pageDtoDoesNotLeakAuthenticatedRequestData()
     const PageResultV2 page=qvariant_cast<PageResultV2>(pages.constFirst().at(1));
     QCOMPARE(page.sections.size(),1);
     QCOMPARE(page.sections.constFirst().items.size(),1);
-    const MediaItemV2 &item=page.sections.constFirst().items.constFirst();
-    QVariantMap exposed{{"title",item.title},{"subtitle",item.subtitle},{"artists",item.artists},
-                        {"album",item.album},{"artworkId",item.artworkId},
-                        {"externalIds",item.externalIds},{"metadata",item.metadata}};
-    for (auto it=item.availableActions.cbegin();it!=item.availableActions.cend();++it)
-        exposed.insert(QString::number(int(it.key())),
-                       QVariantMap{{"reasonKey",it->reasonKey},{"constraints",it->constraints}});
-    const QByteArray serialized=QJsonDocument::fromVariant(exposed).toJson(QJsonDocument::Compact);
     const QByteArray token=QCryptographicHash::hash(
         QByteArrayLiteral("test-password")+QByteArrayLiteral("leak-salt"),QCryptographicHash::Md5).toHex();
-    QVERIFY(!serialized.contains("leak-salt"));
-    QVERIFY(!serialized.contains(token));
-    QVERIFY(!serialized.contains("streamUrl"));
-    QVERIFY(!serialized.contains("private.invalid"));
+    const QList<QByteArray> forbidden{QByteArrayLiteral("leak-salt"),token,
+                                      QByteArrayLiteral("streamUrl"),
+                                      QByteArrayLiteral("private.invalid"),
+                                      QByteArrayLiteral("test-password"),
+                                      QByteArrayLiteral("Authorization")};
+    QVERIFY(!variantContains(pageDto(page),forbidden));
+
+    QTemporaryDir cacheDirectory;
+    QVERIFY(cacheDirectory.isValid());
+    PageCacheKeyV2 key;
+    key.query=pageQuery(PageSectionKindV2::Random);
+    key.sourceInstanceIds={QStringLiteral("navidrome/admin")};
+    const QDateTime storedAt=QDateTime::currentDateTimeUtc();
+    QString cachePath;
+    {
+        PageCache writer(cacheDirectory.path());
+        QVERIFY(writer.store(key,page,storedAt));
+        cachePath=writer.filePath(key);
+    }
+    QFile cacheFile(cachePath);
+    QVERIFY(cacheFile.open(QIODevice::ReadOnly));
+    const QJsonDocument cacheDocument=QJsonDocument::fromJson(cacheFile.readAll());
+    QVERIFY(cacheDocument.isObject());
+    QVERIFY(!variantContains(cacheDocument.toVariant(),forbidden));
+    cacheFile.close();
+
+    PageCache reader(cacheDirectory.path());
+    const auto cached=reader.lookup(key,storedAt,std::chrono::minutes(5));
+    QVERIFY(cached);
+    QVERIFY(cached->cached);
+    QVERIFY(cached->page.cached);
+    QVERIFY(!cached->page.complete);
+    PageResultV2 expected=PageCache::sanitized(page);
+    expected.cached=true;
+    expected.complete=false;
+    QCOMPARE(pageDto(cached->page),pageDto(expected));
+    QVERIFY(!variantContains(pageDto(cached->page),forbidden));
 }
 
 QTEST_MAIN(NavidromeSourceTest)

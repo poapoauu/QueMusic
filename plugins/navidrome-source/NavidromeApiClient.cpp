@@ -15,6 +15,8 @@
 
 namespace {
 
+constexpr qint64 mediaReadChunkBytes=64ll*1024;
+
 QString randomSalt()
 {
     return QUuid::createUuid().toString(QUuid::WithoutBraces).remove(QLatin1Char('-'));
@@ -155,6 +157,8 @@ QUuid NavidromeApiClient::start(const QString &operation,const QString &endpoint
         return requestId;
     }
     pendingRequest.reply=reply;
+    if (pendingRequest.mode!=PendingRequest::Mode::Json)
+        reply->setReadBufferSize(mediaReadChunkBytes);
     m_pending.insert(requestId,pendingRequest);
     connect(reply,&QIODevice::readyRead,this,[this,requestId] { consumeReply(requestId); });
     connect(reply,&QNetworkReply::metaDataChanged,this,[this,requestId] { consumeReply(requestId); });
@@ -293,8 +297,9 @@ void NavidromeApiClient::finishReply(const QUuid &requestId)
     disconnect(reply, nullptr, this, nullptr);
     const int rawStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const std::optional<int> status = rawStatus > 0 ? std::optional<int>(rawStatus) : std::nullopt;
-    QByteArray payload = request.mode==PendingRequest::Mode::Json ? reply->readAll()
-                                                                  : request.bytes;
+    QByteArray payload=request.bytes;
+    if (request.mode==PendingRequest::Mode::Json)
+        payload=reply->readAll();
     const QNetworkReply::NetworkError networkCode = reply->error();
     reply->deleteLater();
     const auto discardTemporary=[&request] {
@@ -422,7 +427,7 @@ void NavidromeApiClient::consumeReply(const QUuid &requestId)
         const qsizetype remaining=maximumErrorBytes-pending->bytes.size();
         if (remaining>0) pending->bytes.append(pending->reply->read(remaining));
         while (pending->reply->bytesAvailable()>0)
-            pending->reply->read(qMin<qint64>(64*1024,pending->reply->bytesAvailable()));
+            pending->reply->read(qMin(mediaReadChunkBytes,pending->reply->bytesAvailable()));
         return;
     }
     const QVariant declared=pending->reply->header(QNetworkRequest::ContentLengthHeader);
@@ -433,23 +438,36 @@ void NavidromeApiClient::consumeReply(const QUuid &requestId)
                                      QStringLiteral("The Navidrome artwork response exceeded 32 MiB.")));
         return;
     }
-    const QByteArray chunk=pending->reply->readAll();
     if (pending->mode==PendingRequest::Mode::Binary) {
-        if (pending->bytes.size()>pending->maximumBytes-chunk.size()) {
+        while (pending->reply->bytesAvailable()>0) {
+            const qint64 retained=pending->bytes.size();
+            const qint64 remaining=qMax<qint64>(0,pending->maximumBytes-retained);
+            const qint64 readLimit=remaining>=mediaReadChunkBytes
+                ? mediaReadChunkBytes : remaining+1;
+            const QByteArray chunk=pending->reply->read(readLimit);
+            if (chunk.isEmpty()) return;
+            if (chunk.size()>remaining) {
+                failTransfer(requestId,error(SourceErrorKindV2::Unavailable,
+                                             QStringLiteral("source.artwork.tooLarge"),
+                                             QStringLiteral("The Navidrome artwork response exceeded 32 MiB.")));
+                return;
+            }
+            pending->bytes.append(chunk);
+        }
+        return;
+    }
+    while (pending->reply->bytesAvailable()>0) {
+        const QByteArray chunk=pending->reply->read(mediaReadChunkBytes);
+        if (chunk.isEmpty()) return;
+        if (!pending->temporaryFile
+            || !m_downloadWriter
+            || m_downloadWriter(*pending->temporaryFile,chunk)!=chunk.size()
+            || pending->temporaryFile->error()!=QFileDevice::NoError) {
             failTransfer(requestId,error(SourceErrorKindV2::Unavailable,
-                                         QStringLiteral("source.artwork.tooLarge"),
-                                         QStringLiteral("The Navidrome artwork response exceeded 32 MiB.")));
+                                         QStringLiteral("source.download.ioFailed"),
+                                         QStringLiteral("The downloaded bytes could not be written.")));
             return;
         }
-        pending->bytes.append(chunk);
-    } else if (!chunk.isEmpty()
-               && (!pending->temporaryFile
-                   || !m_downloadWriter
-                   || m_downloadWriter(*pending->temporaryFile,chunk)!=chunk.size()
-                   || pending->temporaryFile->error()!=QFileDevice::NoError)) {
-        failTransfer(requestId,error(SourceErrorKindV2::Unavailable,
-                                     QStringLiteral("source.download.ioFailed"),
-                                     QStringLiteral("The downloaded bytes could not be written.")));
     }
 }
 

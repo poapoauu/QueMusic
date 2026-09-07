@@ -79,6 +79,7 @@ if(BUILD_TESTING)
     target_link_libraries(quemusic_navidrome_source_test PRIVATE
         Qt6::Network
         Qt6::Test
+        quemusic_music_repository
         quemusic_source_sdk
     )
     add_dependencies(quemusic_navidrome_source_test quemusic_navidrome_source)
