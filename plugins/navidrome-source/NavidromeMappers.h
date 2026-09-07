@@ -5,6 +5,8 @@
 #include <QJsonObject>
 
 namespace NavidromeMappers {
+bool playQueue(const QJsonObject &response, const SourceIdentityV2 &source, QVariantMap *payload);
+bool bookmarks(const QJsonObject &response, const SourceIdentityV2 &source, QVariantMap *payload);
 MediaItemV2 song(const QJsonObject &value, const SourceIdentityV2 &source);
 MediaItemV2 album(const QJsonObject &value, const SourceIdentityV2 &source);
 MediaItemV2 artist(const QJsonObject &value, const SourceIdentityV2 &source);

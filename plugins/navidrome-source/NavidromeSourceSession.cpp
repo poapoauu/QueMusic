@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QRegularExpression>
+#include <QPointer>
 #include <QTimer>
 
 #include <climits>
@@ -33,7 +34,33 @@ const QList<SourceActionV2> allActions{
     SourceActionV2::CreateBookmark, SourceActionV2::DeleteBookmark};
 const QList<SourceActionV2> implementedActions{
     SourceActionV2::Play,SourceActionV2::Artwork,SourceActionV2::Lyrics,
-    SourceActionV2::Download};
+    SourceActionV2::Download,SourceActionV2::Favorite,SourceActionV2::Unfavorite,
+    SourceActionV2::Rating,SourceActionV2::CreatePlaylist,SourceActionV2::UpdatePlaylist,
+    SourceActionV2::DeletePlaylist,SourceActionV2::AddPlaylistTracks,
+    SourceActionV2::RemovePlaylistTracks,SourceActionV2::FetchPlayQueue,
+    SourceActionV2::SavePlayQueue,SourceActionV2::FetchBookmarks,
+    SourceActionV2::CreateBookmark,SourceActionV2::DeleteBookmark};
+
+QString permissionKey(SourceActionV2 action)
+{
+    switch (action) {
+    case SourceActionV2::Favorite: return QStringLiteral("source.permission.favorite");
+    case SourceActionV2::Unfavorite: return QStringLiteral("source.permission.unfavorite");
+    case SourceActionV2::Rating: return QStringLiteral("source.permission.rating");
+    case SourceActionV2::CreatePlaylist: return QStringLiteral("source.permission.createPlaylist");
+    case SourceActionV2::UpdatePlaylist: return QStringLiteral("source.permission.updatePlaylist");
+    case SourceActionV2::DeletePlaylist: return QStringLiteral("source.permission.deletePlaylist");
+    case SourceActionV2::AddPlaylistTracks: return QStringLiteral("source.permission.addPlaylistTracks");
+    case SourceActionV2::RemovePlaylistTracks: return QStringLiteral("source.permission.removePlaylistTracks");
+    case SourceActionV2::FetchPlayQueue: return QStringLiteral("source.permission.fetchPlayQueue");
+    case SourceActionV2::SavePlayQueue: return QStringLiteral("source.permission.savePlayQueue");
+    case SourceActionV2::FetchBookmarks: return QStringLiteral("source.permission.fetchBookmarks");
+    case SourceActionV2::CreateBookmark: return QStringLiteral("source.permission.createBookmark");
+    case SourceActionV2::DeleteBookmark: return QStringLiteral("source.permission.deleteBookmark");
+    case SourceActionV2::Download: return QStringLiteral("source.permission.download");
+    default: return QStringLiteral("source.permission.unknown");
+    }
+}
 
 SourceErrorV2 invalidResponse(const QString &messageKey)
 {
@@ -261,6 +288,8 @@ QUuid NavidromeSourceSession::fetchPage(const PageQueryV2 &query)
             parameters.addQueryItem(QStringLiteral("count"),QString::number(query.limit));
             parameters.addQueryItem(QStringLiteral("offset"),QString::number(offset));
         }
+    } else if (query.section==PageSectionKindV2::Playlists) {
+        endpoint=QStringLiteral("getPlaylists");
     } else if (query.page==MusicPageKindV2::Favorites) {
         endpoint=QStringLiteral("getStarred2");
         const auto add=[&](QString prefix,PageSectionKindV2 kind) {
@@ -400,6 +429,169 @@ QUuid NavidromeSourceSession::download(const MediaRefV2 &media,const QUrl &desti
     const QUuid clientId=m_client->downloadToFile(QStringLiteral("v2.download"),QStringLiteral("download"),query,path);
     m_v2Requests.insert(clientId,{id,QStringLiteral("download"),QStringLiteral("download"),{},media,destination,0});
     return id;
+}
+
+bool NavidromeSourceSession::validEntity(const MediaRefV2 &media, MediaEntityTypeV2 type) const
+{
+    const auto source=identity();
+    return media.sourcePluginId==source.sourcePluginId
+        && media.sourceInstanceId==source.sourceInstanceId && media.accountId==source.accountId
+        && media.entityType==type && !media.entityId.trimmed().isEmpty();
+}
+
+MediaRefV2 NavidromeSourceSession::collectionSubject() const
+{
+    const auto source=identity();
+    return {source.sourcePluginId,source.sourceInstanceId,source.accountId,MediaEntityTypeV2::Track,{}};
+}
+
+QUuid NavidromeSourceSession::startAction(SourceActionV2 action, const MediaRefV2 &subject,
+    const QString &endpoint, const QUrlQuery &query, QVariantMap payload, bool valid,
+    QList<SourceActionV2> attempted, bool foreign)
+{
+    const QUuid id=QUuid::createUuid();
+    const QPointer<NavidromeSourceSession> guard(this);
+    m_localV2Requests.insert(id);
+    emit requestStarted(id);
+    if (!guard || !m_localV2Requests.contains(id)) return id;
+    if (!valid) return scheduleV2Failure({foreign ? SourceErrorKindV2::Unsupported
+                                                : SourceErrorKindV2::InvalidRequest,
+        QStringLiteral("source.action.invalid"),QStringLiteral("The Navidrome action is invalid."),{},false},id);
+    if (attempted.isEmpty()) attempted={action};
+    for (const auto attemptedAction:attempted) {
+        if (!m_capabilities.accountActions.contains(attemptedAction)) continue;
+        const auto availability=m_capabilities.action(attemptedAction);
+        if (availability.state!=AvailabilityV2::Available)
+            return scheduleV2Failure({availability.state==AvailabilityV2::Forbidden
+                ? SourceErrorKindV2::Authorization : SourceErrorKindV2::Unavailable,
+                permissionKey(attemptedAction),QStringLiteral("The Navidrome action is unavailable."),{},false},id);
+    }
+    // Keep the public request cancellable during a reentrant transport factory.
+    const QUuid clientId=m_client->get(QStringLiteral("v2.action." )+endpoint,endpoint,query);
+    if (!guard) return id;
+    if (!m_localV2Requests.remove(id)) { m_client->cancel(clientId); return id; }
+    V2Request request; request.publicId=id; request.operation=QStringLiteral("action");
+    request.endpoint=endpoint; request.media=subject;
+    request.result={action,subject,std::move(payload)};
+    request.attemptedActions=std::move(attempted);
+    m_v2Requests.insert(clientId,std::move(request));
+    return id;
+}
+
+QUuid NavidromeSourceSession::setFavorite(const MediaRefV2 &media, bool favorite)
+{
+    const bool valid=validEntity(media,MediaEntityTypeV2::Track)
+        || validEntity(media,MediaEntityTypeV2::Album) || validEntity(media,MediaEntityTypeV2::Artist);
+    const QString key=media.entityType==MediaEntityTypeV2::Album ? QStringLiteral("albumId")
+        : media.entityType==MediaEntityTypeV2::Artist ? QStringLiteral("artistId") : QStringLiteral("id");
+    QUrlQuery query; query.addQueryItem(key,media.entityId);
+    return startAction(favorite?SourceActionV2::Favorite:SourceActionV2::Unfavorite,media,
+        favorite?QStringLiteral("star"):QStringLiteral("unstar"),query,{{"favorite",favorite}},valid);
+}
+QUuid NavidromeSourceSession::setRating(const MediaRefV2 &media, int rating)
+{
+    QUrlQuery query; query.addQueryItem("id",media.entityId); query.addQueryItem("rating",QString::number(rating));
+    return startAction(SourceActionV2::Rating,media,"setRating",query,{{"rating",rating}},
+        validEntity(media,MediaEntityTypeV2::Track) && rating>=0 && rating<=5);
+}
+QUuid NavidromeSourceSession::createPlaylist(const QString &name, const QList<MediaRefV2> &tracks)
+{
+    QUrlQuery query; query.addQueryItem("name",name.trimmed());
+    bool foreign=false;
+    for (const auto &track:tracks) {
+        foreign |= !validEntity(track,MediaEntityTypeV2::Track);
+        query.addQueryItem("songId",track.entityId);
+    }
+    auto subject=collectionSubject(); subject.entityType=MediaEntityTypeV2::Playlist;
+    return startAction(SourceActionV2::CreatePlaylist,subject,"createPlaylist",query,{},
+        !name.trimmed().isEmpty() && !foreign,{},foreign);
+}
+QUuid NavidromeSourceSession::updatePlaylist(const MediaRefV2 &playlist, const PlaylistChangeV2 &change)
+{
+    QUrlQuery query; query.addQueryItem("playlistId",playlist.entityId);
+    QList<SourceActionV2> attempted;
+    bool valid=validEntity(playlist,MediaEntityTypeV2::Playlist),foreign=false;
+    if (!change.newName.isEmpty()) {
+        attempted.append(SourceActionV2::UpdatePlaylist);
+        valid &= !change.newName.trimmed().isEmpty(); query.addQueryItem("name",change.newName.trimmed());
+    }
+    if (!change.tracksToAdd.isEmpty()) attempted.append(SourceActionV2::AddPlaylistTracks);
+    for (const auto &track:change.tracksToAdd) {
+        foreign |= !validEntity(track,MediaEntityTypeV2::Track);
+        query.addQueryItem("songIdToAdd",track.entityId);
+    }
+    if (!change.trackIndexesToRemove.isEmpty()) attempted.append(SourceActionV2::RemovePlaylistTracks);
+    QSet<int> seen;
+    for (int index:change.trackIndexesToRemove) {
+        valid &= index>=0 && !seen.contains(index); seen.insert(index);
+        query.addQueryItem("songIndexToRemove",QString::number(index));
+    }
+    return startAction(SourceActionV2::UpdatePlaylist,playlist,"updatePlaylist",query,{},
+        valid && !foreign && !attempted.isEmpty(),attempted,foreign);
+}
+QUuid NavidromeSourceSession::deletePlaylist(const MediaRefV2 &playlist)
+{
+    QUrlQuery query; query.addQueryItem("id",playlist.entityId);
+    return startAction(SourceActionV2::DeletePlaylist,playlist,"deletePlaylist",query,{},
+        validEntity(playlist,MediaEntityTypeV2::Playlist));
+}
+QUuid NavidromeSourceSession::fetchPlayQueue()
+{
+    return startAction(SourceActionV2::FetchPlayQueue,collectionSubject(),"getPlayQueue",{});
+}
+QUuid NavidromeSourceSession::savePlayQueue(const QList<MediaRefV2> &items,
+    const MediaRefV2 &current, qint64 positionMs)
+{
+    QUrlQuery query; QVariantList refs; bool valid=positionMs>=0;
+    for (const auto &item:items) {
+        valid &= validEntity(item,MediaEntityTypeV2::Track);
+        query.addQueryItem("id",item.entityId); refs.append(mediaRefV2ToVariantMap(item));
+    }
+    if (!items.isEmpty()) {
+        valid &= validEntity(current,MediaEntityTypeV2::Track) && items.contains(current);
+        query.addQueryItem("current",current.entityId);
+        query.addQueryItem("position",QString::number(positionMs));
+    } else valid &= current==MediaRefV2{};
+    QVariantMap payload{{"items",refs},{"current",items.isEmpty()?QVariantMap{}:mediaRefV2ToVariantMap(current)},
+        {"positionMs",items.isEmpty()?qint64(0):positionMs}};
+    return startAction(SourceActionV2::SavePlayQueue,collectionSubject(),"savePlayQueue",query,payload,valid);
+}
+QUuid NavidromeSourceSession::fetchBookmarks()
+{
+    return startAction(SourceActionV2::FetchBookmarks,collectionSubject(),"getBookmarks",{});
+}
+QUuid NavidromeSourceSession::createBookmark(const MediaRefV2 &media, qint64 positionMs,
+    const QString &comment)
+{
+    QUrlQuery query; query.addQueryItem("id",media.entityId);
+    query.addQueryItem("position",QString::number(positionMs));
+    if (!comment.isEmpty()) query.addQueryItem("comment",comment);
+    return startAction(SourceActionV2::CreateBookmark,media,"createBookmark",query,
+        {{"positionMs",positionMs},{"comment",comment}},validEntity(media,MediaEntityTypeV2::Track) && positionMs>=0);
+}
+QUuid NavidromeSourceSession::deleteBookmark(const MediaRefV2 &media)
+{
+    QUrlQuery query; query.addQueryItem("id",media.entityId);
+    return startAction(SourceActionV2::DeleteBookmark,media,"deleteBookmark",query,{},
+        validEntity(media,MediaEntityTypeV2::Track));
+}
+void NavidromeSourceSession::finishAction(const V2Request &request, const QJsonObject &response)
+{
+    auto result=request.result;
+    bool valid=true;
+    if (result.action==SourceActionV2::CreatePlaylist) {
+        const auto playlist=response.value("playlist").toObject();
+        result.subject.entityId=playlist.value("id").toString();
+        const QString name=playlist.value("name").toString();
+        valid=!result.subject.entityId.trimmed().isEmpty() && !name.trimmed().isEmpty();
+        result.payload={{"name",name}};
+    } else if (result.action==SourceActionV2::FetchPlayQueue) {
+        valid=NavidromeMappers::playQueue(response,identity(),&result.payload);
+    } else if (result.action==SourceActionV2::FetchBookmarks) {
+        valid=NavidromeMappers::bookmarks(response,identity(),&result.payload);
+    }
+    if (!valid) emit requestFailed(request.publicId,invalidResponse(QStringLiteral("source.action.invalidResponse")));
+    else emit actionCompleted(request.publicId,result);
 }
 
 QUuid NavidromeSourceSession::scheduleV2Failure(const SourceErrorV2 &error,QUuid publicId)
@@ -582,6 +774,23 @@ void NavidromeSourceSession::finishPage(const V2Request &request,const QJsonObje
     } else if (request.endpoint==QStringLiteral("getSongsByGenre")) {
         page.sections={paginate(trackSection(response.value(QStringLiteral("songsByGenre")).toObject()
                                                 .value(QStringLiteral("song")).toArray()),false)};
+    } else if (request.endpoint==QStringLiteral("getPlaylists")) {
+        const auto root=response.value(QStringLiteral("playlists"));
+        const auto entries=root.toObject().value(QStringLiteral("playlist"));
+        bool valid=root.isObject() && (entries.isUndefined() || entries.isArray());
+        for (const auto &value:entries.toArray()) {
+            const auto id=value.toObject().value(QStringLiteral("id"));
+            valid &= value.isObject() && id.isString() && !id.toString().trimmed().isEmpty();
+        }
+        if (!valid) {
+            emit requestFailed(request.publicId,invalidResponse(QStringLiteral("source.playlists.invalid")));
+            return;
+        }
+        PageSectionV2 section; section.kind=PageSectionKindV2::Playlists;
+        section.sectionId=QStringLiteral("playlists"); section.titleKey=QStringLiteral("music.section.playlists");
+        for (const auto &value:entries.toArray())
+            section.items.append(NavidromeMappers::playlist(value.toObject(),source));
+        page.sections={paginate(section,true)};
     } else if (request.endpoint==QStringLiteral("getPlaylist")) {
         const auto playlist=response.value(QStringLiteral("playlist")).toObject();
         auto section=trackSection(playlist.value(QStringLiteral("entry")).toArray());
@@ -616,7 +825,9 @@ void NavidromeSourceSession::handleClientSuccess(const QUuid &requestId,
     auto v2=m_v2Requests.find(requestId);
     if (v2!=m_v2Requests.end()) {
         const V2Request request=v2.value(); m_v2Requests.erase(v2);
-        if (request.operation==QStringLiteral("page")) {
+        if (request.operation==QStringLiteral("action")) {
+            finishAction(request,response);
+        } else if (request.operation==QStringLiteral("page")) {
             finishPage(request,response);
         } else if (request.operation==QStringLiteral("artwork.resolve")) {
             const QString key=request.media.entityType==MediaEntityTypeV2::Track
@@ -826,8 +1037,23 @@ void NavidromeSourceSession::handleClientFailure(const QUuid &requestId,
 {
     auto v2=m_v2Requests.find(requestId);
     if (v2!=m_v2Requests.end()) {
-        const QUuid publicId=v2->publicId; m_v2Requests.erase(v2);
-        emit requestFailed(publicId,error); return;
+        const V2Request request=v2.value(); m_v2Requests.erase(v2);
+        if (error.kind==SourceErrorKindV2::Authorization) {
+            auto attempted=request.attemptedActions;
+            if (request.operation==QStringLiteral("download")) attempted={SourceActionV2::Download};
+            if (!attempted.isEmpty()) {
+                auto next=m_capabilities;
+                for (const auto action:attempted)
+                    next.accountActions[action]={AvailabilityV2::Forbidden,permissionKey(action),
+                                                 next.accountAction(action).constraints};
+                // Register the terminal until observers finish; close/cancel may reenter.
+                m_localV2Requests.insert(request.publicId);
+                const QPointer<NavidromeSourceSession> guard(this);
+                setCapabilities(next);
+                if (!guard || !m_localV2Requests.remove(request.publicId)) return;
+            }
+        }
+        emit requestFailed(request.publicId,error); return;
     }
     if (!m_openRequestId.isNull() && requestId == m_openClientRequestId) {
         const QUuid openRequestId = m_openRequestId;
@@ -982,5 +1208,8 @@ NavidromeSourceSession::accountActions(const QJsonObject &user)
     applyRole(QStringLiteral("streamRole"), {SourceActionV2::Play});
     applyRole(QStringLiteral("coverArtRole"), {SourceActionV2::Artwork});
     applyRole(QStringLiteral("downloadRole"), {SourceActionV2::Download});
+    applyRole(QStringLiteral("playlistRole"), {SourceActionV2::CreatePlaylist,
+        SourceActionV2::UpdatePlaylist, SourceActionV2::DeletePlaylist,
+        SourceActionV2::AddPlaylistTracks, SourceActionV2::RemovePlaylistTracks});
     return result;
 }

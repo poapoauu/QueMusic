@@ -157,7 +157,7 @@ int main(int argc, char *argv[])
             || !available(capabilities, SourceActionV2::Lyrics)
             || !available(capabilities, SourceActionV2::Download)
             || capabilities.action(SourceActionV2::CreatePlaylist).state
-                != AvailabilityV2::Unsupported) {
+                != AvailabilityV2::Available) {
             fail(QStringLiteral("open completed without negotiated capabilities"));
             return;
         }

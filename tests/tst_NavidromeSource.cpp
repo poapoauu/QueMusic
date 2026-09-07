@@ -232,7 +232,12 @@ const QList<SourceActionV2> allSourceActions{
     SourceActionV2::CreateBookmark, SourceActionV2::DeleteBookmark};
 const QList<SourceActionV2> implementedSourceActions{
     SourceActionV2::Play, SourceActionV2::Artwork, SourceActionV2::Lyrics,
-    SourceActionV2::Download};
+    SourceActionV2::Download, SourceActionV2::Favorite, SourceActionV2::Unfavorite,
+    SourceActionV2::Rating, SourceActionV2::CreatePlaylist, SourceActionV2::UpdatePlaylist,
+    SourceActionV2::DeletePlaylist, SourceActionV2::AddPlaylistTracks,
+    SourceActionV2::RemovePlaylistTracks, SourceActionV2::FetchPlayQueue,
+    SourceActionV2::SavePlayQueue, SourceActionV2::FetchBookmarks,
+    SourceActionV2::CreateBookmark, SourceActionV2::DeleteBookmark};
 
 class ImmediateReply final : public QNetworkReply {
 public:
@@ -468,6 +473,13 @@ class NavidromeSourceTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void task11ProvidersAndWireContracts();
+    void task11Actions_data();
+    void task11Actions();
+    void task11ValidationAndLifecycle();
+    void task11PermissionDowngrade();
+    void task11PlaylistsPage();
+    void task11RejectsMalformedPlaylists();
     void packageAndQtMetadataAdvertiseV2();
     void pluginAdvertisesV2AndGenericSettings();
     void pluginCreatesImplementedV2ProvidersOnly();
@@ -590,11 +602,259 @@ void NavidromeSourceTest::pluginCreatesImplementedV2ProvidersOnly()
     // Missing Q_INTERFACES declarations makes implemented providers invisible to the host.
     QVERIFY(qobject_cast<IPageProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) != nullptr);
-    QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IRatingProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) != nullptr);
+    QVERIFY(qobject_cast<IRatingProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) != nullptr);
+}
+
+void NavidromeSourceTest::task11Actions_data()
+{
+    QTest::addColumn<int>("action"); QTest::addColumn<QString>("endpoint");
+    const QList<QPair<SourceActionV2,QString>> cases{
+        {SourceActionV2::Favorite,"star"},{SourceActionV2::Unfavorite,"unstar"},
+        {SourceActionV2::Rating,"setRating"},{SourceActionV2::CreatePlaylist,"createPlaylist"},
+        {SourceActionV2::UpdatePlaylist,"updatePlaylist"},{SourceActionV2::DeletePlaylist,"deletePlaylist"},
+        {SourceActionV2::SavePlayQueue,"savePlayQueue"},{SourceActionV2::FetchPlayQueue,"getPlayQueue"},
+        {SourceActionV2::FetchBookmarks,"getBookmarks"},{SourceActionV2::CreateBookmark,"createBookmark"},
+        {SourceActionV2::DeleteBookmark,"deleteBookmark"}};
+    for (const auto &c:cases) QTest::newRow(qPrintable(c.second)) << int(c.first) << c.second;
+}
+void NavidromeSourceTest::task11Actions()
+{
+    QFETCH(int,action); QFETCH(QString,endpoint);
+    FakeNavidromeServer server; QVERIFY(server.start());
+    QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    auto f=qobject_cast<IFavoriteProviderV2 *>(&session); QVERIFY(f);
+    auto r=qobject_cast<IRatingProviderV2 *>(&session); QVERIFY(r);
+    auto p=qobject_cast<IPlaylistProviderV2 *>(&session); QVERIFY(p);
+    auto q=qobject_cast<IPlayQueueProviderV2 *>(&session); QVERIFY(q);
+    auto b=qobject_cast<IBookmarkProviderV2 *>(&session); QVERIFY(b);
+    const auto owner=session.identity();
+    MediaRefV2 track{owner.sourcePluginId,owner.sourceInstanceId,owner.accountId,MediaEntityTypeV2::Track,"42"};
+    auto list=track; list.entityType=MediaEntityTypeV2::Playlist; list.entityId="p1";
+    server.enqueue(subsonicOk({{"playlist",QJsonObject{{"id","created"},{"name","Server name"}}},
+        {"playQueue",QJsonObject{}},{"bookmarks",QJsonObject{}}}));
+    QSignalSpy started(&session,&IMusicSourceSessionV2::requestStarted);
+    QSignalSpy done(&session,&IMusicSourceSessionV2::actionCompleted);
+    QUuid id;
+    switch (SourceActionV2(action)) {
+    case SourceActionV2::Favorite: id=f->setFavorite(track,true); break;
+    case SourceActionV2::Unfavorite: id=f->setFavorite(track,false); break;
+    case SourceActionV2::Rating: id=r->setRating(track,0); break;
+    case SourceActionV2::CreatePlaylist: id=p->createPlaylist(" New ",{track,track}); break;
+    case SourceActionV2::UpdatePlaylist: id=p->updatePlaylist(list,{{track},{},{}}); break;
+    case SourceActionV2::DeletePlaylist: id=p->deletePlaylist(list); break;
+    case SourceActionV2::SavePlayQueue: id=q->savePlayQueue({}, {},0); break;
+    case SourceActionV2::FetchPlayQueue: id=q->fetchPlayQueue(); break;
+    case SourceActionV2::FetchBookmarks: id=b->fetchBookmarks(); break;
+    case SourceActionV2::CreateBookmark: id=b->createBookmark(track,9876543210ll,"a & b"); break;
+    case SourceActionV2::DeleteBookmark: id=b->deleteBookmark(track); break;
+    default: QFAIL("unexpected action");
+    }
+    QCOMPARE(started.size(),1); QCOMPARE(started.first().first().toUuid(),id);
+    QTRY_COMPARE(done.size(),1); QCOMPARE(done.first().first().toUuid(),id);
+    const auto result=done.first().at(1).value<ActionResultV2>();
+    QCOMPARE(int(result.action),action);
+    QCOMPARE(result.subject.sourceInstanceId,owner.sourceInstanceId);
+    QCOMPARE(result.subject.sourcePluginId,owner.sourcePluginId);
+    QCOMPARE(result.subject.accountId,owner.accountId);
+    QCOMPARE(server.requests().size(),1);
+    QCOMPARE(server.requests().first().url.path(),"/rest/"+endpoint+".view");
+    const QUrlQuery wire(server.requests().first().url);
+    if (result.action==SourceActionV2::CreatePlaylist) {
+        QCOMPARE(result.subject.entityId,QString("created"));
+        QCOMPARE(result.payload.value("name").toString(),QString("Server name"));
+        QCOMPARE(wire.allQueryItemValues("songId"),QStringList({"42","42"}));
+    } else if (result.action==SourceActionV2::CreateBookmark) {
+        QCOMPARE(result.payload.value("positionMs").metaType().id(),int(QMetaType::LongLong));
+        QCOMPARE(result.payload.value("positionMs").toLongLong(),9876543210ll);
+        QCOMPARE(wire.queryItemValue("comment"),QString("a & b"));
+    } else if (result.action==SourceActionV2::SavePlayQueue) QVERIFY(!wire.hasQueryItem("current"));
+    else if (result.action==SourceActionV2::Rating) QCOMPARE(result.payload.value("rating"),QVariant(0));
+    else if (result.action==SourceActionV2::Favorite || result.action==SourceActionV2::Unfavorite)
+        QCOMPARE(result.payload.value("favorite"),QVariant(result.action==SourceActionV2::Favorite));
+}
+void NavidromeSourceTest::task11ValidationAndLifecycle()
+{
+    FakeNavidromeServer server; QVERIFY(server.start()); QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    auto f=qobject_cast<IFavoriteProviderV2 *>(&session); QVERIFY(f);
+    auto r=qobject_cast<IRatingProviderV2 *>(&session); QVERIFY(r);
+    auto p=qobject_cast<IPlaylistProviderV2 *>(&session); QVERIFY(p);
+    auto q=qobject_cast<IPlayQueueProviderV2 *>(&session); QVERIFY(q);
+    auto b=qobject_cast<IBookmarkProviderV2 *>(&session); QVERIFY(b);
+    const auto owner=session.identity();
+    MediaRefV2 track{owner.sourcePluginId,owner.sourceInstanceId,owner.accountId,MediaEntityTypeV2::Track,"42"};
+    auto list=track; list.entityType=MediaEntityTypeV2::Playlist;
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    QSignalSpy done(&session,&IMusicSourceSessionV2::actionCompleted);
+    for (int field=0;field<3;++field) {
+        auto foreign=track;
+        if (field==0) foreign.sourcePluginId="foreign";
+        if (field==1) foreign.sourceInstanceId="foreign";
+        if (field==2) foreign.accountId="foreign";
+        p->createPlaylist("name",{foreign}); f->setFavorite(foreign,true);
+        q->savePlayQueue({foreign},foreign,0); b->deleteBookmark(foreign);
+    }
+    r->setRating(track,-1); r->setRating(track,6); r->setRating(list,3);
+    b->createBookmark(track,-1,{}); p->createPlaylist("  ",{});
+    p->updatePlaylist(list,{{},{},"  "}); p->updatePlaylist(list,{{},{-1},{}});
+    p->updatePlaylist(list,{{},{2,2},{}}); p->updatePlaylist(list,{});
+    q->savePlayQueue({track},list,0); q->savePlayQueue({track},track,-1);
+    f->setFavorite(list,true); b->createBookmark(list,0,{});
+    QTRY_COMPARE(failed.size(),25); QCOMPARE(server.requests().size(),0);
+    auto connection=connect(&session,&IMusicSourceSessionV2::requestStarted,&session,
+        [&](QUuid id){session.cancel(id);});
+    f->setFavorite(track,true); disconnect(connection);
+    connection=connect(&session,&IMusicSourceSessionV2::requestStarted,&session,
+        [&](QUuid){session.close();});
+    q->fetchPlayQueue(); disconnect(connection);
+    QTest::qWait(20); QCOMPARE(server.requests().size(),0); QCOMPARE(done.size(),0);
+    server.enqueueHeld(QJsonDocument(subsonicOk()).toJson(),"application/json");
+    const auto id=f->setFavorite(track,true);
+    QTRY_COMPARE(server.requests().size(),1); session.cancel(id); server.releaseHeld();
+    QTest::qWait(20); QCOMPARE(done.size(),0); QCOMPARE(failed.size(),25);
+}
+void NavidromeSourceTest::task11PermissionDowngrade()
+{
+    FakeNavidromeServer server; QVERIFY(server.start()); QNetworkAccessManager network;
+    enqueueSuccessfulHandshake(server,userResponse());
+    NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    auto p=qobject_cast<IPlaylistProviderV2 *>(&session); QVERIFY(p);
+    session.open(); QTRY_COMPARE(session.state(),SourceSessionStateV2::Ready);
+    const auto before=session.capabilities(); const auto owner=session.identity();
+    MediaRefV2 track{owner.sourcePluginId,owner.sourceInstanceId,owner.accountId,MediaEntityTypeV2::Track,"42"};
+    auto list=track; list.entityType=MediaEntityTypeV2::Playlist;
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    QSignalSpy caps(&session,&IMusicSourceSessionV2::capabilitiesChanged);
+    server.enqueue(subsonicError(50,"Denied"));
+    p->updatePlaylist(list,{{track},{0},{}});
+    QTRY_COMPARE(failed.size(),1); QCOMPARE(caps.size(),1);
+    QCOMPARE(session.capabilities().serverActions,before.serverActions);
+    QCOMPARE(session.capabilities().action(SourceActionV2::AddPlaylistTracks).state,AvailabilityV2::Forbidden);
+    QCOMPARE(session.capabilities().action(SourceActionV2::RemovePlaylistTracks).state,AvailabilityV2::Forbidden);
+    QCOMPARE(session.capabilities().accountAction(SourceActionV2::UpdatePlaylist),before.accountAction(SourceActionV2::UpdatePlaylist));
+    QCOMPARE(session.capabilities().accountAction(SourceActionV2::AddPlaylistTracks).reasonKey,QString("source.permission.addPlaylistTracks"));
+    QTemporaryDir dir; server.enqueue(subsonicError(50,"Denied"));
+    session.download(track,QUrl::fromLocalFile(dir.filePath("download")));
+    QTRY_COMPARE(failed.size(),2);
+    QCOMPARE(session.capabilities().action(SourceActionV2::Download).state,AvailabilityV2::Forbidden);
+    QCOMPARE(session.capabilities().serverActions,before.serverActions);
+    enqueueSuccessfulHandshake(server,userResponse()); session.open();
+    QTRY_COMPARE(session.state(),SourceSessionStateV2::Ready);
+    QCOMPARE(session.capabilities().accountActions,before.accountActions);
+}
+void NavidromeSourceTest::task11PlaylistsPage()
+{
+    FakeNavidromeServer server; QVERIFY(server.start()); QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    const auto response=subsonicOk({{"playlists",QJsonObject{{"playlist",QJsonArray{
+        QJsonObject{{"id","p1"},{"name","One"}},QJsonObject{{"id","p2"},{"name","Two"}}}}}}});
+    server.enqueue(response); server.enqueue(response);
+    PageQueryV2 query; query.page=MusicPageKindV2::Favorites; query.section=PageSectionKindV2::Playlists;
+    query.scope.sourceInstanceId=session.identity().sourceInstanceId; query.limit=1;
+    QSignalSpy pages(&session,&IMusicSourceSessionV2::pageReady);
+    session.fetchPage(query); QTRY_COMPARE(pages.size(),1);
+    auto section=pages.last().at(1).value<PageResultV2>().sections.first();
+    QCOMPARE(section.kind,PageSectionKindV2::Playlists); QCOMPARE(section.items.first().ref.entityId,QString("p1"));
+    QVERIFY(section.hasMore); query.cursor=section.nextCursor;
+    session.fetchPage(query); QTRY_COMPARE(pages.size(),2);
+    section=pages.last().at(1).value<PageResultV2>().sections.first();
+    QCOMPARE(section.items.first().ref.entityId,QString("p2")); QVERIFY(!section.hasMore);
+    QCOMPARE(server.requests().first().url.path(),QString("/rest/getPlaylists.view"));
+    QVERIFY(!QUrlQuery(server.requests().first().url).hasQueryItem("username"));
+    QCOMPARE(section.items.first().availableActions.value(SourceActionV2::UpdatePlaylist).state,AvailabilityV2::Available);
+}
+
+void NavidromeSourceTest::task11RejectsMalformedPlaylists()
+{
+    FakeNavidromeServer server; QVERIFY(server.start()); QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    auto query=pageQuery(PageSectionKindV2::Playlists);
+    QSignalSpy pages(&session,&IMusicSourceSessionV2::pageReady);
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    const QList<QJsonValue> invalid{QJsonValue(),QString("bad"),
+        QJsonObject{{"playlist","bad"}}, QJsonObject{{"playlist",QJsonArray{42}}},
+        QJsonObject{{"playlist",QJsonArray{QJsonObject{{"name","Broken"}}}}},
+        QJsonObject{{"playlist",QJsonArray{QJsonObject{{"id","  "}}}}},
+        QJsonObject{{"playlist",QJsonArray{QJsonObject{{"id",42}}}}}};
+    for (const auto &value:invalid) {
+        const int expected=failed.size()+1;
+        server.enqueue(subsonicOk({{"playlists",value}})); session.fetchPage(query);
+        QTRY_COMPARE(failed.size(),expected);
+        QCOMPARE(failed.last()[1].value<SourceErrorV2>().kind,SourceErrorKindV2::InvalidRequest);
+        QCOMPARE(pages.size(),0);
+    }
+    for (const auto &value:{QJsonObject{},QJsonObject{{"playlist",QJsonArray{}}}}) {
+        const int expected=pages.size()+1;
+        server.enqueue(subsonicOk({{"playlists",value}})); session.fetchPage(query);
+        QTRY_COMPARE(pages.size(),expected);
+        QVERIFY(pages.last()[1].value<PageResultV2>().sections.first().items.isEmpty());
+    }
+}
+
+void NavidromeSourceTest::task11ProvidersAndWireContracts()
+{
+    FakeNavidromeServer server;
+    QVERIFY(server.start());
+    QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(server.serverPort()), &network);
+    auto favorite = qobject_cast<IFavoriteProviderV2 *>(&session);
+    auto rating = qobject_cast<IRatingProviderV2 *>(&session);
+    auto playlists = qobject_cast<IPlaylistProviderV2 *>(&session);
+    auto queue = qobject_cast<IPlayQueueProviderV2 *>(&session);
+    auto bookmarks = qobject_cast<IBookmarkProviderV2 *>(&session);
+    QVERIFY(favorite); QVERIFY(rating); QVERIFY(playlists); QVERIFY(queue); QVERIFY(bookmarks);
+    const auto owner = session.identity();
+    MediaRefV2 track{owner.sourcePluginId,owner.sourceInstanceId,owner.accountId,MediaEntityTypeV2::Track,"42"};
+    MediaRefV2 playlist = track; playlist.entityType=MediaEntityTypeV2::Playlist; playlist.entityId="p1";
+    QSignalSpy started(&session,&IMusicSourceSessionV2::requestStarted);
+    QSignalSpy done(&session,&IMusicSourceSessionV2::actionCompleted);
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    server.enqueue(subsonicOk());
+    const auto id=favorite->setFavorite(track,true);
+    QCOMPARE(started.size(),1); QCOMPARE(started.last().first().toUuid(),id);
+    QTRY_COMPARE(done.size(),1);
+    QCOMPARE(done.last().first().toUuid(),id);
+    QCOMPARE(done.last().at(1).value<ActionResultV2>().payload.value("favorite"),QVariant(true));
+    QCOMPARE(server.requests().last().url.path(),QString("/rest/star.view"));
+    server.enqueue(subsonicOk());
+    PlaylistChangeV2 change{{track,track},{2,0}," Renamed "};
+    playlists->updatePlaylist(playlist,change);
+    QTRY_COMPARE(done.size(),2);
+    QCOMPARE(done.last().at(1).value<ActionResultV2>().action,SourceActionV2::UpdatePlaylist);
+    QCOMPARE(done.last().at(1).value<ActionResultV2>().subject,playlist);
+    const QUrlQuery query(server.requests().last().url);
+    QCOMPARE(query.allQueryItemValues("songIdToAdd"),QStringList({"42","42"}));
+    QCOMPARE(query.allQueryItemValues("songIndexToRemove"),QStringList({"2","0"}));
+    QCOMPARE(query.queryItemValue("name"),QString("Renamed"));
+    change.trackIndexesToRemove={2,2};
+    playlists->updatePlaylist(playlist,change);
+    QTRY_COMPARE(failed.size(),1); QCOMPARE(server.requests().size(),2);
+    server.enqueue(subsonicOk());
+    queue->savePlayQueue({track,track},track,1234);
+    QTRY_COMPARE(done.size(),3);
+    QCOMPARE(QUrlQuery(server.requests().last().url).allQueryItemValues("id"),QStringList({"42","42"}));
+    server.enqueue(subsonicOk({{"playQueue",QJsonObject{{"current","42"},{"position",1234},
+        {"entry",QJsonArray{QJsonObject{{"id","42"},{"url","secret"}},QJsonObject{{"id","42"}}}}}}}));
+    queue->fetchPlayQueue();
+    QTRY_COMPARE(done.size(),4);
+    const auto payload=done.last().at(1).value<ActionResultV2>().payload;
+    QCOMPARE(payload.keys(),QStringList({"current","items","positionMs"}));
+    QCOMPARE(payload.value("items").toList().size(),2);
+    QCOMPARE(mediaRefV2FromVariantMap(payload.value("items").toList().first().toMap()),track);
+    QCOMPARE(payload.value("positionMs").toLongLong(),1234);
+    server.enqueue(subsonicOk({{"bookmarks",QJsonObject{{"bookmark",QJsonArray{QJsonObject{
+        {"entry",QJsonObject{{"id","42"},{"url","secret"}}},{"position",99},{"comment","note"},{"password","secret"}}}}}}}));
+    bookmarks->fetchBookmarks();
+    QTRY_COMPARE(done.size(),5);
+    const auto bookmark=done.last().at(1).value<ActionResultV2>().payload.value("bookmarks").toList().first().toMap();
+    QCOMPARE(bookmark.keys(),QStringList({"comment","media","positionMs"}));
+    QCOMPARE(mediaRefV2FromVariantMap(bookmark.value("media").toMap()),track);
+    QCOMPARE(bookmark.value("positionMs").toLongLong(),99);
 }
 
 void NavidromeSourceTest::descriptorMatchesImplementedV2Providers()
@@ -604,14 +864,14 @@ void NavidromeSourceTest::descriptorMatchesImplementedV2Providers()
     IMusicSourceSessionV2 *session = plugin.createSession(configuration(8533), &plugin);
     QVERIFY(session != nullptr);
     QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) != nullptr);
-    QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IRatingProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) != nullptr);
+    QVERIFY(qobject_cast<IRatingProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) != nullptr);
-    QVERIFY(qobject_cast<IPlayQueueProviderV2 *>(session) == nullptr);
-    QVERIFY(qobject_cast<IBookmarkProviderV2 *>(session) == nullptr);
-    QCOMPARE(descriptor.declaredActions.size(), 4);
+    QVERIFY(qobject_cast<IPlayQueueProviderV2 *>(session) != nullptr);
+    QVERIFY(qobject_cast<IBookmarkProviderV2 *>(session) != nullptr);
+    QCOMPARE(descriptor.declaredActions.size(), implementedSourceActions.size());
     for (SourceActionV2 action : {SourceActionV2::Play, SourceActionV2::Artwork,
                                   SourceActionV2::Lyrics, SourceActionV2::Download})
         QCOMPARE(descriptor.declaredActions.value(action).state, AvailabilityV2::Available);
@@ -1016,7 +1276,7 @@ void NavidromeSourceTest::unsupportedOrMalformedRoleResponseKeepsReadSessionRead
         QCOMPARE(session.capabilities().accountAction(SourceActionV2::Download).state,
                  AvailabilityV2::Available);
         QCOMPARE(session.capabilities().accountAction(SourceActionV2::Rating).state,
-                 AvailabilityV2::Unsupported);
+                 AvailabilityV2::Available);
     }
 }
 
