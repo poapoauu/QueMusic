@@ -1892,6 +1892,8 @@ git commit -m "feat: expose navidrome page feeds and media"
 ### Task 11: 补齐 Navidrome 收藏、评分、歌单、队列和书签
 
 **Files:**
+- Modify: `plugins/navidrome-source/NavidromeSourcePlugin.cpp`
+- Modify: `tests/NavidromeSmoke.cpp` (capability assertions only)
 - Modify: `plugins/navidrome-source/NavidromeSourceSession.h`
 - Modify: `plugins/navidrome-source/NavidromeSourceSession.cpp`
 - Modify: `plugins/navidrome-source/NavidromeMappers.h`
@@ -1923,7 +1925,9 @@ void NavidromeSourceTest::simpleActionEndpoint_data()
 ```cpp
 void NavidromeSourceTest::rejectsForeignTrackBeforePlaylistRequest()
 {
-    session.addPlaylistTracks(playlistRef("p1"), {localTrack("local/default", "l1")});
+    PlaylistChangeV2 change;
+    change.tracksToAdd = {localTrack("local/default", "l1")};
+    session.updatePlaylist(playlistRef("p1"), change);
     QTRY_COMPARE(failureSpy.count(), 1);
     QCOMPARE(server.requests().size(), 0);
     QCOMPARE(lastError(failureSpy).kind, SourceErrorKindV2::Unsupported);
@@ -1963,6 +1967,10 @@ Expected: typed mutation methods are absent.
 - [ ] **Step 4: Implement every user-side mutation with source checks**
 
 Implement `star`, `unstar`, `setRating`, `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist`, `getPlayQueue`, `savePlayQueue`, `getBookmarks`, `createBookmark` and `deleteBookmark`. Before network dispatch, require every `MediaRefV2.sourceInstanceId` to match the session instance. Validate ratings as `0..5`, bookmark positions as non-negative, playlist names as non-empty after trimming, and removal indexes as non-negative.
+
+Task11 alignment: reuse Task10's existing `getPlaylist` detail path; implement `getPlaylists` through `fetchPage` for the Playlists section. Use the actual typed provider signatures in `ISourceProvidersV2.h`, not endpoint names as additional public APIs. Validate complete plugin/instance/account identity and supported entity types before transport. Preserve synchronous requestStarted and cancellation/close/reentrant semantics. Scrobble remains Task12 and Unsupported in Task11. Declare new actions only alongside their provider implementation; adjust the smoke's capability assertions accordingly. UI/host routing for queue/bookmark fetch remains Task12/13, not part of this plugin task.
+
+For a compound playlist update, preserve which sub-actions (rename, additions, removals) were exercised; on endpoint authorization denial downgrade only those attempted account actions, retaining unrelated entries and serverActions. Names omitted by an empty `change.newName` mean no rename; reject a nonempty whitespace-only name. Queue order and duplicates must survive encoding and decoding. Empty queue saves omit current; a nonempty current must belong to its queue. Fetch results must contain allowlisted typed media refs/items and positions, never raw server JSON or authenticated URLs. Existing Task6 mutation payload keys and types remain binding. Record the exact queue/bookmark payload contract in the implementation report for subsequent typed host integration.
 
 For `star`/`unstar`, map track IDs to `id`, album IDs to `albumId`, and artist IDs to `artistId`. Expose rating only for tracks. Encode repeated playlist additions as `songIdToAdd`, repeated removals as `songIndexToRemove`, and queue items as repeated `id` parameters in preserved order.
 
