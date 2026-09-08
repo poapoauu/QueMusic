@@ -341,6 +341,8 @@ accountId:        stable-user-id
 
 `PlaybackCoordinator` 在开始播放时发送非提交事件；播放达到歌曲时长 50% 或四分钟（先到者）时发送一次提交事件。未知时长时在四分钟提交。每个队列项只提交一次。
 
+Navidrome 上报仅接受属于当前音源实例和账号的歌曲引用，以及非负播放位置。请求显式发送 `id` 和 `submission`；本阶段省略可选 `time`，因为该字段表示 Unix 毫秒时间戳，而非播放进度。仅在服务器确认成功后返回 Scrobble 动作结果及类型明确的 `positionMs`、`submission`。歌曲 DTO 显式声明此媒体动作，专辑和歌手不声明；账号授权失败只收紧 Scrobble，不影响其他动作。协议依据：[scrobble](https://opensubsonic.netlify.app/docs/endpoints/scrobble/)。
+
 ### 9.3 歌单与状态同步
 
 - 歌单读取：`getPlaylists`、`getPlaylist`。

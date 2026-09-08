@@ -2010,7 +2010,19 @@ git commit -m "feat: complete navidrome user operations"
 
 ### Task 12: 建立统一播放协调器和 Navidrome scrobble
 
+执行拆分：先完成音源身份一致性修复，再实现 Navidrome scrobble provider，最后实现协调器及 QML 接口。前两个子项通过不代表 Task12 完成。应用 composition root 在 Task14 组装；在该接线及实际 GUI 验证完成前，不宣称新播放链路已用于运行中的应用。
+
+The provider slice also updates `NavidromeMappers.cpp`: mapped Track items explicitly grant Scrobble, while albums/artists/directories do not. This is required by the host's plugin/server/account/media capability intersection; descriptor availability alone is insufficient.
+
+Navidrome provider contract: implement `IScrobbleProviderV2::scrobble(media, positionMs, submission)` and declare Scrobble only with the implementation. Accept only a nonempty Track ref owned by the session and a nonnegative position. Use `scrobble` with `id` and explicit `submission=true/false`. Do not send playback position as `time`: that optional protocol field means Unix epoch milliseconds, not position; omit it in this phase. On server-confirmed success return `ActionResultV2` with Scrobble, exact subject and allowlisted `{positionMs, submission}` payload. Reuse requestStarted/cancel/close handling and per-action authorization downgrade; do not gate on `scrobblingEnabled` or unrelated roles. Tests must cover both wire values, invalid/cross-owner input with no transport, server failure, cancellation and capability downgrade. Protocol reference: https://opensubsonic.netlify.app/docs/endpoints/scrobble/ (verified 2026-09-08).
+
 **Files:**
+- Modify: `plugins/navidrome-source/NavidromeSourceSession.h`
+- Modify: `plugins/navidrome-source/NavidromeSourceSession.cpp`
+- Modify: `plugins/navidrome-source/NavidromeSourcePlugin.cpp`
+- Modify: `tests/tst_NavidromeSource.cpp`
+- Modify if required for capability assertions: `tests/NavidromeSmoke.cpp`
+- Modify: `plugins/navidrome-source/NavidromeMappers.cpp`
 - Create: `core/music/PlaybackCoordinator.h`
 - Create: `core/music/PlaybackCoordinator.cpp`
 - Create: `tests/tst_PlaybackCoordinator.cpp`

@@ -98,7 +98,7 @@ MediaItemV2 song(const QJsonObject &value,const SourceIdentityV2 &source)
     if (!mbid.isEmpty()) item.externalIds.insert(QStringLiteral("musicBrainzRecordingId"),mbid);
     for (SourceActionV2 action:{SourceActionV2::Play,SourceActionV2::Lyrics,
                                 SourceActionV2::Download,SourceActionV2::Favorite,
-                                SourceActionV2::Unfavorite,SourceActionV2::Rating,
+                                SourceActionV2::Unfavorite,SourceActionV2::Rating,SourceActionV2::Scrobble,
                                 SourceActionV2::CreateBookmark,SourceActionV2::DeleteBookmark})
         item.availableActions.insert(action,available());
     item.availableActions.insert(SourceActionV2::AddPlaylistTracks,

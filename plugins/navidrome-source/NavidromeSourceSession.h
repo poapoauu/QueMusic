@@ -14,12 +14,13 @@ class NavidromeSourceSession final : public IMusicSourceSessionV2,
                                      public IDownloadProviderV2,
                                      public IFavoriteProviderV2,
                                      public IRatingProviderV2,
+                                     public IScrobbleProviderV2,
                                      public IPlaylistProviderV2,
                                      public IPlayQueueProviderV2,
                                      public IBookmarkProviderV2 {
     Q_OBJECT
     Q_INTERFACES(IPageProviderV2 IPlaybackProviderV2 IDownloadProviderV2
-                 IFavoriteProviderV2 IRatingProviderV2 IPlaylistProviderV2
+                 IFavoriteProviderV2 IRatingProviderV2 IScrobbleProviderV2 IPlaylistProviderV2
                  IPlayQueueProviderV2 IBookmarkProviderV2)
 
 public:
@@ -44,6 +45,7 @@ public:
     QUuid download(const MediaRefV2 &media, const QUrl &destination) override;
     QUuid setFavorite(const MediaRefV2 &media, bool favorite) override;
     QUuid setRating(const MediaRefV2 &media, int rating) override;
+    QUuid scrobble(const MediaRefV2 &media, qint64 positionMs, bool submission) override;
     QUuid createPlaylist(const QString &name, const QList<MediaRefV2> &tracks) override;
     QUuid updatePlaylist(const MediaRefV2 &playlist, const PlaylistChangeV2 &change) override;
     QUuid deletePlaylist(const MediaRefV2 &playlist) override;

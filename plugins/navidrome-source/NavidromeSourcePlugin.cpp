@@ -13,7 +13,7 @@ SourceDescriptorV2 NavidromeSourcePlugin::descriptor() const
     for (SourceActionV2 action : {SourceActionV2::Play, SourceActionV2::Artwork,
                                   SourceActionV2::Lyrics, SourceActionV2::Download,
                                   SourceActionV2::Favorite, SourceActionV2::Unfavorite,
-                                  SourceActionV2::Rating, SourceActionV2::CreatePlaylist,
+                                  SourceActionV2::Rating, SourceActionV2::Scrobble, SourceActionV2::CreatePlaylist,
                                   SourceActionV2::UpdatePlaylist, SourceActionV2::DeletePlaylist,
                                   SourceActionV2::AddPlaylistTracks, SourceActionV2::RemovePlaylistTracks,
                                   SourceActionV2::FetchPlayQueue, SourceActionV2::SavePlayQueue,

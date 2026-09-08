@@ -233,7 +233,7 @@ const QList<SourceActionV2> allSourceActions{
 const QList<SourceActionV2> implementedSourceActions{
     SourceActionV2::Play, SourceActionV2::Artwork, SourceActionV2::Lyrics,
     SourceActionV2::Download, SourceActionV2::Favorite, SourceActionV2::Unfavorite,
-    SourceActionV2::Rating, SourceActionV2::CreatePlaylist, SourceActionV2::UpdatePlaylist,
+    SourceActionV2::Rating, SourceActionV2::Scrobble, SourceActionV2::CreatePlaylist, SourceActionV2::UpdatePlaylist,
     SourceActionV2::DeletePlaylist, SourceActionV2::AddPlaylistTracks,
     SourceActionV2::RemovePlaylistTracks, SourceActionV2::FetchPlayQueue,
     SourceActionV2::SavePlayQueue, SourceActionV2::FetchBookmarks,
@@ -473,6 +473,8 @@ class NavidromeSourceTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void task12ScrobbleMappedTrack();
+    void task12Scrobble();
     void descriptorIdentityRoutesMappedMedia();
     void task11ProvidersAndWireContracts();
     void task11Actions_data();
@@ -605,7 +607,7 @@ void NavidromeSourceTest::pluginCreatesImplementedV2ProvidersOnly()
     QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IRatingProviderV2 *>(session) != nullptr);
-    QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) != nullptr);
 }
@@ -646,6 +648,116 @@ void NavidromeSourceTest::descriptorIdentityRoutesMappedMedia()
         QCOMPARE(qvariant_cast<SourceErrorV2>(artworkFailure[1]).kind, SourceErrorKindV2::InvalidRequest);
     }
     QCOMPARE(streams.size(), 1);
+}
+
+void NavidromeSourceTest::task12ScrobbleMappedTrack()
+{
+    const SourceIdentityV2 owner{"navidrome","navidrome/admin","admin","Admin"};
+    const QJsonObject value{{"id","42"},{"title","Track"},{"name","Name"}};
+    const auto song=NavidromeMappers::song(value,owner);
+    QCOMPARE(song.ref.entityType,MediaEntityTypeV2::Track);
+    QCOMPARE(song.availableActions.value(SourceActionV2::Scrobble).state,AvailabilityV2::Available);
+    QCOMPARE(NavidromeMappers::album(value,owner).availableActions.value(SourceActionV2::Scrobble).state,
+             AvailabilityV2::Unsupported);
+    QCOMPARE(NavidromeMappers::artist(value,owner).availableActions.value(SourceActionV2::Scrobble).state,
+             AvailabilityV2::Unsupported);
+}
+
+void NavidromeSourceTest::task12Scrobble()
+{
+    FakeNavidromeServer server; QVERIFY(server.start()); QNetworkAccessManager network;
+    enqueueSuccessfulHandshake(server,userResponse("admin",false,false,false,false));
+    NavidromeSourceSession session(configuration(server.serverPort()),&network);
+    auto provider=qobject_cast<IScrobbleProviderV2 *>(&session); QVERIFY(provider);
+    NavidromeSourcePlugin plugin;
+    QCOMPARE(plugin.descriptor().declaredActions.value(SourceActionV2::Scrobble).state,AvailabilityV2::Available);
+    session.open(); QTRY_COMPARE(session.state(),SourceSessionStateV2::Ready);
+    const auto before=session.capabilities(); const auto owner=session.identity();
+    QCOMPARE(owner.sourcePluginId,plugin.descriptor().sourceId);
+    QCOMPARE(before.action(SourceActionV2::Scrobble).state,AvailabilityV2::Available);
+    const auto track=NavidromeMappers::song(QJsonObject{{"id","42 & 7"},{"title","Track"}},owner).ref;
+    QSignalSpy started(&session,&IMusicSourceSessionV2::requestStarted);
+    QSignalSpy done(&session,&IMusicSourceSessionV2::actionCompleted);
+    QSignalSpy failed(&session,&IMusicSourceSessionV2::requestFailed);
+    QSignalSpy caps(&session,&IMusicSourceSessionV2::capabilitiesChanged);
+    for (bool submission : {false,true}) {
+        const qint64 positionMs=submission ? 9876543210ll : 0;
+        const auto count=server.requests().size();
+        server.enqueueHeld(QJsonDocument(subsonicOk()).toJson(),"application/json");
+        const auto id=provider->scrobble(track,positionMs,submission);
+        QCOMPARE(started.last()[0].toUuid(),id);
+        QTRY_COMPARE(server.requests().size(),count+1); QCOMPARE(done.size(),0);
+        QCOMPARE(server.requests().last().url.path(),QString("/rest/scrobble.view"));
+        const QUrlQuery wire(server.requests().last().url);
+        QCOMPARE(wire.allQueryItemValues("id"),QStringList({"42 & 7"}));
+        QCOMPARE(wire.allQueryItemValues("submission"),QStringList({submission ? "true" : "false"}));
+        QVERIFY(!wire.hasQueryItem("time")); QVERIFY(!wire.hasQueryItem("position"));
+        QVERIFY(!wire.hasQueryItem("positionMs"));
+        server.releaseHeld(); QTRY_COMPARE(done.size(),1);
+        const auto completion=done.takeFirst(); QCOMPARE(completion[0].toUuid(),id);
+        const auto result=completion[1].value<ActionResultV2>();
+        QCOMPARE(result.action,SourceActionV2::Scrobble); QCOMPARE(result.subject,track);
+        QCOMPARE(result.payload.keys(),QStringList({"positionMs","submission"}));
+        QCOMPARE(result.payload.value("positionMs").metaType().id(),int(QMetaType::LongLong));
+        QCOMPARE(result.payload.value("positionMs").toLongLong(),positionMs);
+        QCOMPARE(result.payload.value("submission").metaType().id(),int(QMetaType::Bool));
+        QCOMPARE(result.payload.value("submission").toBool(),submission);
+    }
+    QCOMPARE(failed.size(),0);
+    const auto count=server.requests().size();
+    for (int field=0;field<8;++field) {
+        auto invalid=track;
+        if (field==0) invalid.sourcePluginId="foreign";
+        if (field==1) invalid.sourcePluginId=plugin.descriptor().pluginPackageId;
+        if (field==2) invalid.sourceInstanceId="foreign";
+        if (field==3) invalid.accountId="foreign";
+        if (field==4) invalid.entityType=MediaEntityTypeV2::Album;
+        if (field==5) invalid.entityId="";
+        if (field==6) invalid.entityId="  ";
+        const auto id=provider->scrobble(invalid,field==7 ? -1 : 0,true);
+        QTRY_COMPARE(failed.size(),1);
+        const auto failure=failed.takeFirst(); QCOMPARE(failure[0].toUuid(),id);
+        QCOMPARE(failure[1].value<SourceErrorV2>().kind,SourceErrorKindV2::InvalidRequest);
+    }
+    QCOMPARE(server.requests().size(),count);
+    server.enqueue(subsonicError(0,"Failure"));
+    const auto failureId=provider->scrobble(track,0,false);
+    QTRY_COMPARE(failed.size(),1); QCOMPARE(failed.takeFirst()[0].toUuid(),failureId);
+    QCOMPARE(done.size(),0); QCOMPARE(caps.size(),0);
+    server.enqueue(subsonicError(50,"Denied"));
+    const auto deniedId=provider->scrobble(track,1,true);
+    QTRY_COMPARE(failed.size(),1);
+    const auto denial=failed.takeFirst(); QCOMPARE(denial[0].toUuid(),deniedId);
+    QCOMPARE(denial[1].value<SourceErrorV2>().kind,SourceErrorKindV2::Authorization);
+    QCOMPARE(done.size(),0); QCOMPARE(caps.size(),1);
+    QCOMPARE(session.capabilities().serverActions,before.serverActions);
+    QCOMPARE(session.capabilities().action(SourceActionV2::Scrobble).state,AvailabilityV2::Forbidden);
+    QCOMPARE(session.capabilities().accountAction(SourceActionV2::Scrobble).reasonKey,QString("source.permission.scrobble"));
+    for (auto action:allSourceActions)
+        if (action!=SourceActionV2::Scrobble)
+            QCOMPARE(session.capabilities().accountAction(action),before.accountAction(action));
+    const auto deniedCount=server.requests().size();
+    provider->scrobble(track,0,false); QTRY_COMPARE(failed.size(),1); failed.clear();
+    QCOMPARE(server.requests().size(),deniedCount);
+    enqueueSuccessfulHandshake(server,userResponse()); session.open();
+    QTRY_COMPARE(session.state(),SourceSessionStateV2::Ready);
+    QCOMPARE(session.capabilities().action(SourceActionV2::Scrobble).state,AvailabilityV2::Available);
+    for (bool close : {false,true}) {
+        const auto requestCount=server.requests().size();
+        const auto connection=connect(&session,&IMusicSourceSessionV2::requestStarted,&session,
+            [&](QUuid id){ if (close) session.close(); else session.cancel(id); });
+        provider->scrobble(track,0,false); disconnect(connection);
+        QTest::qWait(20); QCOMPARE(server.requests().size(),requestCount);
+    }
+    for (bool close : {false,true}) {
+        const auto requestCount=server.requests().size();
+        server.enqueueHeld(QJsonDocument(subsonicOk()).toJson(),"application/json");
+        const auto id=provider->scrobble(track,0,true);
+        QTRY_COMPARE(server.requests().size(),requestCount+1);
+        if (close) session.close(); else session.cancel(id);
+        server.releaseHeld(); QTest::qWait(20);
+    }
+    QCOMPARE(done.size(),0); QCOMPARE(failed.size(),0);
 }
 
 void NavidromeSourceTest::task11Actions_data()
@@ -905,7 +1017,7 @@ void NavidromeSourceTest::descriptorMatchesImplementedV2Providers()
     QVERIFY(qobject_cast<IPlaybackProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IFavoriteProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IRatingProviderV2 *>(session) != nullptr);
-    QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
+    QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IPlayQueueProviderV2 *>(session) != nullptr);

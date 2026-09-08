@@ -35,7 +35,7 @@ const QList<SourceActionV2> allActions{
 const QList<SourceActionV2> implementedActions{
     SourceActionV2::Play,SourceActionV2::Artwork,SourceActionV2::Lyrics,
     SourceActionV2::Download,SourceActionV2::Favorite,SourceActionV2::Unfavorite,
-    SourceActionV2::Rating,SourceActionV2::CreatePlaylist,SourceActionV2::UpdatePlaylist,
+    SourceActionV2::Rating,SourceActionV2::Scrobble,SourceActionV2::CreatePlaylist,SourceActionV2::UpdatePlaylist,
     SourceActionV2::DeletePlaylist,SourceActionV2::AddPlaylistTracks,
     SourceActionV2::RemovePlaylistTracks,SourceActionV2::FetchPlayQueue,
     SourceActionV2::SavePlayQueue,SourceActionV2::FetchBookmarks,
@@ -47,6 +47,7 @@ QString permissionKey(SourceActionV2 action)
     case SourceActionV2::Favorite: return QStringLiteral("source.permission.favorite");
     case SourceActionV2::Unfavorite: return QStringLiteral("source.permission.unfavorite");
     case SourceActionV2::Rating: return QStringLiteral("source.permission.rating");
+    case SourceActionV2::Scrobble: return QStringLiteral("source.permission.scrobble");
     case SourceActionV2::CreatePlaylist: return QStringLiteral("source.permission.createPlaylist");
     case SourceActionV2::UpdatePlaylist: return QStringLiteral("source.permission.updatePlaylist");
     case SourceActionV2::DeletePlaylist: return QStringLiteral("source.permission.deletePlaylist");
@@ -476,6 +477,19 @@ QUuid NavidromeSourceSession::startAction(SourceActionV2 action, const MediaRefV
     request.attemptedActions=std::move(attempted);
     m_v2Requests.insert(clientId,std::move(request));
     return id;
+}
+
+QUuid NavidromeSourceSession::scrobble(const MediaRefV2 &media, qint64 positionMs,
+                                     bool submission)
+{
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"),media.entityId);
+    query.addQueryItem(QStringLiteral("submission"),
+                       submission ? QStringLiteral("true") : QStringLiteral("false"));
+    // Protocol time is epoch milliseconds, not the playback position.
+    return startAction(SourceActionV2::Scrobble,media,QStringLiteral("scrobble"),query,
+        {{"positionMs",positionMs},{"submission",submission}},
+        validEntity(media,MediaEntityTypeV2::Track) && positionMs>=0);
 }
 
 QUuid NavidromeSourceSession::setFavorite(const MediaRefV2 &media, bool favorite)
