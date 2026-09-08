@@ -453,7 +453,7 @@ void enqueueSuccessfulHandshake(FakeNavidromeServer &server,
 MediaRefV2 media(QString id = QStringLiteral("42"),
                  MediaEntityTypeV2 type = MediaEntityTypeV2::Track)
 {
-    return {QStringLiteral("org.quemusic.source.navidrome"),
+    return {QStringLiteral("navidrome"),
             QStringLiteral("navidrome/admin"), QStringLiteral("admin"),
             type, std::move(id)};
 }
@@ -473,6 +473,7 @@ class NavidromeSourceTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void descriptorIdentityRoutesMappedMedia();
     void task11ProvidersAndWireContracts();
     void task11Actions_data();
     void task11Actions();
@@ -607,6 +608,44 @@ void NavidromeSourceTest::pluginCreatesImplementedV2ProvidersOnly()
     QVERIFY(qobject_cast<IScrobbleProviderV2 *>(session) == nullptr);
     QVERIFY(qobject_cast<IPlaylistProviderV2 *>(session) != nullptr);
     QVERIFY(qobject_cast<IDownloadProviderV2 *>(session) != nullptr);
+}
+
+void NavidromeSourceTest::descriptorIdentityRoutesMappedMedia()
+{
+    NavidromeSourcePlugin plugin;
+    const auto descriptor = plugin.descriptor();
+    QNetworkAccessManager network;
+    NavidromeSourceSession session(configuration(8533), &network);
+    QCOMPARE(session.identity().sourcePluginId, descriptor.sourceId);
+    QVERIFY(descriptor.sourceId != descriptor.pluginPackageId);
+    const SourceIdentityV2 owner{descriptor.sourceId, QStringLiteral("navidrome/admin"),
+                                 QStringLiteral("admin"), QStringLiteral("Admin")};
+    const auto mapped = NavidromeMappers::song(
+        QJsonObject{{"id", "42"}, {"title", "Track"}}, owner);
+    auto *provider = qobject_cast<IPlaybackProviderV2 *>(&session);
+    QVERIFY(provider);
+    QSignalSpy streams(&session, &IMusicSourceSessionV2::streamReady);
+    QSignalSpy failures(&session, &IMusicSourceSessionV2::requestFailed);
+    const auto accepted = provider->resolveStream(mapped.ref);
+    QTRY_COMPARE(streams.size(), 1);
+    QCOMPARE(streams[0][0].toUuid(), accepted);
+    QCOMPARE(qvariant_cast<StreamDescriptorV2>(streams[0][1]).media, mapped.ref);
+    QCOMPARE(failures.size(), 0);
+    for (const QString &wrongSource : {descriptor.pluginPackageId, QStringLiteral("foreign")}) {
+        auto rejected = mapped.ref;
+        rejected.sourcePluginId = wrongSource;
+        const auto request = provider->resolveStream(rejected);
+        QTRY_COMPARE(failures.size(), 1);
+        const auto failure = failures.takeFirst();
+        QCOMPARE(failure[0].toUuid(), request);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failure[1]).kind, SourceErrorKindV2::InvalidRequest);
+        const auto artworkRequest = session.fetchArtwork(rejected);
+        QTRY_COMPARE(failures.size(), 1);
+        const auto artworkFailure = failures.takeFirst();
+        QCOMPARE(artworkFailure[0].toUuid(), artworkRequest);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(artworkFailure[1]).kind, SourceErrorKindV2::InvalidRequest);
+    }
+    QCOMPARE(streams.size(), 1);
 }
 
 void NavidromeSourceTest::task11Actions_data()
@@ -1845,7 +1884,7 @@ void NavidromeSourceTest::streamDescriptorUsesAuthenticatedUrlWithoutPersistingI
 void NavidromeSourceTest::artworkResolvesStableServerCoverIdsAndAdvertisesOnlySupportedEntities()
 {
     // Using entity IDs as cover IDs fetches the wrong object; unsupported mapped actions always fail.
-    const SourceIdentityV2 source{QStringLiteral("org.quemusic.source.navidrome"),
+    const SourceIdentityV2 source{QStringLiteral("navidrome"),
                                   QStringLiteral("navidrome/admin"),
                                   QStringLiteral("admin"), QStringLiteral("Navidrome Admin")};
     const MediaItemV2 track = NavidromeMappers::song(

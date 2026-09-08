@@ -42,6 +42,7 @@ enum class PageSectionKindV2 {
 };
 
 struct MediaRefV2 {
+    // Legacy field name: SourceDescriptorV2::sourceId, not the plugin package ID.
     QString sourcePluginId;
     QString sourceInstanceId;
     QString accountId;
@@ -74,6 +75,7 @@ struct ActionAvailabilityV2 {
 };
 
 struct SourceIdentityV2 {
+    // Legacy field name: SourceDescriptorV2::sourceId, not the plugin package ID.
     QString sourcePluginId;
     QString sourceInstanceId;
     QString accountId;

@@ -132,7 +132,7 @@ NavidromeSourceSession::~NavidromeSourceSession()
 
 SourceIdentityV2 NavidromeSourceSession::identity() const
 {
-    return {m_configuration.pluginPackageId, m_configuration.sourceInstanceId,
+    return {m_configuration.sourceId, m_configuration.sourceInstanceId,
             m_configuration.accountId, m_configuration.displayName};
 }
 
@@ -342,14 +342,14 @@ QUuid NavidromeSourceSession::fetchPage(const PageQueryV2 &query)
 }
 bool NavidromeSourceSession::validMedia(const MediaRefV2 &media) const
 {
-    return media.sourcePluginId==m_configuration.pluginPackageId
+    return media.sourcePluginId==m_configuration.sourceId
         && media.sourceInstanceId==m_configuration.sourceInstanceId
         && media.accountId==m_configuration.accountId
         && media.entityType==MediaEntityTypeV2::Track && !media.entityId.isEmpty();
 }
 bool NavidromeSourceSession::validArtworkMedia(const MediaRefV2 &media) const
 {
-    return media.sourcePluginId==m_configuration.pluginPackageId
+    return media.sourcePluginId==m_configuration.sourceId
         && media.sourceInstanceId==m_configuration.sourceInstanceId
         && media.accountId==m_configuration.accountId
         && (media.entityType==MediaEntityTypeV2::Track
