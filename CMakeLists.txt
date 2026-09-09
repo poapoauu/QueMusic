@@ -200,6 +200,10 @@ target_compile_features(quemusic_music_repository PUBLIC cxx_std_17)
 target_include_directories(quemusic_music_repository PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core/music)
 target_link_libraries(quemusic_music_repository PUBLIC quemusic_source_registry Qt6::Concurrent)
 
+add_library(quemusic_playback_coordinator STATIC
+    core/music/PlaybackCoordinator.cpp core/music/PlaybackCoordinator.h core/music/PlaybackSink.h)
+target_link_libraries(quemusic_playback_coordinator PUBLIC quemusic_music_repository)
+
 add_library(quemusic_music_hub STATIC core/music/MusicHub.cpp core/music/MusicHub.h)
 target_compile_features(quemusic_music_hub PUBLIC cxx_std_17)
 target_link_libraries(quemusic_music_hub PUBLIC quemusic_music_repository quemusic_music_page_model)
@@ -546,6 +550,25 @@ if(BUILD_TESTING)
     add_dependencies(quemusic_music_hub_test quemusic_hub_fixture)
     add_test(NAME quemusic_music_hub_test COMMAND quemusic_music_hub_test)
     set_tests_properties(quemusic_music_hub_test PROPERTIES TIMEOUT 30)
+
+    # Task12c isolated private playback core and dynamically loaded fixture.
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_playback_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task12c")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task12c")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task12c Fixture")
+    set(QUEMUSIC_TASK12C_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task12c-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK12C_PACKAGE_DIR "${QUEMUSIC_TASK12C_PACKAGE_ROOT}/task12c")
+    add_library(quemusic_playback_fixture MODULE tests/tst_PlaybackCoordinator.cpp)
+    target_compile_definitions(quemusic_playback_fixture PRIVATE QUEMUSIC_PLAYBACK_FIXTURE)
+    target_link_libraries(quemusic_playback_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_playback_fixture PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK12C_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_playback_fixture "${QUEMUSIC_TASK12C_PACKAGE_DIR}")
+    qt_add_executable(quemusic_playback_coordinator_test tests/tst_PlaybackCoordinator.cpp)
+    target_link_libraries(quemusic_playback_coordinator_test PRIVATE quemusic_playback_coordinator Qt6::Test)
+    target_compile_definitions(quemusic_playback_coordinator_test PRIVATE QUEMUSIC_TASK12C_PACKAGES="${QUEMUSIC_TASK12C_PACKAGE_ROOT}")
+    add_dependencies(quemusic_playback_coordinator_test quemusic_playback_fixture)
+    add_test(NAME quemusic_playback_coordinator_test COMMAND quemusic_playback_coordinator_test)
+    set_tests_properties(quemusic_playback_coordinator_test PROPERTIES TIMEOUT 30)
 
     # Task6 fixture shares its source with the action router contract tests.
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_action_fixture)

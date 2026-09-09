@@ -2014,6 +2014,8 @@ git commit -m "feat: complete navidrome user operations"
 
 The provider slice also updates `NavidromeMappers.cpp`: mapped Track items explicitly grant Scrobble, while albums/artists/directories do not. This is required by the host's plugin/server/account/media capability intersection; descriptor availability alone is insufficient.
 
+Coordinator implementation boundary: `PlaybackSink` is a host-internal QObject-derived C++ interface with `prepare(StreamDescriptorV2, generation)`, `play(generation)` and `stop(generation)` methods, not an SDK plugin interface or QML API. The coordinator passes transient URLs/headers only to this sink and exposes safe media/queue maps publicly. Qt/QML integration must wrap the actual player without exposing its source URL or raw error strings. Playback reports carry the generation explicitly, so a late position or stopped event cannot affect a newly selected track. Queue occurrences preserve intentional duplicates. Implement the coordinator core/tests first, then the Qt sink and QML bindings; Task12 is complete only after both slices pass.
+
 Navidrome provider contract: implement `IScrobbleProviderV2::scrobble(media, positionMs, submission)` and declare Scrobble only with the implementation. Accept only a nonempty Track ref owned by the session and a nonnegative position. Use `scrobble` with `id` and explicit `submission=true/false`. Do not send playback position as `time`: that optional protocol field means Unix epoch milliseconds, not position; omit it in this phase. On server-confirmed success return `ActionResultV2` with Scrobble, exact subject and allowlisted `{positionMs, submission}` payload. Reuse requestStarted/cancel/close handling and per-action authorization downgrade; do not gate on `scrobblingEnabled` or unrelated roles. Tests must cover both wire values, invalid/cross-owner input with no transport, server failure, cancellation and capability downgrade. Protocol reference: https://opensubsonic.netlify.app/docs/endpoints/scrobble/ (verified 2026-09-08).
 
 **Files:**
@@ -2025,6 +2027,7 @@ Navidrome provider contract: implement `IScrobbleProviderV2::scrobble(media, pos
 - Modify: `plugins/navidrome-source/NavidromeMappers.cpp`
 - Create: `core/music/PlaybackCoordinator.h`
 - Create: `core/music/PlaybackCoordinator.cpp`
+- Create: `core/music/PlaybackSink.h`
 - Create: `tests/tst_PlaybackCoordinator.cpp`
 - Modify: `layout/PlayerControl.qml`
 - Modify: `main.qml`

@@ -749,6 +749,8 @@ void NavidromeSourceTest::task12Scrobble()
         provider->scrobble(track,0,false); disconnect(connection);
         QTest::qWait(20); QCOMPARE(server.requests().size(),requestCount);
     }
+    enqueueSuccessfulHandshake(server,userResponse()); session.open();
+    QTRY_COMPARE(session.state(),SourceSessionStateV2::Ready);
     for (bool close : {false,true}) {
         const auto requestCount=server.requests().size();
         server.enqueueHeld(QJsonDocument(subsonicOk()).toJson(),"application/json");
