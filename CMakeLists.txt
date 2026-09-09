@@ -204,6 +204,15 @@ add_library(quemusic_playback_coordinator STATIC
     core/music/PlaybackCoordinator.cpp core/music/PlaybackCoordinator.h core/music/PlaybackSink.h)
 target_link_libraries(quemusic_playback_coordinator PUBLIC quemusic_music_repository)
 
+add_library(quemusic_qt_playback_controller STATIC
+    core/playback/QtPlaybackController.cpp
+    core/playback/QtPlaybackController.h)
+target_compile_features(quemusic_qt_playback_controller PUBLIC cxx_std_17)
+target_include_directories(quemusic_qt_playback_controller PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/playback)
+target_link_libraries(quemusic_qt_playback_controller PUBLIC
+    quemusic_playback_coordinator Qt6::Multimedia)
+
 add_library(quemusic_music_hub STATIC core/music/MusicHub.cpp core/music/MusicHub.h)
 target_compile_features(quemusic_music_hub PUBLIC cxx_std_17)
 target_link_libraries(quemusic_music_hub PUBLIC quemusic_music_repository quemusic_music_page_model)
@@ -569,6 +578,16 @@ if(BUILD_TESTING)
     add_dependencies(quemusic_playback_coordinator_test quemusic_playback_fixture)
     add_test(NAME quemusic_playback_coordinator_test COMMAND quemusic_playback_coordinator_test)
     set_tests_properties(quemusic_playback_coordinator_test PROPERTIES TIMEOUT 30)
+
+    qt_add_executable(quemusic_qt_playback_controller_test
+        tests/tst_QtPlaybackController.cpp)
+    target_include_directories(quemusic_qt_playback_controller_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/playback)
+    target_link_libraries(quemusic_qt_playback_controller_test PRIVATE
+        quemusic_qt_playback_controller Qt6::Test)
+    add_test(NAME quemusic_qt_playback_controller_test
+        COMMAND quemusic_qt_playback_controller_test)
+    set_tests_properties(quemusic_qt_playback_controller_test PROPERTIES TIMEOUT 30)
 
     # Task6 fixture shares its source with the action router contract tests.
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_action_fixture)
