@@ -589,6 +589,20 @@ if(BUILD_TESTING)
         COMMAND quemusic_qt_playback_controller_test)
     set_tests_properties(quemusic_qt_playback_controller_test PROPERTIES TIMEOUT 30)
 
+    qt_add_executable(quemusic_playback_controls_adapter_qml_test
+        tests/tst_PlaybackControlsAdapterQml.cpp)
+    target_compile_features(quemusic_playback_controls_adapter_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_playback_controls_adapter_qml_test
+        "quemusic_playback_controls_adapter_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES ${QML_COMPONENTS})
+    target_link_libraries(quemusic_playback_controls_adapter_qml_test PRIVATE
+        Qt6::Qml Qt6::Test)
+    add_test(NAME quemusic_playback_controls_adapter_qml_test
+        COMMAND quemusic_playback_controls_adapter_qml_test)
+    set_tests_properties(quemusic_playback_controls_adapter_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Task6 fixture shares its source with the action router contract tests.
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_action_fixture)
     set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task6")
