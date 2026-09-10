@@ -113,6 +113,10 @@ add_library(quemusic_source_startup STATIC
 target_compile_features(quemusic_source_startup PUBLIC cxx_std_17)
 target_link_libraries(quemusic_source_startup PUBLIC
     quemusic_source_manager
+    quemusic_plugin_settings
+    quemusic_music_hub
+    quemusic_playback_coordinator
+    quemusic_qt_playback_controller
     Qt6::Core
     Qt6::Qml
 )
@@ -909,6 +913,8 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_plugin_startup_test PRIVATE cxx_std_17)
     target_link_libraries(quemusic_plugin_startup_test PRIVATE
         quemusic_source_startup
+        quemusic_source_account_store
+        quemusic_source_registry
         Qt6::Qml
         Qt6::Quick
         Qt6::Test
@@ -1280,8 +1286,11 @@ target_link_libraries(${PROJECT_NAME}
         cryptopp::cryptopp
         quemusic_meshgradientplugin
         quemusic_source_startup
-        quemusic_media_bridge
         quemusic_source_account_store
+        quemusic_source_registry
+        quemusic_music_hub
+        quemusic_playback_coordinator
+        quemusic_qt_playback_controller
         z
         quemusic_plugin_settings
     PUBLIC QWindowKit::Quick

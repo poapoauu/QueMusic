@@ -13,10 +13,13 @@
 #include <QFileInfo>
 #include "core/source/SourceStartup.h"
 #include "core/media/MacKeychainSecretStore.h"
-#include "core/media/MediaBridge.h"
-#include "core/media/SourceAccountController.h"
 #include "core/media/SourceAccountStore.h"
-#include "core/media/SourceSessionRegistry.h"
+#include "core/music/MusicHub.h"
+#include "core/music/PlaybackCoordinator.h"
+#include "core/music/SourceScopeStore.h"
+#include "core/playback/QtPlaybackController.h"
+#include "core/settings/PluginSettingsController.h"
+#include "core/source/SourceRegistry.h"
 #include "cpp/FolderModel.h"
 #include "cpp/Favorites.h"
 #include "cpp/AccountManager.h"
@@ -26,6 +29,7 @@
 #include <QWKQuick/qwkquickglobal.h>
 
 #include <QtQml/QQmlExtensionPlugin>
+#include <memory>
 Q_IMPORT_QML_PLUGIN(MeshGradientItemPlugin)
 
 extern void qml_register_types_QueMusic();
@@ -150,8 +154,6 @@ int main(int argc, char *argv[])
 
     QQuickWindow::setDefaultAlphaBuffer(true);
     //QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
-    QQmlApplicationEngine engine;
-
     // 显式注册QML_ELEMENT 类型
     qml_register_types_QueMusic();
     qml_register_types_MeshGradientItem();
@@ -164,26 +166,33 @@ int main(int argc, char *argv[])
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, configPath);
 
+    QSettings sourceAccountSettings(
+        configPath + QStringLiteral("/BroNekoX/QueMusic.ini"), QSettings::IniFormat);
+#if defined(Q_OS_MACOS)
+    auto sourceSecretStore = std::make_unique<MacKeychainSecretStore>();
+#else
+    auto sourceSecretStore = std::make_unique<UnavailableSecretStore>();
+#endif
+    SourceAccountStore sourceAccountStore(&sourceAccountSettings, sourceSecretStore.get());
+    auto sourcePlugins = createAndLoadPluginManager(application);
+    SourceRegistry sourceRegistry(sourcePlugins.get(), &sourceAccountStore);
+    SourceScopeStore sourceScope(&sourceAccountSettings);
+    QtPlaybackController playbackController;
+    PlaybackCoordinator playbackCoordinator(&sourceRegistry, &playbackController);
+    playbackController.setCoordinator(&playbackCoordinator);
+    MusicHub musicHub(&sourceRegistry, &sourceScope, &sourceAccountSettings);
+    PluginSettingsController pluginSettings(sourcePlugins.get(), &sourceRegistry,
+                                            &sourceAccountStore);
+
+    // Engine is declared after every borrowed music service so QML pages are
+    // released first during shutdown.
+    QQmlApplicationEngine engine;
+    installSourceRuntimeContext(engine, sourcePlugins.get(), &musicHub,
+                                &playbackCoordinator, &playbackController, &pluginSettings);
+
     // 日志系统：接管 Qt 消息并写入“安装目录/logs”，中文、可分级筛选（默认记录错误及以上）
     LogManager *logManager = new LogManager(&engine);
     engine.rootContext()->setContextProperty("logManager", logManager);
-
-    SourceManager *sourceManager = initializeSourceStartupBoundary(application, engine);
-
-    auto *sourceAccountSettings = new QSettings(
-        configPath + QStringLiteral("/BroNekoX/QueMusic.ini"), QSettings::IniFormat, &engine);
-#if defined(Q_OS_MACOS)
-    auto *sourceSecretStore = new MacKeychainSecretStore;
-#else
-    auto *sourceSecretStore = new UnavailableSecretStore;
-#endif
-    SourceAccountStore sourceAccountStore(sourceAccountSettings, sourceSecretStore);
-    SourceSessionRegistry sourceSessionRegistry(sourceManager, &sourceAccountStore, &engine);
-    SourceAccountController sourceAccountController(&sourceAccountStore, &sourceSessionRegistry,
-                                                    sourceManager, &engine);
-    MediaBridge mediaBridge(&sourceSessionRegistry, &engine);
-    mediaBridge.setAccountController(&sourceAccountController);
-    engine.rootContext()->setContextProperty("mediaBridge", &mediaBridge);
 
     // 创建模型实例
     FolderModel *myFolderModel = new FolderModel(&engine);
@@ -216,5 +225,7 @@ int main(int argc, char *argv[])
 
     QWK::registerTypes(&engine);
     engine.load(QUrl(QStringLiteral("qrc:/QueMusic/main.qml")));
-    return application.exec();
+    const int result = application.exec();
+    sourceRegistry.closeAll();
+    return result;
 }
