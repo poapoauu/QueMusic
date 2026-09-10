@@ -607,6 +607,14 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_music_hub_qml_test PRIVATE cxx_std_17)
     qt_add_resources(quemusic_music_hub_qml_test "quemusic_music_hub_qml_test_qml"
         PREFIX "/QueMusic" FILES ${QML_COMPONENTS})
+    qt_add_resources(quemusic_music_hub_qml_test "quemusic_music_hub_qml_test_pages"
+        PREFIX "/QueMusic" FILES
+            pages/HomePage.qml
+            pages/PlaylistPage.qml
+            pages/FavouritePage.qml
+            pages/SearchPage.qml
+            layout/MainContent.qml
+            layout/LeftSideBar.qml)
     target_link_libraries(quemusic_music_hub_qml_test PRIVATE
         quemusic_music_page_model Qt6::Qml Qt6::Quick Qt6::Test)
     add_test(NAME quemusic_music_hub_qml_test COMMAND quemusic_music_hub_qml_test)
@@ -1173,7 +1181,6 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
         pages/FilePage.qml
         pages/DownloadPage.qml
         pages/SearchPage.qml
-        pages/SourceLibraryPage.qml
         api/qrcode.js
         components/PluginSettingsText.js
         ${QML_COMPONENTS}

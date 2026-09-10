@@ -16,6 +16,11 @@ import QtQuick.Controls.Basic
 
 Window {
     id: window
+    // Task 14 provides these context objects. Keep this migration step runnable
+    // while the v1 composition root is still present.
+    property var appMusicHub: typeof musicHub !== "undefined" ? musicHub : null
+    property var appPlaybackCoordinator: typeof playbackCoordinator !== "undefined"
+                                         ? playbackCoordinator : null
     width: 1140
     height: 720
     minimumWidth: 810
@@ -643,6 +648,12 @@ Window {
         LeftSideBar {
             z: 2
             id: sidebar
+            contentController: mainContent
+            windowObject: window
+            styleObject: Style
+            textFontFamily: textFont.name
+            iconFontFamily: iconFont.name
+            iconSource: "qrc:/QueMusic/resources/icon.ico"
             x: 0
             y: 0
             height: parent.height - 78
@@ -653,11 +664,12 @@ Window {
         MainContent {
             z: 1
             id: mainContent
+            musicHub: window.appMusicHub
+            playbackCoordinator: window.appPlaybackCoordinator
             x: sidebar.width
             y: 0
             width: parent.width - x
             height: parent.height - 78
-            onConfigureSourceRequested: window.openNavidromeAccountEditor()
         }
 
         // 底部栏

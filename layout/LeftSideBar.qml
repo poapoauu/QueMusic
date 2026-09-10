@@ -2,7 +2,6 @@
 // Copyright (c) 2025-2026 QueMusic Contributors
 //
 import QtQuick
-import QueMusic 1.0
 import 'qrc:/QueMusic/components'
 
 // 左侧边栏
@@ -10,23 +9,50 @@ Rectangle {
     z: 1
     id: sidebar
     width: 210
+    property var styleObject: null
+    readonly property var styleSettings: styleObject ? styleObject.settings : fallbackSettings
+    readonly property var styleThemes: styleObject ? styleObject.themes : fallbackThemes
     property color baseColor: "transparent"
-    property color choiceColor: Style.themes.hoverColor
-    property color choiceTextColor: Style.themes.fontColor
-    color: Style.settings.backmode === 0 ? (Style.settings.sidebarColor ? Style.themes.secondaryColor : Style.themes.primaryColor) : baseColor
+    property color choiceColor: styleThemes.hoverColor
+    property color choiceTextColor: styleThemes.fontColor
+    property var contentController: null
+    property var windowObject: null
+    property string textFontFamily: ""
+    property string iconFontFamily: ""
+    property url iconSource: ""
+    color: styleSettings.backmode === 0 ? (styleSettings.sidebarColor ? styleThemes.secondaryColor : styleThemes.primaryColor) : baseColor
+    QtObject {
+        id: fallbackSettings
+        property int backmode: 0
+        property bool sidebarColor: false
+        property int sidebarStyle: 1
+        property int labelRadius: 12
+        property int texticon: 16
+        property int textmain: 13
+    }
+    QtObject {
+        id: fallbackThemes
+        property color hoverColor: "#1a000000"
+        property color fontColor: "#000000"
+        property color themeColor: "#3481fa"
+        property color primaryColor: "#fdfdff"
+        property color secondaryColor: "#f3f4f8"
+        property color textColor: "#333333"
+    }
     //layer.enabled: true
     //layer.smooth: true
     Connections {
-        target: Style
+        target: sidebar.styleObject
+        ignoreUnknownSignals: true
         function onChangeTheme() {
-            if(Style.settings.sidebarStyle === 0) {
-                sidebar.choiceColor = Style.themes.hoverColor;
-                sidebar.choiceTextColor = Style.themes.fontColor;
+            if(sidebar.styleSettings.sidebarStyle === 0) {
+                sidebar.choiceColor = sidebar.styleThemes.hoverColor;
+                sidebar.choiceTextColor = sidebar.styleThemes.fontColor;
                 choicebar.x = 18;
                 choicebar.radius = 2;
-            } else if(Style.settings.sidebarStyle === 1) {
-                sidebar.choiceColor = Style.themes.themeColor;
-                sidebar.choiceTextColor = Style.themes.primaryColor;
+            } else if(sidebar.styleSettings.sidebarStyle === 1) {
+                sidebar.choiceColor = sidebar.styleThemes.themeColor;
+                sidebar.choiceTextColor = sidebar.styleThemes.primaryColor;
                 choicebar.x = 0;
                 choicebar.radius = 0;
             }
@@ -44,35 +70,32 @@ Rectangle {
             upBar.stop();
             downBar.stop();
             upBar.running = true;
-        } else {
-            window.exit();
+        } else if(windowObject) {
+            windowObject.exit();
         }
         choicebar.indexOld = choice;
-        switch(choice) {
-        case 0:
-            break;
-        case 1:
-            if(MusicApi.recommendSongs.count === 0) MusicApi.getRecommendSongs(1,24);
-            break;
-        }
     }
 
     function contentIndexForNav(choice) {
-        return choice >= 6 ? choice + 1 : choice;
+        return choice;
     }
 
     function navigate(choice) {
+        if(choice < 0 || choice >= navModel.count || choice === 2)
+            return false;
         sidebar.indexed(choice);
-        mainContent.contentIndexed(sidebar.contentIndexForNav(choice));
+        return contentController
+                ? contentController.contentIndexed(sidebar.contentIndexForNav(choice))
+                : true;
     }
 
     Connections {
-        target: window
+        target: sidebar.windowObject
         function onExit() {
-            if(mainContent.pageIndex === 6 && window.exitIndex <= 1 ) {
-                mainContent.contentIndexed(navlistview.choiceIndex)
-                MusicApi.searchSongsResults.clear()
-            }
+            if(sidebar.contentController
+                    && sidebar.contentController.pageIndex === 6
+                    && sidebar.windowObject.exitIndex <= 1)
+                sidebar.contentController.contentIndexed(navlistview.choiceIndex)
         }
     }
 
@@ -85,7 +108,7 @@ Rectangle {
         radius: 2 //Style.settings.labelRadius
         topRightRadius: 2
         bottomRightRadius: 2
-        color: Style.themes.themeColor
+        color: sidebar.styleThemes.themeColor
         y: 80
         property int barBottom: 102
         property int willBarY: 80
@@ -158,7 +181,7 @@ Rectangle {
             x: 25
             width: 24
             height: 24
-            source: "qrc:/QueMusic/resources/icon.ico"
+            source: sidebar.iconSource
             sourceSize: Qt.size(24, 24)
         }
 
@@ -168,11 +191,11 @@ Rectangle {
             x: 61
             height: 18
             text: "QueMusic"
-            font.family: textFont.name
+            font.family: sidebar.textFontFamily
             font.pixelSize: 16
             font.bold: true
             verticalAlignment: Text.AlignVCenter
-            color: Style.themes.fontColor
+            color: sidebar.styleThemes.fontColor
 
         }
 
@@ -181,13 +204,13 @@ Rectangle {
             y: 20
             width: 40
             height: 20
-            color: Style.themes.themeColor
+            color: sidebar.styleThemes.themeColor
             radius: 6
             Text {
                 anchors.centerIn: parent
                 text: "Beta"
                 font.pixelSize: 12
-                color:  Style.themes.primaryColor
+                color: sidebar.styleThemes.primaryColor
 
             }
         }
@@ -202,7 +225,6 @@ Rectangle {
         ListElement { display: "收藏"; iconChar: "\uf0c1" }  // sc
         ListElement { display: "本地"; iconChar: "\uf0f5" }   // bd
         ListElement { display: "下载"; iconChar: "\uf00f" }   // xz
-        ListElement { display: "音乐源"; iconChar: "\uf0bf" }
     }
 
     Column {
@@ -216,13 +238,14 @@ Rectangle {
         spacing: 2
         z: 10
         Repeater {
+            objectName: "sidebarNavigation"
             model: navModel
 
             delegate: Rectangle {
                 id: navDelegate
                 width: navlistview.width
                 height: 42
-                radius: Style.settings.labelRadius
+                radius: sidebar.styleSettings.labelRadius
                 Component.onCompleted: {
                     if (index === 2) height = 30
                 }
@@ -238,8 +261,8 @@ Rectangle {
                 // Hover Background (fades in/out)
                 Rectangle {
                     anchors.fill: parent
-                    radius: Style.settings.labelRadius
-                    color: Style.themes.hoverColor
+                    radius: sidebar.styleSettings.labelRadius
+                    color: sidebar.styleThemes.hoverColor
                     opacity: barMouse.containsMouse ? 1 : 0
                     Behavior on opacity { NumberAnimation { duration: 80 } }
                 }
@@ -251,9 +274,9 @@ Rectangle {
                     width: 42
                     height: 42
                     text: model.iconChar
-                    font.family: iconFont.name
-                    font.pixelSize: Style.settings.texticon
-                    color: navDelegate.isSelected ? sidebar.choiceTextColor : Style.themes.textColor
+                    font.family: sidebar.iconFontFamily
+                    font.pixelSize: sidebar.styleSettings.texticon
+                    color: navDelegate.isSelected ? sidebar.choiceTextColor : sidebar.styleThemes.textColor
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     Component.onCompleted: if (index === 2) visible = false
@@ -267,9 +290,9 @@ Rectangle {
                     width: 140
                     height: 42
                     text: model.display
-                    color: navDelegate.isSelected ? sidebar.choiceTextColor : Style.themes.textColor
+                    color: navDelegate.isSelected ? sidebar.choiceTextColor : sidebar.styleThemes.textColor
                     font.bold: navDelegate.isSelected
-                    font.pixelSize: Style.settings.textmain
+                    font.pixelSize: sidebar.styleSettings.textmain
                     verticalAlignment: Text.AlignVCenter
                     Component.onCompleted: if (navDelegate.itemIndex === 2) visible = false
                     Behavior on color { ColorAnimation { duration: 120 } }
