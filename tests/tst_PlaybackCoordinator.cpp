@@ -129,7 +129,7 @@ struct Harness {
         }
         plugins.addSearchPath(packages);
         return plugins.discover()==1 && plugins.load("org.quemusic.source.task12c")
-            && accounts.upsert({"task12c","home","Home",{},{}}) && accounts.upsert({"task12c","bare","Bare",{},{}});
+            && accounts.saveResolvedV2({"task12c","home","Home",{},{}}) && accounts.saveResolvedV2({"task12c","bare","Bare",{},{}});
     }
     IMusicSourceSessionV2 *session(QString account="home") { return registry.sessionFor("task12c/"+account); }
     QObject *root() { return plugins.pluginInstance("org.quemusic.source.task12c"); }

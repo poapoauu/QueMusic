@@ -79,7 +79,7 @@ the host toolchain or SDK ABI changes.
 Each plugin must implement `IMusicSourcePluginV2::descriptor()` and return a
 `SourceDescriptorV2` with:
 
-- `id`: stable unique identifier for the source
+- `sourceId`: stable unique identifier for the source
 - `name`: user-facing display name
 - `version`: plugin implementation version
 - `pluginPackageId`: manifest package identifier
@@ -119,7 +119,10 @@ States are `discovered`, `loaded`, `failed`, and `unloaded`.
 Each source session owns a package lease. Unload and reload return Busy while
 any session from that package remains alive, and the Settings controls are
 disabled in that state. Before unloading a package, `SourceRegistry` closes
-and releases its sessions.
+and cancels requests, waits for terminal callbacks to drain, deletes sessions,
+releases leases, destroys QML-facing models/controllers, and only then asks
+`PluginManager` to unload the native library. A library must never unload while
+any session, request, lease, provider pointer, or QML object can refer to it.
 If unload fails, the Failed package retains its loader, cannot load a second
 instance, and exposes an enabled unload retry when no lease is active.
 Reloading creates a new plugin instance and reinitializes the source entry.
@@ -135,6 +138,10 @@ resolves a fresh stream and hands it to the native `QtPlaybackController`.
 `PluginSettingsController` is the only settings facade. Operation buttons are
 shown or enabled from the intersected package, server, account and item action
 availability, so one source can never imply support for another source.
+Plugin settings UI is generated only from `SettingsSchemaV2`; plugins cannot
+provide executable QML or arbitrary UI. Native playlist mutation is restricted
+to tracks from the playlist's own source instance. Cross-source playlists are
+a host concern and are never forwarded as provider-native mutations.
 
 QML must not receive source sessions, provider interfaces, raw plugin JSON,
 credentials, secrets, secret references or authenticated provider responses.
@@ -152,7 +159,7 @@ owner explicitly requests it. The frozen design is in
 ## Navidrome source configuration
 
 The bundled `navidrome` source plugin uses the Subsonic-compatible Navidrome
-API. Construct its `SourceAccount` with these plugin-defined fields:
+API. Its `SourceConfigurationV2` uses these plugin-defined fields:
 
 | Field | Required value |
 | --- | --- |
@@ -161,12 +168,12 @@ API. Construct its `SourceAccount` with these plugin-defined fields:
 | `parameters[username]` | Subsonic username. |
 | `secret` | UTF-8 password bytes supplied to the session in process memory. Persisted account secrets are stored only in the platform keychain. |
 
-The plugin advertises `Search`, `Browse`, `StreamAudio`, `Artwork`, and
-`Lyrics`. Root browse is Navidrome's simulated tag-based view (`getIndexes`),
-while non-root browse uses the server's simulated music-directory endpoint;
-neither is a physical NAS filesystem browser. Stream and artwork operations
-return authenticated URLs. Those URLs can contain short-lived token material,
-so callers must not log or persist them.
+The plugin exposes recommendation/category/favorites/search pages and optional
+playback, artwork, lyrics, download, favorite, rating, scrobble, playlist,
+play-queue, and bookmark providers. Stream and artwork operations may use
+authenticated URLs containing short-lived token material, so URLs, headers,
+passwords, salts, tokens, secret references, response bodies, and provider
+diagnostics must be redacted from logs and must not be persisted or exposed to QML.
 
 Every non-cancelled request emits one terminal result with its original request
 ID. `cancel()` suppresses terminal signals and aborts any in-flight reply,
@@ -191,7 +198,7 @@ reports unavailable and must never fall back to plaintext settings storage.
 
 Navidrome is the first v2 native source plugin. NetEase, Kugou, QQ and local
 files must each gain a v2 adapter or native plugin before joining aggregate
-pages. New UI work must not depend on the removed v1 `MediaBridge` boundary.
+pages. New UI work must use only the v2 music-hub boundary.
 
 ## Capability Rules
 
@@ -207,8 +214,10 @@ from `SourceActionV2`:
 
 Do not mark an action `Available` unless the matching optional provider
 interface exists and can complete it. Effective availability is the
-intersection of descriptor, server, account and item layers. Unknown
-constraints and missing interfaces are treated as unsupported.
+intersection of four layers: descriptor declaration, negotiated server support,
+account authorization, and item-specific availability. Unknown constraints,
+missing layers, and missing interfaces fail closed as unsupported.
+`Unsupported`, `Unavailable`, and `Forbidden` are distinct UI states.
 
 ## Trusted Native-Code Model
 

@@ -260,7 +260,7 @@ private:
     QHash<QString, QByteArray> m_values;
 };
 
-SourceAccount sourceAccount(const QString &sourceId, const QString &accountId,
+ResolvedSourceAccountV2 sourceAccount(const QString &sourceId, const QString &accountId,
                             const QString &displayName)
 {
     return {sourceId,
@@ -303,17 +303,10 @@ public:
             && pluginManager.load(kSecondPackageId);
     }
 
-    bool loadV1Plugin()
-    {
-        pluginManager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR));
-        return pluginManager.discover() == 1
-            && pluginManager.load(QStringLiteral("org.quemusic.source.fixture"));
-    }
-
     bool saveAccount(const QString &accountId, const QString &displayName,
                      bool enabled = true, const QString &sourceId = kSourceId)
     {
-        return accountStore.upsert(sourceAccount(sourceId, accountId, displayName), enabled);
+        return accountStore.saveResolvedV2(sourceAccount(sourceId, accountId, displayName), enabled);
     }
 
     QObject *validPluginObject() const
@@ -469,7 +462,6 @@ private slots:
     void disabledInstanceRemainsDescribableAndCannotCreateSession();
     void missingSecretPreventsSessionAndLeaseCreation();
     void pluginDescriptorSourceMismatchPreventsSession();
-    void v1PluginIsNeverReinterpretedAsV2();
     void sessionCreationIsLazyAndReusesTheLiveSession();
     void creationReservationPreventsReentrantAcquireRecursion();
     void closeInstanceDuringAcquireInvalidatesCreation();
@@ -671,18 +663,6 @@ void SourceRegistryV2Test::pluginDescriptorSourceMismatchPreventsSession()
                  ->property("createCount").toInt(), 0);
 }
 
-void SourceRegistryV2Test::v1PluginIsNeverReinterpretedAsV2()
-{
-    RegistryHarness harness;
-    QVERIFY(harness.loadV1Plugin());
-    QVERIFY(harness.saveAccount(QStringLiteral("home"), QStringLiteral("Home"), true,
-                                QStringLiteral("test-source")));
-
-    QVERIFY(harness.registry.sessionFor(QStringLiteral("test-source/home")) == nullptr);
-    QCOMPARE(harness.pluginManager.plugin(QStringLiteral("org.quemusic.source.fixture"))
-                 .activeLeases, 0);
-}
-
 void SourceRegistryV2Test::sessionCreationIsLazyAndReusesTheLiveSession()
 {
     RegistryHarness harness;
@@ -822,7 +802,7 @@ void SourceRegistryV2Test::registryDestructionDuringAcquireInvalidatesCreation()
     pluginManager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR));
     QCOMPARE(pluginManager.discover(), 1);
     QVERIFY(pluginManager.load(kPackageId));
-    QVERIFY(accountStore.upsert(sourceAccount(kSourceId, QStringLiteral("home"),
+    QVERIFY(accountStore.saveResolvedV2(sourceAccount(kSourceId, QStringLiteral("home"),
                                               QStringLiteral("Home"))));
 
     auto *registry = new SourceRegistry(&pluginManager, &accountStore);
@@ -1138,7 +1118,7 @@ void SourceRegistryV2Test::registryAndManagerDestructionRetainPinnedPackage()
     QVERIFY(pluginManager->load(kSecondPackageId));
     QPointer<QObject> root = pluginManager->pluginInstance(kPackageId);
     QPointer<QObject> otherRoot = pluginManager->pluginInstance(kSecondPackageId);
-    QVERIFY(accountStore.upsert(sourceAccount(kSourceId, QStringLiteral("home"),
+    QVERIFY(accountStore.saveResolvedV2(sourceAccount(kSourceId, QStringLiteral("home"),
                                               QStringLiteral("Home"))));
 
     auto registry = std::make_unique<SourceRegistry>(pluginManager.get(), &accountStore);
@@ -1266,7 +1246,7 @@ void SourceRegistryV2Test::destructionClosesSessionBeforeReleasingLease()
     pluginManager.addSearchPath(QStringLiteral(QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR));
     QCOMPARE(pluginManager.discover(), 1);
     QVERIFY(pluginManager.load(kPackageId));
-    QVERIFY(accountStore.upsert(sourceAccount(kSourceId, QStringLiteral("home"),
+    QVERIFY(accountStore.saveResolvedV2(sourceAccount(kSourceId, QStringLiteral("home"),
                                               QStringLiteral("Home"))));
 
     auto *registry = new SourceRegistry(&pluginManager, &accountStore);

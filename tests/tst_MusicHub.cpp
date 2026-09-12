@@ -103,8 +103,8 @@ struct HubHarness {
     {
         plugins.addSearchPath(QUEMUSIC_TASK7_PACKAGES);
         if (plugins.discover() != 1 || !plugins.load("org.quemusic.source.task7")
-            || !accounts.upsert({"task7", "home", "Home", {}, {}})
-            || !accounts.upsert({"task7", "office", "Office", {}, {}})) return false;
+            || !accounts.saveResolvedV2({"task7", "home", "Home", {}, {}})
+            || !accounts.saveResolvedV2({"task7", "office", "Office", {}, {}})) return false;
         settings.setValue("MusicHub/cacheDirectory", dir.filePath("cache"));
         hub = std::make_unique<MusicHub>(&registry, &scope, &settings);
         return true;

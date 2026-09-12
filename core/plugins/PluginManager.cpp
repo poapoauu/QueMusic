@@ -1,7 +1,6 @@
 #include "PluginManager.h"
 
 #include "PluginManifest.h"
-#include "IMusicSourcePlugin.h"
 #include "v2/IMusicSourcePluginV2.h"
 
 #include <QDir>
@@ -249,11 +248,6 @@ bool PluginManager::load(const QString &packageId)
     }
     if (entry->manifest.category() == PluginCategory::Source) {
         const int sourceSdkAbi = entry->manifest.sourceSdkAbi();
-        if (sourceSdkAbi == 1 && qobject_cast<IMusicSourcePlugin *>(instance) == nullptr) {
-            loader->unload();
-            fail(*entry, QStringLiteral("Package does not implement IMusicSourcePlugin"));
-            return false;
-        }
         if (sourceSdkAbi == 2 && qobject_cast<IMusicSourcePluginV2 *>(instance) == nullptr) {
             loader->unload();
             fail(*entry, QStringLiteral("Package does not implement IMusicSourcePluginV2"));

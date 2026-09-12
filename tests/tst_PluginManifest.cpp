@@ -11,10 +11,10 @@
 
 namespace {
 
-constexpr auto sourceV1InterfaceId = "org.quemusic.MusicSourcePlugin/1.0";
+constexpr auto legacySourceInterfaceId = "org.quemusic.MusicSourcePlugin/" "1.0";
 constexpr auto sourceV2InterfaceId = "org.quemusic.MusicSourcePlugin/2.0";
 
-QJsonObject validNativeSourceManifest()
+QJsonObject validV2NativeSourceManifest()
 {
     return QJsonObject{
         {QStringLiteral("id"), QStringLiteral("org.quemusic.source.fixture")},
@@ -27,33 +27,30 @@ QJsonObject validNativeSourceManifest()
         {QStringLiteral("pluginApi"), QJsonObject{{QStringLiteral("major"), 1},
                                                    {QStringLiteral("minHostMinor"), 0}}},
         {QStringLiteral("interfaces"), QJsonArray{
-            QJsonObject{{QStringLiteral("id"), QString::fromLatin1(sourceV1InterfaceId)},
-                        {QStringLiteral("version"), QStringLiteral("1.0")}}}},
+            QJsonObject{{QStringLiteral("id"), QString::fromLatin1(sourceV2InterfaceId)},
+                        {QStringLiteral("version"), QStringLiteral("2.0")}}}},
+        {QStringLiteral("runtimeRequirements"),
+         QJsonObject{{QStringLiteral("sourceSdkAbi"), 2},
+                     {QStringLiteral("qtMajor"), QT_VERSION_MAJOR},
+                     {QStringLiteral("architecture"), QStringLiteral("x86_64")},
+                     {QStringLiteral("buildKey"), QStringLiteral("Debug")}}},
     };
 }
 
-QJsonObject validV2NativeSourceManifest()
+QJsonObject legacyNativeSourceManifest()
 {
-    QJsonObject manifest = validNativeSourceManifest();
-    manifest.insert(QStringLiteral("id"), QStringLiteral("org.quemusic.source.fixture-v2"));
-    manifest.insert(QStringLiteral("sourceId"), QStringLiteral("fixture-v2"));
-    manifest.insert(QStringLiteral("name"), QStringLiteral("Fixture V2"));
-    manifest.insert(QStringLiteral("version"), QStringLiteral("2.0.0"));
+    QJsonObject manifest = validV2NativeSourceManifest();
     manifest.insert(
         QStringLiteral("interfaces"),
-        QJsonArray{QJsonObject{{QStringLiteral("id"), QString::fromLatin1(sourceV2InterfaceId)},
-                               {QStringLiteral("version"), QStringLiteral("2.0")}}});
-    manifest.insert(QStringLiteral("runtimeRequirements"),
-                    QJsonObject{{QStringLiteral("sourceSdkAbi"), 2},
-                                {QStringLiteral("qtMajor"), QT_VERSION_MAJOR},
-                                {QStringLiteral("architecture"), QStringLiteral("x86_64")},
-                                {QStringLiteral("buildKey"), QStringLiteral("Debug")}});
+        QJsonArray{QJsonObject{{QStringLiteral("id"), QString::fromLatin1(legacySourceInterfaceId)},
+                               {QStringLiteral("version"), QStringLiteral("1.0")}}});
+    manifest.remove(QStringLiteral("runtimeRequirements"));
     return manifest;
 }
 
 QJsonObject manifestWithLibrary(const QString &library)
 {
-    QJsonObject manifest = validNativeSourceManifest();
+    QJsonObject manifest = validV2NativeSourceManifest();
     manifest.insert(QStringLiteral("library"), library);
     return manifest;
 }
@@ -71,7 +68,7 @@ class PluginManifestTest : public QObject {
     Q_OBJECT
 
 private slots:
-    void acceptsNativeSourcePackage();
+    void rejectsV1SourcePackage();
     void acceptsV2SourceInterface();
     void rejectsInvalidSourceSlug_data();
     void rejectsInvalidSourceSlug();
@@ -95,25 +92,18 @@ private slots:
 
 void PluginManifestTest::rejectsInvalidSourceSlug_data()
 {
-    QTest::addColumn<bool>("v2");
     QTest::addColumn<QString>("sourceId");
     QTest::addColumn<QString>("expectedError");
 
-    QTest::newRow("v1-empty")
-        << false << QString() << QStringLiteral("Manifest source ID is empty");
-    QTest::newRow("v1-slash")
-        << false << QStringLiteral("vendor/source")
-        << QStringLiteral("Manifest source ID must not contain '/'");
     QTest::newRow("v2-empty")
-        << true << QString() << QStringLiteral("Manifest source ID is empty");
+        << QString() << QStringLiteral("Manifest source ID is empty");
     QTest::newRow("v2-slash")
-        << true << QStringLiteral("vendor/source")
+        << QStringLiteral("vendor/source")
         << QStringLiteral("Manifest source ID must not contain '/'");
 }
 
 void PluginManifestTest::rejectsInvalidSourceSlug()
 {
-    QFETCH(bool, v2);
     QFETCH(QString, sourceId);
     QFETCH(QString, expectedError);
 
@@ -123,7 +113,7 @@ void PluginManifestTest::rejectsInvalidSourceSlug()
     QVERIFY(library.open(QIODevice::WriteOnly));
     library.close();
 
-    QJsonObject manifest = v2 ? validV2NativeSourceManifest() : validNativeSourceManifest();
+    QJsonObject manifest = validV2NativeSourceManifest();
     manifest.insert(QStringLiteral("sourceId"), sourceId);
     writeManifest(directory.path(), manifest);
 
@@ -174,7 +164,7 @@ void PluginManifestTest::rejectsMalformedPluginApi()
     QVERIFY(library.open(QIODevice::WriteOnly));
     library.close();
 
-    QJsonObject manifestObject = validNativeSourceManifest();
+    QJsonObject manifestObject = validV2NativeSourceManifest();
     if (pluginApi.isUndefined()) {
         manifestObject.remove(QStringLiteral("pluginApi"));
     } else {
@@ -226,7 +216,7 @@ void PluginManifestTest::rejectsMalformedRuntimeRequirements()
     QVERIFY(library.open(QIODevice::WriteOnly));
     library.close();
 
-    QJsonObject manifestObject = validNativeSourceManifest();
+    QJsonObject manifestObject = validV2NativeSourceManifest();
     manifestObject.insert(QStringLiteral("runtimeRequirements"), runtimeRequirements);
     writeManifest(directory.path(), manifestObject);
 
@@ -238,27 +228,21 @@ void PluginManifestTest::rejectsMalformedRuntimeRequirements()
     QVERIFY(!error.isEmpty());
 }
 
-void PluginManifestTest::acceptsNativeSourcePackage()
+void PluginManifestTest::rejectsV1SourcePackage()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     QFile library(QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")));
     QVERIFY(library.open(QIODevice::WriteOnly));
     library.close();
-    writeManifest(directory.path(), validNativeSourceManifest());
+    writeManifest(directory.path(), legacyNativeSourceManifest());
 
     QString error;
     const PluginManifest manifest = PluginManifest::fromFile(
         QDir(directory.path()).filePath(QStringLiteral("manifest.json")), &error);
 
-    QVERIFY2(manifest.isValid(), qPrintable(error));
-    QCOMPARE(manifest.id(), QStringLiteral("org.quemusic.source.fixture"));
-    QCOMPARE(manifest.category(), PluginCategory::Source);
-    QCOMPARE(manifest.sourceSdkAbi(), 1);
-    QCOMPARE(manifest.sourceInterfaceId(), QString::fromLatin1(sourceV1InterfaceId));
-    QCOMPARE(manifest.libraryAbsolutePath(),
-             QFileInfo(QDir(directory.path()).filePath(QStringLiteral("libfixture.dylib")))
-                 .canonicalFilePath());
+    QVERIFY(!manifest.isValid());
+    QVERIFY(error.contains(QStringLiteral("unsupported")));
 }
 
 void PluginManifestTest::acceptsV2SourceInterface()
@@ -290,10 +274,7 @@ void PluginManifestTest::rejectsSourceInterfaceAbiMismatch_data()
 
     QTest::newRow("v2-interface-with-v1-abi")
         << QString::fromLatin1(sourceV2InterfaceId) << QJsonValue(1)
-        << QStringLiteral("does not match");
-    QTest::newRow("v1-interface-with-v2-abi")
-        << QString::fromLatin1(sourceV1InterfaceId) << QJsonValue(2)
-        << QStringLiteral("does not match");
+        << QStringLiteral("unsupported");
     QTest::newRow("unknown-abi")
         << QString::fromLatin1(sourceV2InterfaceId) << QJsonValue(3)
         << QStringLiteral("unsupported");
@@ -322,8 +303,7 @@ void PluginManifestTest::rejectsSourceInterfaceAbiMismatch()
         QStringLiteral("interfaces"),
         QJsonArray{QJsonObject{{QStringLiteral("id"), interfaceId},
                                {QStringLiteral("version"),
-                                interfaceId.endsWith(QStringLiteral("/1.0"))
-                                    ? QStringLiteral("1.0") : QStringLiteral("2.0")}}});
+                                QStringLiteral("2.0")}}});
     QJsonObject requirements = manifestObject.value(QStringLiteral("runtimeRequirements")).toObject();
     if (sourceSdkAbi.isUndefined()) {
         requirements.remove(QStringLiteral("sourceSdkAbi"));
@@ -348,8 +328,9 @@ void PluginManifestTest::rejectsAmbiguousSourceInterfaceDeclarations_data()
 
     const QJsonObject v2{{QStringLiteral("id"), QString::fromLatin1(sourceV2InterfaceId)},
                          {QStringLiteral("version"), QStringLiteral("2.0")}};
-    const QJsonObject v1{{QStringLiteral("id"), QString::fromLatin1(sourceV1InterfaceId)},
-                         {QStringLiteral("version"), QStringLiteral("1.0")}};
+    const QJsonObject legacy{
+        {QStringLiteral("id"), QString::fromLatin1(legacySourceInterfaceId)},
+        {QStringLiteral("version"), QStringLiteral("1.0")}};
     const QJsonObject unknown{
         {QStringLiteral("id"), QStringLiteral("org.quemusic.MusicSourcePlugin/9.0")},
         {QStringLiteral("version"), QStringLiteral("9.0")}};
@@ -359,7 +340,7 @@ void PluginManifestTest::rejectsAmbiguousSourceInterfaceDeclarations_data()
     QTest::newRow("duplicate-v2")
         << QJsonValue(QJsonArray{v2, v2}) << QStringLiteral("multiple");
     QTest::newRow("v1-plus-v2")
-        << QJsonValue(QJsonArray{v1, v2}) << QStringLiteral("multiple");
+        << QJsonValue(QJsonArray{legacy, v2}) << QStringLiteral("unsupported");
 }
 
 void PluginManifestTest::rejectsAmbiguousSourceInterfaceDeclarations()

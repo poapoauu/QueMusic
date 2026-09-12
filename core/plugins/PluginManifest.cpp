@@ -15,10 +15,8 @@
 namespace {
 
 constexpr int hostPluginApiMajor = 1;
-constexpr int sourceSdkV1Abi = 1;
 constexpr int sourceSdkV2Abi = 2;
 constexpr auto sourceInterfacePrefix = "org.quemusic.MusicSourcePlugin/";
-constexpr auto sourceV1InterfaceId = "org.quemusic.MusicSourcePlugin/1.0";
 constexpr auto sourceV2InterfaceId = "org.quemusic.MusicSourcePlugin/2.0";
 
 PluginManifest invalidManifest(const QString &message, QString *error)
@@ -45,8 +43,7 @@ QString parseSourceInterfaceId(const QJsonValue &interfaces, QString *error)
         if (!id.startsWith(QString::fromLatin1(sourceInterfacePrefix))) {
             continue;
         }
-        if (id != QString::fromLatin1(sourceV1InterfaceId)
-            && id != QString::fromLatin1(sourceV2InterfaceId)) {
+        if (id != QString::fromLatin1(sourceV2InterfaceId)) {
             *error = QStringLiteral("Manifest source plugin interface %1 is unsupported").arg(id);
             return {};
         }
@@ -194,8 +191,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         return invalidManifest(interfaceError, error);
     }
 
-    const int interfaceAbi = sourceInterface == QString::fromLatin1(sourceV2InterfaceId)
-        ? sourceSdkV2Abi : sourceSdkV1Abi;
+    const int interfaceAbi = sourceSdkV2Abi;
 
     const QFileInfo packageRootInfo(QFileInfo(manifestPath).absolutePath());
     const QFileInfo libraryInfo(
@@ -214,7 +210,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
                                error);
     }
 
-    int sourceSdkAbi = sourceSdkV1Abi;
+    int sourceSdkAbi = sourceSdkV2Abi;
     int requiredQtMajor = 0;
     QString requiredArchitecture;
     QString requiredBuildKey;
@@ -228,14 +224,12 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         const QJsonValue sourceSdkAbiValue =
             runtimeRequirements.value(QStringLiteral("sourceSdkAbi"));
         if (sourceSdkAbiValue.isUndefined()) {
-            if (interfaceAbi == sourceSdkV2Abi) {
-                return invalidManifest(QStringLiteral("Manifest v2 source SDK ABI is required"),
-                                       error);
-            }
+            return invalidManifest(QStringLiteral("Manifest v2 source SDK ABI is required"),
+                                   error);
         } else if (!jsonIntegerAtLeast(sourceSdkAbiValue, 1, &sourceSdkAbi)) {
             return invalidManifest(QStringLiteral("Manifest source SDK ABI is invalid"), error);
         }
-        if (sourceSdkAbi != sourceSdkV1Abi && sourceSdkAbi != sourceSdkV2Abi) {
+        if (sourceSdkAbi != sourceSdkV2Abi) {
             return invalidManifest(QStringLiteral("Manifest source SDK ABI is unsupported"), error);
         }
         if (sourceSdkAbi != interfaceAbi) {
@@ -245,7 +239,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         }
 
         const QJsonValue qtMajor = runtimeRequirements.value(QStringLiteral("qtMajor"));
-        if (interfaceAbi == sourceSdkV2Abi && qtMajor.isUndefined()) {
+        if (qtMajor.isUndefined()) {
             return invalidManifest(QStringLiteral("Manifest v2 runtime requirement qtMajor is required"),
                                    error);
         }
@@ -254,7 +248,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         }
         const QJsonValue architecture =
             runtimeRequirements.value(QStringLiteral("architecture"));
-        if (interfaceAbi == sourceSdkV2Abi && architecture.isUndefined()) {
+        if (architecture.isUndefined()) {
             return invalidManifest(
                 QStringLiteral("Manifest v2 runtime requirement architecture is required"), error);
         }
@@ -264,10 +258,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
                                    error);
         }
         QJsonValue buildKey = runtimeRequirements.value(QStringLiteral("buildKey"));
-        if (interfaceAbi == sourceSdkV1Abi && buildKey.isUndefined()) {
-            buildKey = runtimeRequirements.value(QStringLiteral("buildMode"));
-        }
-        if (interfaceAbi == sourceSdkV2Abi && buildKey.isUndefined()) {
+        if (buildKey.isUndefined()) {
             return invalidManifest(QStringLiteral("Manifest v2 runtime requirement buildKey is required"),
                                    error);
         }
@@ -285,7 +276,7 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
             }
         }
         requiredBuildKey = buildKey.toString();
-    } else if (interfaceAbi != sourceSdkV1Abi) {
+    } else {
         return invalidManifest(QStringLiteral("Manifest source SDK ABI is missing"), error);
     }
 

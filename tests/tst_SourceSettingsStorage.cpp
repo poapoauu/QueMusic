@@ -226,7 +226,7 @@ void SourceSettingsStorageTest::draftConfigurationWithoutBackendAndInvalidInput(
 void SourceSettingsStorageTest::draftConfigurationPreservesRaw()
 {
     Fixture f;
-    QVERIFY(f.store.upsert({"example", "home/office", "Home", {}, "raw-password"}));
+    QVERIFY(f.store.saveResolvedV2({"example", "home/office", "Home", {}, "raw-password"}));
     f.secrets.resetCalls(); const auto keys = f.settings.allKeys(); QString error;
     auto r = request(schema({field("password", SettingsFieldTypeV2::Secret, true)}));
     auto config = draftConfiguration(f.store, r, &error, 0);
@@ -294,7 +294,7 @@ void SourceSettingsStorageTest::genericRoundtripWithoutBackend()
     QCOMPARE(a->parameters.value("mode").toString(), QString("local"));
     QCOMPARE(a->parameters.value("folder").toString(), QString("/not/a/real/path"));
     QVERIFY(a->secretReference.isEmpty());
-    QVERIFY(reload.sourceAccount(r.sourceId, r.accountId));
+    QVERIFY(reload.resolvedAccountV2(r.sourceId, r.accountId));
     r.draft.clear(); r.displayName = "Edited";
     QVERIFY(reload.saveValidatedV2(r));
     QCOMPARE(reload.storedAccount(r.sourceId, r.accountId)->parameters, a->parameters);
@@ -306,7 +306,7 @@ void SourceSettingsStorageTest::genericRoundtripWithoutBackend()
     SourceAccountStore offline(&f.settings, &unavailable);
     r.draft = {{"folder", "/tmp"}, {"active", true}, {"count", 2}, {"mode", true}};
     QVERIFY(offline.saveValidatedV2(r));
-    QVERIFY(offline.sourceAccount(r.sourceId, r.accountId));
+    QVERIFY(offline.resolvedAccountV2(r.sourceId, r.accountId));
     QVERIFY(offline.remove(r.sourceId, r.accountId));
 }
 void SourceSettingsStorageTest::oversizeSecretFailsBeforeStorageAccess()
@@ -508,7 +508,7 @@ void SourceSettingsStorageTest::failuresRollBack()
     QVERIFY(!f.store.remove(r.sourceId, r.accountId, &error)); QVERIFY(!error.contains("PRIVATE"));
     QCOMPARE(f.reference(), old); QCOMPARE(f.account()->displayName, QString("Home"));
     f.secrets.failRead = true;
-    QVERIFY(!f.store.sourceAccount(r.sourceId, r.accountId, &error)); QVERIFY(!error.contains("PRIVATE"));
+    QVERIFY(!f.store.resolvedAccountV2(r.sourceId, r.accountId, &error)); QVERIFY(!error.contains("PRIVATE"));
     QVERIFY(!f.store.saveValidatedV2(r, &error)); QVERIFY(!error.contains("PRIVATE"));
 }
 void SourceSettingsStorageTest::metadataFailureCleansNewSecret()
@@ -534,8 +534,8 @@ void SourceSettingsStorageTest::identityAndLegacyRestrictions()
     QCOMPARE(f.secrets.calls(), 0); QVERIFY(f.settings.allKeys().isEmpty());
     QVERIFY(f.store.saveValidatedV2(r)); r.accountId = "home%2Foffice";
     QVERIFY(f.store.saveValidatedV2(r)); QCOMPARE(f.store.accounts().size(), 2);
-    SourceAccount legacy{"example", "legacy", "Legacy", {{"folder", "/tmp"}}, "raw"};
-    QVERIFY(!f.store.upsert(legacy));
+    ResolvedSourceAccountV2 legacy{"example", "legacy", "Legacy", {{"folder", "/tmp"}}, "raw"};
+    QVERIFY(!f.store.saveResolvedV2(legacy));
 }
 
 QTEST_GUILESS_MAIN(SourceSettingsStorageTest)

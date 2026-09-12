@@ -73,7 +73,7 @@ private:
     QSet<QString> m_removeFailures;
 };
 
-SourceAccount accountWithSecret()
+ResolvedSourceAccountV2 accountWithSecret()
 {
     return {QStringLiteral("navidrome"),
             QStringLiteral("home"),
@@ -147,9 +147,9 @@ void SourceAccountStoreTest::persistsOnlyMetadataAndReconstructsAccount()
     QSettings settings(settingsPath, QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    const SourceAccount account = accountWithSecret();
+    const ResolvedSourceAccountV2 account = accountWithSecret();
 
-    QVERIFY(store.upsert(account, false));
+    QVERIFY(store.saveResolvedV2(account, false));
 
     const QString reference = store.secretReference(account.sourceId, account.accountId);
     QVERIFY(!reference.isEmpty());
@@ -185,8 +185,8 @@ void SourceAccountStoreTest::persistsOnlyMetadataAndReconstructsAccount()
              QStringLiteral("unit-test-user"));
     QCOMPARE(store.accounts().size(), 1);
 
-    const std::optional<SourceAccount> restored =
-        store.sourceAccount(account.sourceId, account.accountId);
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(account.sourceId, account.accountId);
     QVERIFY(restored.has_value());
     QCOMPARE(restored->sourceId, account.sourceId);
     QCOMPARE(restored->accountId, account.accountId);
@@ -203,9 +203,9 @@ void SourceAccountStoreTest::removesMetadataAndSecret()
                        QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    const SourceAccount account = accountWithSecret();
+    const ResolvedSourceAccountV2 account = accountWithSecret();
 
-    QVERIFY(store.upsert(account));
+    QVERIFY(store.saveResolvedV2(account));
     const QString reference = store.secretReference(account.sourceId, account.accountId);
 
     QVERIFY(store.remove(account.sourceId, account.accountId));
@@ -227,7 +227,7 @@ void SourceAccountStoreTest::removesFreshSecretWhenMetadataWriteFails()
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
 
-    QVERIFY(!store.upsert(accountWithSecret()));
+    QVERIFY(!store.saveResolvedV2(accountWithSecret()));
     QVERIFY(secretStore.isEmpty());
 }
 
@@ -239,9 +239,9 @@ void SourceAccountStoreTest::keepsAccountRecoverableWhenMetadataRemovalFails()
     QSettings settings(settingsPath, QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    const SourceAccount account = accountWithSecret();
+    const ResolvedSourceAccountV2 account = accountWithSecret();
 
-    QVERIFY(store.upsert(account));
+    QVERIFY(store.saveResolvedV2(account));
     const QString reference = store.secretReference(account.sourceId, account.accountId);
     QVERIFY(QFile::remove(settingsPath));
     QVERIFY(QDir().mkdir(settingsPath));
@@ -250,8 +250,8 @@ void SourceAccountStoreTest::keepsAccountRecoverableWhenMetadataRemovalFails()
     QVERIFY(!store.remove(account.sourceId, account.accountId, &error));
     QVERIFY(!error.isEmpty());
     QCOMPARE(secretStore.value(reference), account.secret);
-    const std::optional<SourceAccount> restored =
-        store.sourceAccount(account.sourceId, account.accountId);
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(account.sourceId, account.accountId);
     QVERIFY(restored.has_value());
     QCOMPARE(restored->secret, account.secret);
 }
@@ -264,13 +264,13 @@ void SourceAccountStoreTest::refusesToReconstructAccountWhenSecretIsMissing()
                        QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    const SourceAccount account = accountWithSecret();
+    const ResolvedSourceAccountV2 account = accountWithSecret();
 
-    QVERIFY(store.upsert(account));
+    QVERIFY(store.saveResolvedV2(account));
     QVERIFY(secretStore.remove(store.secretReference(account.sourceId, account.accountId), nullptr));
 
     QString error;
-    QVERIFY(!store.sourceAccount(account.sourceId, account.accountId, &error).has_value());
+    QVERIFY(!store.resolvedAccountV2(account.sourceId, account.accountId, &error).has_value());
     QVERIFY(!error.isEmpty());
 }
 
@@ -282,11 +282,11 @@ void SourceAccountStoreTest::rejectsSensitiveParameterNames()
                        QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    SourceAccount account = accountWithSecret();
+    ResolvedSourceAccountV2 account = accountWithSecret();
     account.parameters.insert(QStringLiteral("password"), QByteArrayLiteral("must-not-persist"));
 
     QString error;
-    QVERIFY(!store.upsert(account, true, &error));
+    QVERIFY(!store.saveResolvedV2(account, true, &error));
     QVERIFY(error.contains(QStringLiteral("secret"), Qt::CaseInsensitive));
     QVERIFY(secretStore.isEmpty());
     QVERIFY(!settings.contains(QStringLiteral("sources/navidrome/home/secretReference")));
@@ -312,13 +312,13 @@ void SourceAccountStoreTest::rejectsUntrustedParameterNames()
                        QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    SourceAccount account = accountWithSecret();
+    ResolvedSourceAccountV2 account = accountWithSecret();
     for (auto parameter = parameters.cbegin(); parameter != parameters.cend(); ++parameter) {
         account.parameters.insert(parameter.key(), parameter.value());
     }
 
     QString error;
-    QVERIFY(!store.upsert(account, true, &error));
+    QVERIFY(!store.saveResolvedV2(account, true, &error));
     QVERIFY(error.contains(QStringLiteral("metadata"), Qt::CaseInsensitive));
     QVERIFY(secretStore.isEmpty());
     QVERIFY(!settings.contains(QStringLiteral("sources/navidrome/home/secretReference")));
@@ -332,22 +332,22 @@ void SourceAccountStoreTest::keepsSlashContainingAccountIdentitiesDistinct()
                        QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    SourceAccount first = accountWithSecret();
+    ResolvedSourceAccountV2 first = accountWithSecret();
     first.sourceId = QStringLiteral("source/one");
     first.accountId = QStringLiteral("two");
     first.secret = QByteArrayLiteral("first-secret");
-    SourceAccount second = accountWithSecret();
+    ResolvedSourceAccountV2 second = accountWithSecret();
     second.sourceId = QStringLiteral("source");
     second.accountId = QStringLiteral("one/two");
     second.secret = QByteArrayLiteral("second-secret");
 
-    QVERIFY(store.upsert(first));
-    QVERIFY(store.upsert(second));
+    QVERIFY(store.saveResolvedV2(first));
+    QVERIFY(store.saveResolvedV2(second));
 
-    const std::optional<SourceAccount> restoredFirst =
-        store.sourceAccount(first.sourceId, first.accountId);
-    const std::optional<SourceAccount> restoredSecond =
-        store.sourceAccount(second.sourceId, second.accountId);
+    const std::optional<ResolvedSourceAccountV2> restoredFirst =
+        store.resolvedAccountV2(first.sourceId, first.accountId);
+    const std::optional<ResolvedSourceAccountV2> restoredSecond =
+        store.resolvedAccountV2(second.sourceId, second.accountId);
     QVERIFY(restoredFirst.has_value());
     QVERIFY(restoredSecond.has_value());
     QCOMPARE(restoredFirst->secret, QByteArrayLiteral("first-secret"));
@@ -367,8 +367,8 @@ void SourceAccountStoreTest::readsLegacyRawPercentEscapedAccountId()
     QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
     QCOMPARE(settings.status(), QSettings::NoError);
 
-    const std::optional<SourceAccount> restored =
-        store.sourceAccount(fixture.sourceId, fixture.accountId);
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(fixture.sourceId, fixture.accountId);
     QVERIFY(restored.has_value());
     QCOMPARE(restored->secret, fixture.secret);
     const QList<StoredSourceAccount> accounts = store.accounts();
@@ -411,13 +411,13 @@ void SourceAccountStoreTest::updatesLegacyRawPercentEscapedAccountInPlace()
     const LegacyRawAccountFixture fixture;
     QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
 
-    SourceAccount updated{fixture.sourceId,
+    ResolvedSourceAccountV2 updated{fixture.sourceId,
                           fixture.accountId,
                           QStringLiteral("Updated legacy account"),
                           {{QStringLiteral("serverUrl"), QStringLiteral("https://updated.example.invalid")},
                            {QStringLiteral("username"), QStringLiteral("updated-user")}},
                           QByteArrayLiteral("updated-legacy-secret")};
-    QVERIFY(store.upsert(updated));
+    QVERIFY(store.saveResolvedV2(updated));
 
     const QString updatedReference = store.secretReference(fixture.sourceId, fixture.accountId);
     QVERIFY(!updatedReference.isEmpty());
@@ -446,7 +446,7 @@ void SourceAccountStoreTest::removesLegacyRawPercentEscapedAccount()
     const QStringList remainingMetadataKeys = settings.allKeys();
     settings.endGroup();
     QVERIFY(remainingMetadataKeys.isEmpty());
-    QVERIFY(!store.sourceAccount(fixture.sourceId, fixture.accountId).has_value());
+    QVERIFY(!store.resolvedAccountV2(fixture.sourceId, fixture.accountId).has_value());
     QCOMPARE(secretStore.value(fixture.reference), QByteArray());
 }
 
@@ -458,20 +458,20 @@ void SourceAccountStoreTest::preservesPreviousAccountWhenOldSecretCleanupFails()
                        QSettings::IniFormat);
     MemorySecretStore secretStore;
     SourceAccountStore store(&settings, &secretStore);
-    const SourceAccount original = accountWithSecret();
-    QVERIFY(store.upsert(original));
+    const ResolvedSourceAccountV2 original = accountWithSecret();
+    QVERIFY(store.saveResolvedV2(original));
     const QString originalReference = store.secretReference(original.sourceId, original.accountId);
     secretStore.failRemovalFor(originalReference);
-    SourceAccount updated = original;
+    ResolvedSourceAccountV2 updated = original;
     updated.secret = QByteArrayLiteral("replacement-secret");
 
     QString error;
-    QVERIFY(!store.upsert(updated, true, &error));
+    QVERIFY(!store.saveResolvedV2(updated, true, &error));
     QVERIFY(!error.isEmpty());
     QCOMPARE(store.secretReference(original.sourceId, original.accountId), originalReference);
     QCOMPARE(secretStore.value(originalReference), original.secret);
-    const std::optional<SourceAccount> restored =
-        store.sourceAccount(original.sourceId, original.accountId);
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(original.sourceId, original.accountId);
     QVERIFY(restored.has_value());
     QCOMPARE(restored->secret, original.secret);
     QCOMPARE(secretStore.size(), 1);

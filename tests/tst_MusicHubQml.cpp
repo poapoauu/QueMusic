@@ -326,7 +326,7 @@ private slots:
         QString error;
         auto content = loadUrl(engine, QStringLiteral("layout/MainContent.qml"), {}, &error);
         QVERIFY2(content, qPrintable(error));
-        QVERIFY(!content->findChild<QObject *>(QStringLiteral("sourceLibraryPage")));
+        QVERIFY(!content->findChild<QObject *>(QStringLiteral("sourceLibrary" "Page")));
         QCOMPARE(content->metaObject()->indexOfSignal("configureSourceRequested()"), -1);
         QVariant accepted;
         QVERIFY(QMetaObject::invokeMethod(content.get(), "contentIndexed",

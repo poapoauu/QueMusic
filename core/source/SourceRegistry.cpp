@@ -147,8 +147,8 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     if (!stored.has_value() || !stored->enabled) {
         return nullptr;
     }
-    const std::optional<SourceAccount> account =
-        m_accounts->sourceAccount(stored->sourceId, stored->accountId);
+    const std::optional<ResolvedSourceAccountV2> account =
+        m_accounts->resolvedAccountV2(stored->sourceId, stored->accountId);
     if (!account.has_value()) {
         return nullptr;
     }

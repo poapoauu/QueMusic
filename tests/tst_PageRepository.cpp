@@ -103,8 +103,8 @@ public:
     {
         plugins.addSearchPath(QUEMUSIC_TASK5_PACKAGES);
         return plugins.discover() == 1 && plugins.load("org.quemusic.source.task5")
-            && accounts.upsert({"task5", "home", "Home", {}, {}})
-            && accounts.upsert({"task5", "office", "Office", {}, {}});
+            && accounts.saveResolvedV2({"task5", "home", "Home", {}, {}})
+            && accounts.saveResolvedV2({"task5", "office", "Office", {}, {}});
     }
     IMusicSourceSessionV2 *session(QString id) { return registry.sessionFor("task5/" + id); }
 };

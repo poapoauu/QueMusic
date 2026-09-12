@@ -40,7 +40,7 @@ bool sanitizedParameters(const QVariantMap &parameters, QVariantMap *sanitized, 
             || parameter.value().metaType().id() != QMetaType::QString) {
             if (error) {
                 *error = QStringLiteral("Only trusted non-sensitive account metadata may be persisted; "
-                                        "use SourceAccount::secret for credentials");
+                                        "use ResolvedSourceAccountV2::secret for credentials");
             }
             return false;
         }
@@ -281,7 +281,8 @@ bool SourceAccountStore::saveValidatedV2(const SourceAccountSaveV2 &request, QSt
     return true;
 }
 
-bool SourceAccountStore::upsert(const SourceAccount &account, bool enabled, QString *error)
+bool SourceAccountStore::saveResolvedV2(const ResolvedSourceAccountV2 &account, bool enabled,
+                                        QString *error)
 {
     if (!m_settings || !m_secretStore) {
         if (error) {
@@ -307,7 +308,7 @@ bool SourceAccountStore::upsert(const SourceAccount &account, bool enabled, QStr
         return false;
     }
 
-    if (writeRecord(group, account, parameters, enabled, newReference)
+    if (writeResolvedRecordV2(group, account, parameters, enabled, newReference)
         && m_settings->status() == QSettings::NoError) {
         if (!previousReference.isEmpty()) {
             QString oldSecretCleanupError;
@@ -515,9 +516,8 @@ QList<StoredSourceAccount> SourceAccountStore::accountsForRoot(const QString &ro
     return storedAccounts;
 }
 
-std::optional<SourceAccount> SourceAccountStore::sourceAccount(const QString &sourceId,
-                                                                 const QString &accountId,
-                                                                 QString *error) const
+std::optional<ResolvedSourceAccountV2> SourceAccountStore::resolvedAccountV2(
+    const QString &sourceId, const QString &accountId, QString *error) const
 {
     const std::optional<StoredSourceAccount> stored = storedAccount(sourceId, accountId);
     if (!stored.has_value()) {
@@ -528,8 +528,8 @@ std::optional<SourceAccount> SourceAccountStore::sourceAccount(const QString &so
     }
 
     if (stored->recordVersion == 2 && stored->secretReference.isEmpty()) {
-        return SourceAccount{stored->sourceId, stored->accountId, stored->displayName,
-                             stored->parameters, {}};
+        return ResolvedSourceAccountV2{stored->sourceId, stored->accountId, stored->displayName,
+                                       stored->parameters, {}};
     }
     const bool v2 = stored->recordVersion == 2;
     if (!m_secretStore) {
@@ -542,8 +542,8 @@ std::optional<SourceAccount> SourceAccountStore::sourceAccount(const QString &so
         if (error && v2) *error = QStringLiteral("source.settings.secureReadFailed");
         return std::nullopt;
     }
-    return SourceAccount{stored->sourceId, stored->accountId, stored->displayName,
-                         stored->parameters, *secret};
+    return ResolvedSourceAccountV2{stored->sourceId, stored->accountId, stored->displayName,
+                                   stored->parameters, *secret};
 }
 
 QString SourceAccountStore::secretReference(const QString &sourceId, const QString &accountId) const
@@ -610,9 +610,10 @@ bool SourceAccountStore::restoreRecord(const QString &group, const QVariantMap &
     return m_settings->status() == QSettings::NoError;
 }
 
-bool SourceAccountStore::writeRecord(const QString &group, const SourceAccount &account,
-                                     const QVariantMap &parameters, bool enabled,
-                                     const QString &secretReference)
+bool SourceAccountStore::writeResolvedRecordV2(const QString &group,
+                                               const ResolvedSourceAccountV2 &account,
+                                               const QVariantMap &parameters, bool enabled,
+                                               const QString &secretReference)
 {
     m_settings->remove(group);
     m_settings->setValue(group + QStringLiteral("/version"), kRecordVersion);

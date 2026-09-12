@@ -1,6 +1,5 @@
 #pragma once
 
-#include "SourceTypes.h"
 #include "v2/SourceV2Types.h"
 
 #include <QList>
@@ -46,6 +45,14 @@ struct StoredSourceAccount {
     QString secretFormat;
 };
 
+struct ResolvedSourceAccountV2 {
+    QString sourceId;
+    QString accountId;
+    QString displayName;
+    QVariantMap parameters;
+    QByteArray secret;
+};
+
 struct SourceAccountSaveV2 {
     QString pluginPackageId;
     QString sourceId;
@@ -61,7 +68,8 @@ class SourceAccountStore {
 public:
     SourceAccountStore(QSettings *settings, ISecretStore *secretStore);
 
-    bool upsert(const SourceAccount &account, bool enabled = true, QString *error = nullptr);
+    bool saveResolvedV2(const ResolvedSourceAccountV2 &account, bool enabled = true,
+                        QString *error = nullptr);
     // Errors are host-owned keys; never contain draft values or backend diagnostics.
     bool saveValidatedV2(const SourceAccountSaveV2 &request, QString *error = nullptr);
     std::optional<SourceConfigurationV2> configurationForDraftV2(
@@ -73,8 +81,8 @@ public:
     std::optional<StoredSourceAccount> storedAccount(const QString &sourceId,
                                                       const QString &accountId) const;
     QList<StoredSourceAccount> accounts() const;
-    std::optional<SourceAccount> sourceAccount(const QString &sourceId, const QString &accountId,
-                                               QString *error = nullptr) const;
+    std::optional<ResolvedSourceAccountV2> resolvedAccountV2(
+        const QString &sourceId, const QString &accountId, QString *error = nullptr) const;
     QString secretReference(const QString &sourceId, const QString &accountId) const;
 
 private:
@@ -98,9 +106,9 @@ private:
     std::optional<StoredSourceAccount> storedAccountForGroup(const QString &group) const;
     QList<StoredSourceAccount> accountsForRoot(const QString &root) const;
     bool restoreRecord(const QString &group, const QVariantMap &values);
-    bool writeRecord(const QString &group, const SourceAccount &account,
-                     const QVariantMap &parameters, bool enabled,
-                     const QString &secretReference);
+    bool writeResolvedRecordV2(const QString &group, const ResolvedSourceAccountV2 &account,
+                               const QVariantMap &parameters, bool enabled,
+                               const QString &secretReference);
 
     QSettings *m_settings = nullptr;
     ISecretStore *m_secretStore = nullptr;

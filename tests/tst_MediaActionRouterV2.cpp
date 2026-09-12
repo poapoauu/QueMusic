@@ -163,9 +163,9 @@ public:
         }
         plugins.addSearchPath(packages);
         return plugins.discover()==1 && plugins.load("org.quemusic.source.task6")
-            && accounts.upsert({"task6","home","Home",{},{}})
-            && accounts.upsert({"task6","office","Office",{},{}})
-            && accounts.upsert({"task6","bare","Bare",{},{}});
+            && accounts.saveResolvedV2({"task6","home","Home",{},{}})
+            && accounts.saveResolvedV2({"task6","office","Office",{},{}})
+            && accounts.saveResolvedV2({"task6","bare","Bare",{},{}});
     }
     IMusicSourceSessionV2 *session(QString account="home") { return registry.sessionFor("task6/"+account); }
     QObject *root() { return plugins.pluginInstance("org.quemusic.source.task6"); }

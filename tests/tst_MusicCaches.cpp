@@ -36,7 +36,7 @@ public:
     {
         plugins.addSearchPath(QUEMUSIC_TASK5_PACKAGES);
         if (plugins.discover()!=1 || !plugins.load("org.quemusic.source.task5")
-            || !accounts.upsert({"task5","home","Home",{}, {}})) return false;
+            || !accounts.saveResolvedV2({"task5","home","Home",{}, {}})) return false;
         session=registry.sessionFor(ref.sourceInstanceId);
         return session!=nullptr;
     }

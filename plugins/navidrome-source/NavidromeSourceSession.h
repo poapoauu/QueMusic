@@ -1,7 +1,6 @@
 #pragma once
 
 #include "NavidromeApiClient.h"
-#include "SourceTypes.h"
 #include "v2/IMusicSourceSessionV2.h"
 #include "v2/ISourceProvidersV2.h"
 
@@ -57,25 +56,7 @@ public:
                          const QString &comment) override;
     QUuid deleteBookmark(const MediaRefV2 &media) override;
 
-    // Transitional concrete seams retain the pre-v2 regression coverage while
-    // callers migrate to the provider interfaces above.
-    QUuid ping();
-    QUuid search(const SearchQuery &query);
-    QUuid browse(const BrowseQuery &query);
-    QUuid resolveStream(const TrackRef &track);
-    QUuid fetchArtwork(const TrackRef &track);
-    QUuid fetchLyrics(const TrackRef &track);
-
-signals:
-    void legacyRequestSucceeded(QUuid requestId, QString operation, QJsonValue result);
-    void legacyRequestFailed(QUuid requestId, SourceErrorV2 error);
-
 private:
-    struct LegacyRequest {
-        QUuid publicId;
-        QString operation;
-        QString stage;
-    };
     struct TrackMetadata { QString artist; QString title; };
     struct V2Request {
         QUuid publicId;
@@ -97,10 +78,6 @@ private:
                       QList<SourceActionV2> attempted = {}, bool foreign = false);
     void finishAction(const V2Request &request, const QJsonObject &response);
 
-    QUuid startLegacy(const QString &operation, const QString &endpoint,
-                      QUrlQuery query = {}, QUuid publicId = {});
-    QUuid scheduleLegacySuccess(const QString &operation, const QJsonValue &result);
-    QUuid scheduleLegacyFailure(const QString &operation, const SourceErrorV2 &error);
     void handleClientSuccess(const QUuid &requestId, const QString &operation,
                              const QJsonObject &response);
     void handleClientFailure(const QUuid &requestId, const SourceErrorV2 &error);
@@ -127,11 +104,8 @@ private:
     QUuid m_openRequestId;
     QUuid m_openClientRequestId;
     QString m_openStage;
-    QHash<QUuid, LegacyRequest> m_legacyRequests;
-    QSet<QUuid> m_localLegacyRequests;
     QSet<QUuid> m_localV2Requests;
     QHash<QUuid, V2Request> m_v2Requests;
     bool m_songLyricsExtension = false;
     QHash<QString, TrackMetadata> m_trackMetadata;
-    QHash<QUuid, TrackRef> m_lyricsTracks;
 };
