@@ -9,6 +9,8 @@ Rectangle {
     z: 1
     id: sidebar
     width: 210
+    property var musicAdapter: null
+    property var playbackAdapter: null
     property var styleObject: null
     readonly property var styleSettings: styleObject ? styleObject.settings : fallbackSettings
     readonly property var styleThemes: styleObject ? styleObject.themes : fallbackThemes

@@ -1,82 +1,165 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025-2026 QueMusic Contributors
+//
 import QtQuick
-import "qrc:/QueMusic/pages"
+import 'qrc:/QueMusic/pages'
 
+// 主体内容区域
 Rectangle {
     id: mainContent
-    objectName: "mainContent"
-    color: "transparent"
-    property var musicHub: null
-    property var playbackCoordinator: null
-    readonly property int pageHeight: Math.max(0, height - 60)
-    property bool pageLoadingEnabled: true
-    property int pageIndex: 0
-    property var pages: [homePage, categoryPage, null, favoritesPage,
-                         filePage, downloadPage, searchPage]
+    property var musicAdapter: null
+    property var playbackAdapter: null
+    color: Style.themes.secondaryColor //Style.themes.blurOverlayColor
+    readonly property int pageHeight: height - 60
 
+    // 页面数组，便于管理
+    property var pages: [
+        homePage,   // 0: 首页
+        playlistPage,  // 1: 歌单页
+        null,     // 2: 空页面
+        favouritePage, // 3: 收藏页
+        filePage,      // 4: 本地文件页
+        downloadPage,   // 5: 下载页
+        searchPage    // 6: 搜索页
+    ]
+
+    property int pageIndex: 0
+    //signal stackChange(int index)
     function contentIndexed(choice) {
-        if (!Number.isInteger(choice) || choice < 0 || choice >= pages.length
-                || pages[choice] === null)
-            return false
-        if (choice === pageIndex) return true
-        var previous = pages[pageIndex]
-        if (previous) {
-            previous.visible = false
-            previous.active = false
+        if(choice !== mainContent.pageIndex) {
+            mainContent.pages[mainContent.pageIndex].visible = false;
+            mainContent.pages[mainContent.pageIndex].active = false;
+            mainContent.pages[choice].active = true;
+            mainContent.pageIndex = choice;
         }
-        var target = pages[choice]
-        target.active = pageLoadingEnabled
-        target.visible = true
-        pageIndex = choice
-        return true
+    }
+    function finishedLoaderPage(choice) {
+        pageAnine.stop();
+        pageAnine.target = mainContent.pages[choice];
+        pageAnine.start();
     }
 
+    ParallelAnimation {
+        id: pageAnine
+        property var target
+        NumberAnimation {
+            property: "opacity"
+            target: pageAnine.target
+            from: 0
+            to: 1
+            duration: 320
+            easing.type: Easing.OutExpo
+        }
+        NumberAnimation {
+            property: "y"
+            target: pageAnine.target
+            from: 240
+            to: 60
+            duration: 320
+            easing.type: Easing.OutExpo
+        }
+    }
+
+    // Home
     Loader {
         id: homePage
-        anchors.fill: parent; anchors.topMargin: 60
-        active: mainContent.pageLoadingEnabled; visible: true
+        x: 0
+        y: 60
+        opacity: 1
+        //asynchronous: true
+        width: mainContent.width
+        height: mainContent.pageHeight
+        visible: true
+        active: true
         sourceComponent: HomePage {
-            hub: mainContent.musicHub; playback: mainContent.playbackCoordinator
-            pageActive: homePage.active && homePage.visible
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
         }
+        onLoaded: { visible = true; mainContent.finishedLoaderPage(0) }
     }
+
+    // 分类
     Loader {
-        id: categoryPage
-        anchors.fill: parent; anchors.topMargin: 60
-        active: false; visible: false
+        id: playlistPage
+        x: 0
+        y: 60
+        opacity: 1
+        //asynchronous: true
+        width: mainContent.width
+        height: mainContent.pageHeight
+        visible: false
+        active: false
         sourceComponent: PlaylistPage {
-            hub: mainContent.musicHub; playback: mainContent.playbackCoordinator
-            pageActive: categoryPage.active && categoryPage.visible
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
         }
+        onLoaded: { visible = true; mainContent.finishedLoaderPage(1) }
     }
+
+    // 收藏
     Loader {
-        id: favoritesPage
-        anchors.fill: parent; anchors.topMargin: 60
-        active: false; visible: false
+        id: favouritePage
+        x: 0
+        y: 60
+        opacity: 1
+        //asynchronous: true
+        width: mainContent.width
+        height: mainContent.pageHeight
+        visible: false
+        active: false
         sourceComponent: FavouritePage {
-            hub: mainContent.musicHub; playback: mainContent.playbackCoordinator
-            pageActive: favoritesPage.active && favoritesPage.visible
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
         }
+        onLoaded: { visible = true; mainContent.finishedLoaderPage(3) }
     }
+
+
+    // 本地文件
     Loader {
         id: filePage
-        anchors.fill: parent; anchors.topMargin: 60
-        active: false; visible: false
+        x: 0
+        y: 60
+        opacity: 1
+        //asynchronous: true
+        width: mainContent.width
+        height: mainContent.pageHeight
+        visible: false
+        active: false
         source: "qrc:/QueMusic/pages/FilePage.qml"
+        onLoaded: { visible = true; mainContent.finishedLoaderPage(4) }
     }
+
+    // 下载
     Loader {
         id: downloadPage
-        anchors.fill: parent; anchors.topMargin: 60
-        active: false; visible: false
+        x: 0
+        y: 60
+        opacity: 1
+        //asynchronous: true
+        width: mainContent.width
+        height: mainContent.pageHeight
+        visible: false
+        active: false
         source: "qrc:/QueMusic/pages/DownloadPage.qml"
+        onLoaded: { visible = true; mainContent.finishedLoaderPage(5) }
     }
+
+    // 搜索页
     Loader {
         id: searchPage
-        anchors.fill: parent; anchors.topMargin: 60
-        active: false; visible: false
+        x: 0
+        y: 60
+        opacity: 1
+        //asynchronous: true
+        width: mainContent.width
+        height: mainContent.pageHeight
+        visible: false
+        active: false
         sourceComponent: SearchPage {
-            hub: mainContent.musicHub; playback: mainContent.playbackCoordinator
-            pageActive: searchPage.active && searchPage.visible
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
         }
+        onLoaded: { visible = true; mainContent.finishedLoaderPage(6) }
     }
 }

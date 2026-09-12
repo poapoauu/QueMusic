@@ -15,9 +15,8 @@ import QtQuick.Controls.Basic
 
 Window {
     id: window
-    property var appMusicHub: typeof musicHub !== "undefined" ? musicHub : null
-    property var appPlaybackCoordinator: typeof playbackCoordinator !== "undefined"
-                                         ? playbackCoordinator : null
+    property var musicAdapter: null
+    property var playbackAdapter: null
     width: 1140
     height: 720
     minimumWidth: 810
@@ -589,8 +588,8 @@ Window {
         MainContent {
             z: 1
             id: mainContent
-            musicHub: window.appMusicHub
-            playbackCoordinator: window.appPlaybackCoordinator
+            musicAdapter: window.musicAdapter
+            playbackAdapter: window.playbackAdapter
             x: sidebar.width
             y: 0
             width: parent.width - x

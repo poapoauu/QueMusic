@@ -485,7 +485,9 @@ if(BUILD_TESTING)
     qt_add_executable(quemusic_music_hub_qml_test tests/tst_MusicHubQml.cpp)
     target_compile_features(quemusic_music_hub_qml_test PRIVATE cxx_std_17)
     qt_add_resources(quemusic_music_hub_qml_test "quemusic_music_hub_qml_test_qml"
-        PREFIX "/QueMusic" FILES ${QML_COMPONENTS})
+        PREFIX "/QueMusic" FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js)
     qt_add_resources(quemusic_music_hub_qml_test "quemusic_music_hub_qml_test_pages"
         PREFIX "/QueMusic" FILES
             pages/HomePage.qml
@@ -498,7 +500,17 @@ if(BUILD_TESTING)
         quemusic_music_page_model Qt6::Qml Qt6::Quick Qt6::Test)
     add_test(NAME quemusic_music_hub_qml_test COMMAND quemusic_music_hub_qml_test)
     set_tests_properties(quemusic_music_hub_qml_test PROPERTIES
-        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        TIMEOUT 30 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QML_IMPORT_PATH=${CMAKE_CURRENT_BINARY_DIR}")
+
+    qt_add_executable(quemusic_original_ui_structure_test
+        tests/tst_OriginalUiStructure.cpp)
+    target_compile_features(quemusic_original_ui_structure_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_original_ui_structure_test PRIVATE
+        QUEMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(quemusic_original_ui_structure_test PRIVATE Qt6::Test)
+    add_test(NAME quemusic_original_ui_structure_test
+        COMMAND quemusic_original_ui_structure_test)
 
     # Task6 fixture shares its source with the action router contract tests.
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_action_fixture)

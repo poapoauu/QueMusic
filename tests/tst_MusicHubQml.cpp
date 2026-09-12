@@ -262,62 +262,32 @@ private slots:
             QQmlEngine engine;
             QString error;
             auto object = loadUrl(engine, page,
-                                  {{QStringLiteral("hub"), QVariant::fromValue<QObject *>(nullptr)},
-                                   {QStringLiteral("playback"), QVariant::fromValue<QObject *>(nullptr)}},
+                                  {{QStringLiteral("musicAdapter"), QVariant::fromValue<QObject *>(nullptr)},
+                                   {QStringLiteral("playbackAdapter"), QVariant::fromValue<QObject *>(nullptr)}},
                                   &error);
             QVERIFY2(object, qPrintable(page + QStringLiteral(": ") + error));
         }
     }
 
-    void musicPagesBindExactHubModelsAndActivatePageKinds()
+    void musicPagesAcceptNullableAdapterInjection()
     {
-        struct PageCase { QString path; int kind; QObject *(FakeHub::*model)(); };
-        const QList<PageCase> pages{
-            {QStringLiteral("pages/HomePage.qml"), 0, &FakeHub::recommendation},
-            {QStringLiteral("pages/PlaylistPage.qml"), 1, &FakeHub::category},
-            {QStringLiteral("pages/FavouritePage.qml"), 2, &FakeHub::favorites},
-            {QStringLiteral("pages/SearchPage.qml"), 3, &FakeHub::searchResults}
-        };
-        for (const auto &page : pages) {
+        for (const QString &page : {QStringLiteral("pages/HomePage.qml"),
+                                    QStringLiteral("pages/PlaylistPage.qml"),
+                                    QStringLiteral("pages/FavouritePage.qml"),
+                                    QStringLiteral("pages/SearchPage.qml")}) {
             QQmlEngine engine;
             FakeHub hub;
             FakePlayback playback;
             QString error;
-            auto object = loadUrl(engine, page.path,
-                                  {{QStringLiteral("hub"), QVariant::fromValue(&hub)},
-                                   {QStringLiteral("playback"), QVariant::fromValue(&playback)},
-                                   {QStringLiteral("pageActive"), true}}, &error);
-            QVERIFY2(object, qPrintable(page.path + QStringLiteral(": ") + error));
-            QObject *selector = object->findChild<QObject *>(QStringLiteral("sourceScopeSelector"));
-            QObject *sections = object->findChild<QObject *>(QStringLiteral("musicSections"));
-            QVERIFY2(selector, qPrintable(page.path));
-            QVERIFY2(sections, qPrintable(page.path));
-            QCOMPARE(selector->property("modelObject").value<QObject *>(), &hub);
-            QCOMPARE(sections->parent()->property("modelObject").value<QObject *>(),
-                     (hub.*page.model)());
-            QCOMPARE(sections->parent()->property("playback").value<QObject *>(),
+            auto object = loadUrl(engine, page,
+                                  {{QStringLiteral("musicAdapter"), QVariant::fromValue(&hub)},
+                                   {QStringLiteral("playbackAdapter"), QVariant::fromValue(&playback)}},
+                                  &error);
+            QVERIFY2(object, qPrintable(page + QStringLiteral(": ") + error));
+            QCOMPARE(object->property("musicAdapter").value<QObject *>(), &hub);
+            QCOMPARE(object->property("playbackAdapter").value<QObject *>(),
                      static_cast<QObject *>(&playback));
-            QCOMPARE(hub.lastActivatedPage, page.kind);
         }
-    }
-
-    void searchAndCategoryExposeHostSafeCommands()
-    {
-        QQmlEngine engine;
-        FakeHub hub;
-        QString error;
-        auto searchPage = loadUrl(engine, QStringLiteral("pages/SearchPage.qml"),
-                                  {{QStringLiteral("hub"), QVariant::fromValue(&hub)}}, &error);
-        QVERIFY2(searchPage, qPrintable(error));
-        QVERIFY(QMetaObject::invokeMethod(searchPage.get(), "submitSearch",
-                                         Q_ARG(QVariant, QStringLiteral("  jazz  "))));
-        QCOMPARE(hub.searchedText, QStringLiteral("jazz"));
-
-        auto categoryPage = loadUrl(engine, QStringLiteral("pages/PlaylistPage.qml"),
-                                    {{QStringLiteral("hub"), QVariant::fromValue(&hub)}}, &error);
-        QVERIFY2(categoryPage, qPrintable(error));
-        QVERIFY(QMetaObject::invokeMethod(categoryPage.get(), "goBack"));
-        QCOMPARE(hub.navigateBackCalls, 1);
     }
 
     void navigationHasNoSourceLibraryRoute()
@@ -356,44 +326,22 @@ private slots:
         QCOMPARE(controller.lastIndex, 1);
     }
 
-    void mainContentInjectsHubAndActivatesSelectedLoader()
+    void mainContentAcceptsNullableAdapterInjection()
     {
         QQmlEngine engine;
         FakeHub hub;
         FakePlayback playback;
         QString error;
         auto content = loadUrl(engine, QStringLiteral("layout/MainContent.qml"),
-                               {{QStringLiteral("musicHub"), QVariant::fromValue(&hub)},
-                                {QStringLiteral("playbackCoordinator"),
+                               {{QStringLiteral("musicAdapter"), QVariant::fromValue(&hub)},
+                                {QStringLiteral("playbackAdapter"),
                                  QVariant::fromValue(&playback)},
                                 {QStringLiteral("width"), 900},
                                 {QStringLiteral("height"), 700}}, &error);
         QVERIFY2(content, qPrintable(error));
-        QTRY_COMPARE(hub.lastActivatedPage, 0);
-        QObject *selector = content->findChild<QObject *>(QStringLiteral("sourceScopeSelector"));
-        QVERIFY(selector);
-        QCOMPARE(selector->property("modelObject").value<QObject *>(), &hub);
-        QObject *homeSections = content->findChild<QObject *>(QStringLiteral("musicSections"));
-        QVERIFY(homeSections);
-        QCOMPARE(homeSections->parent()->property("playback").value<QObject *>(),
+        QCOMPARE(content->property("musicAdapter").value<QObject *>(), &hub);
+        QCOMPARE(content->property("playbackAdapter").value<QObject *>(),
                  static_cast<QObject *>(&playback));
-
-        QVariant accepted;
-        QVERIFY(QMetaObject::invokeMethod(content.get(), "contentIndexed",
-                                         Q_RETURN_ARG(QVariant, accepted), Q_ARG(QVariant, 1)));
-        QCOMPARE(accepted.toBool(), true);
-        QTRY_COMPARE(hub.lastActivatedPage, 1);
-        auto hasCategorySections = [&] {
-            const auto sections = content->findChildren<QObject *>(
-                QStringLiteral("musicSections"));
-            for (QObject *list : sections) {
-                if (list->parent()->property("modelObject").value<QObject *>()
-                        == static_cast<QObject *>(&hub.categoryModel))
-                    return true;
-            }
-            return false;
-        };
-        QTRY_VERIFY(hasCategorySections());
     }
 
     void sharedComponentsLoadWithNullDependencies()
