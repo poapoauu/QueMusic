@@ -124,18 +124,6 @@ target_include_directories(quemusic_source_startup PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
-add_library(quemusic_media_core STATIC
-    core/media/MediaTypes.cpp
-    core/media/MediaTypes.h
-    core/media/MediaListModel.cpp
-    core/media/MediaListModel.h
-)
-target_compile_features(quemusic_media_core PUBLIC cxx_std_17)
-target_link_libraries(quemusic_media_core PUBLIC Qt6::Core)
-target_include_directories(quemusic_media_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/media
-)
-
 add_library(quemusic_source_account_store STATIC
     core/media/SourceAccountStore.cpp
     core/media/SourceAccountStore.h
@@ -220,37 +208,6 @@ target_link_libraries(quemusic_qt_playback_controller PUBLIC
 add_library(quemusic_music_hub STATIC core/music/MusicHub.cpp core/music/MusicHub.h)
 target_compile_features(quemusic_music_hub PUBLIC cxx_std_17)
 target_link_libraries(quemusic_music_hub PUBLIC quemusic_music_repository quemusic_music_page_model)
-
-add_library(quemusic_source_session_registry STATIC
-    core/media/SourceSessionRegistry.cpp
-    core/media/SourceSessionRegistry.h
-)
-target_compile_features(quemusic_source_session_registry PUBLIC cxx_std_17)
-target_link_libraries(quemusic_source_session_registry PUBLIC
-    quemusic_media_core
-    quemusic_source_account_store
-    quemusic_source_manager
-    Qt6::Core
-)
-target_include_directories(quemusic_source_session_registry PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/media
-)
-
-add_library(quemusic_media_bridge STATIC
-    core/media/MediaBridge.cpp
-    core/media/MediaBridge.h
-    core/media/SourceAccountController.cpp
-    core/media/SourceAccountController.h
-)
-target_compile_features(quemusic_media_bridge PUBLIC cxx_std_17)
-target_link_libraries(quemusic_media_bridge PUBLIC
-    quemusic_media_core
-    quemusic_source_session_registry
-    Qt6::Core
-)
-target_include_directories(quemusic_media_bridge PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/media
-)
 
 file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS "components/*.qml")
 
@@ -363,20 +320,6 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_account_store_test COMMAND quemusic_source_account_store_test)
-
-    qt_add_executable(quemusic_source_session_registry_test
-        tests/tst_SourceSessionRegistry.cpp
-    )
-    target_compile_features(quemusic_source_session_registry_test PRIVATE cxx_std_17)
-    target_compile_definitions(quemusic_source_session_registry_test PRIVATE
-        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
-    )
-    target_link_libraries(quemusic_source_session_registry_test PRIVATE
-        quemusic_source_session_registry
-        Qt6::Test
-    )
-    add_dependencies(quemusic_source_session_registry_test quemusic_test_source)
-    add_test(NAME quemusic_source_session_registry_test COMMAND quemusic_source_session_registry_test)
 
     qt_add_executable(quemusic_source_plugin_contract_test
         tests/tst_SourcePluginContract.cpp
@@ -1002,51 +945,6 @@ if(BUILD_TESTING)
         quemusic_test_source
     )
     add_test(NAME quemusic_source_registry_v2_test COMMAND quemusic_source_registry_v2_test)
-
-    qt_add_executable(quemusic_media_types_test
-        tests/tst_MediaTypes.cpp
-    )
-    target_link_libraries(quemusic_media_types_test PRIVATE
-        quemusic_media_core
-        Qt6::Test
-    )
-    add_test(NAME quemusic_media_types_test COMMAND quemusic_media_types_test)
-
-    qt_add_executable(quemusic_media_list_model_test
-        tests/tst_MediaListModel.cpp
-    )
-    target_link_libraries(quemusic_media_list_model_test PRIVATE
-        quemusic_media_core
-        Qt6::Test
-    )
-    add_test(NAME quemusic_media_list_model_test COMMAND quemusic_media_list_model_test)
-
-    qt_add_executable(quemusic_media_bridge_test
-        tests/tst_MediaBridge.cpp
-    )
-    target_compile_features(quemusic_media_bridge_test PRIVATE cxx_std_17)
-    target_compile_definitions(quemusic_media_bridge_test PRIVATE
-        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
-    )
-    target_link_libraries(quemusic_media_bridge_test PRIVATE
-        quemusic_media_bridge
-        Qt6::Network
-        Qt6::Test
-    )
-    add_dependencies(quemusic_media_bridge_test quemusic_test_source)
-    add_test(NAME quemusic_media_bridge_test COMMAND quemusic_media_bridge_test)
-
-    qt_add_executable(quemusic_media_bridge_playback_test
-        tests/tst_MediaBridgePlayback.cpp
-    )
-    target_compile_features(quemusic_media_bridge_playback_test PRIVATE cxx_std_17)
-    target_link_libraries(quemusic_media_bridge_playback_test PRIVATE
-        quemusic_media_bridge
-        Qt6::Network
-        Qt6::Test
-    )
-    add_dependencies(quemusic_media_bridge_playback_test quemusic_navidrome_source)
-    add_test(NAME quemusic_media_bridge_playback_test COMMAND quemusic_media_bridge_playback_test)
 
     qt_add_executable(quemusic_plugin_settings_qml_test
         tests/tst_PluginSettingsQml.cpp
