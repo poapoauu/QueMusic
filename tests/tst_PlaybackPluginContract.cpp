@@ -125,7 +125,7 @@ void PlaybackPluginContractTest::forwardsStreamDescriptorWithoutSourceDependency
         QUrl(QStringLiteral("https://nas.example.test/stream/track-42")),
         {{QStringLiteral("Authorization"), QStringLiteral("Bearer test-token")}},
         QStringLiteral("audio/flac"),
-        {},
+        QDateTime::currentDateTimeUtc().addSecs(300),
         false,
         true,
     };
@@ -141,6 +141,10 @@ void PlaybackPluginContractTest::forwardsStreamDescriptorWithoutSourceDependency
     QCOMPARE(engine->openedSource.url, source.url);
     QCOMPARE(engine->openedSource.headers, source.headers);
     QCOMPARE(engine->openedSource.mimeType, source.mimeType);
+    QVERIFY(engine->openedSource.expiresAt.isValid());
+    QCOMPARE(engine->openedSource.expiresAt.timeSpec(), Qt::UTC);
+    QVERIFY(engine->openedSource.expiresAt > QDateTime::currentDateTimeUtc());
+    QCOMPARE(engine->openedSource.expiresAt, source.expiresAt);
     QCOMPARE(engine->openedSource.video, source.video);
     QCOMPARE(engine->openedSource.seekable, source.seekable);
 }

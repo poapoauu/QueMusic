@@ -193,6 +193,21 @@ file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_
 
 if(BUILD_TESTING)
     enable_testing()
+
+    qt_add_executable(quemusic_navidrome_smoke_state_test
+        tests/tst_NavidromeSmokeState.cpp
+        tests/NavidromeSmokeState.h
+    )
+    target_include_directories(quemusic_navidrome_smoke_state_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
+    )
+    target_link_libraries(quemusic_navidrome_smoke_state_test PRIVATE
+        quemusic_source_sdk
+        Qt6::Test
+    )
+    add_test(NAME quemusic_navidrome_smoke_state_test
+        COMMAND quemusic_navidrome_smoke_state_test)
 endif()
 
 add_subdirectory(plugins/navidrome-source)

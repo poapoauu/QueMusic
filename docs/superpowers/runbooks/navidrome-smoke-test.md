@@ -26,10 +26,13 @@ export QUEMUSIC_NAVIDROME_ENABLE_FAVORITE_ROUNDTRIP=1
 export QUEMUSIC_NAVIDROME_FAVORITE_TRACK_ID='provider-native-test-track-id'
 ```
 
-When enabled, the executable favorites and then unfavorites only that designated
-track. Do not designate an item whose existing favorite state must be preserved.
-The temporary playlist is normally deleted after its update; after a failed run,
-inspect and remove any playlist named `QueMusic smoke ...`.
+When enabled, the executable reads the designated track's current favorite state,
+toggles it, and restores that original state. On failure or timeout it makes one
+best-effort cleanup pass with a separate short timeout: any known temporary
+playlist is deleted and any attempted favorite mutation is restored. Cleanup
+failures are reported without credentials and are not retried recursively.
+After an interrupted process or failed cleanup, inspect and remove any playlist
+named `QueMusic smoke ...` and verify the designated track's favorite state.
 
 Output contains only operation, outcome, numeric error kind, and elapsed time.
 It never prints configuration values, requests, headers, authenticated URLs,

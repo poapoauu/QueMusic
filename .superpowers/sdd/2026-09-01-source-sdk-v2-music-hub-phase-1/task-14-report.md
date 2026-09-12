@@ -2,15 +2,20 @@
 
 ## Result
 
-Task 14 completes the active source SDK v2 migration: v1 source SDK files,
-fixtures, targets, and upper-layer entry points are removed; manifest and plugin
-loading reject v1; the Navidrome smoke path uses v2 providers; and the plugin API
-and smoke runbook describe the v2-only contract.
+Implementation complete; completion gate pending. The implementation removes
+the active v1 source SDK files, fixtures, targets, and upper-layer entry points;
+manifest and plugin loading reject v1; the Navidrome smoke path uses v2 providers;
+and the plugin API and smoke runbook describe the v2-only contract.
 
 ## Verification
 
 - `quemusic_plugin_manifest_test`: passed.
 - `quemusic_navidrome_smoke`: built successfully without running or accessing a server.
+- `quemusic_navidrome_smoke_state_test`: passed; covers ordered playlist/favorite
+  compensation, original favorite restoration, and bounded cleanup failure.
+- `quemusic_playback_plugin_contract_test`: passed with `expiresAt` UTC,
+  future-expiry, and exact round-trip assertions.
+- Main controller verification: `quemusic_navidrome_source_test` passed 1/1 in 15.24s.
 - Default build, including `QueMusic` and test targets: passed.
 - Task14-relevant CTest run excluding Navidrome listener tests and unrelated user-dirty
   storage/log/macOS-runtime tests: 28/28 passed.
@@ -36,10 +41,12 @@ than silently dropping the provenance.
 
 ## Concerns and deferred checks
 
-- The real Navidrome smoke and `quemusic_navidrome_source_test` were not run:
-  they require network or localhost listening, which this checkpoint forbids.
+- The real remote Navidrome smoke was not run; it requires explicit credentials
+  and mutates a designated test account under the runbook safeguards.
+- GUI and end-to-end playback smoke checks remain pending.
 - `codesign --verify --deep --strict` reports that the locally built app is not
-  signed. Signing remains a controller/release-environment responsibility.
+  signed. Signing verification has therefore not passed and remains a
+  controller/release-environment responsibility.
 - A broad CTest attempt reached the unrelated user-dirty `quemusic_log_manager_test`,
   which failed because its expected log file was absent. That test and its
   implementation/CMake hunks are intentionally outside Task14 and excluded from
