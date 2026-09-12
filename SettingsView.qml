@@ -1871,8 +1871,8 @@ Item {
             visible: false
             containX: settingStack.containX
             standWidth: settingStack.standWidth
-            controller: typeof pluginSettingsController !== "undefined"
-                        ? pluginSettingsController : null
+            controller: typeof pluginSettings !== "undefined"
+                        ? pluginSettings : null
         }
 
         // 关于页面

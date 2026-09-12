@@ -3,7 +3,6 @@
 //
 import QtQuick
 import QtQuick.Window
-import QueMusic 1.0
 import QtCore
 import QtMultimedia
 import QWindowKit 1.0
@@ -16,8 +15,6 @@ import QtQuick.Controls.Basic
 
 Window {
     id: window
-    // Task 14 provides these context objects. Keep this migration step runnable
-    // while the v1 composition root is still present.
     property var appMusicHub: typeof musicHub !== "undefined" ? musicHub : null
     property var appPlaybackCoordinator: typeof playbackCoordinator !== "undefined"
                                          ? playbackCoordinator : null
@@ -86,38 +83,6 @@ Window {
         }
     }
 
-    Connections {
-        target: mediaBridge
-        function onPlaybackReady(entry) {
-            window.applyBridgePlayback(entry);
-        }
-        function onEnqueueReady(entry) {
-            var key = window.mediaBridgeQueueKey(entry.mediaId);
-            for (var i = 0; i < playListModel.count; ++i) {
-                var queued = playListModel.get(i);
-                if (queued.bridge === true && queued.mediaId
-                        && window.mediaBridgeQueueKey(queued.mediaId) === key)
-                    return;
-            }
-            playListModel.append({
-                name: entry.title,
-                path: "bridge:" + key,
-                songer: entry.artist,
-                source: -2,
-                bridge: true,
-                mediaId: entry.mediaId,
-                albumTitle: entry.albumTitle,
-                artworkUrl: entry.artworkUrl,
-                durationMs: entry.durationMs
-            });
-            mainWarn.tiped("已加入播放列表", 1);
-        }
-        function onMediaActionFailed(error) {
-            if (error.action === "play")
-                mainWarn.tiped(error.message, 2);
-        }
-    }
-
     // 播放本地歌曲：同名 .lrc → 内嵌歌词 → 在线匹配 → 占位歌词
     function playLocalSong(path, name) {
         var meta = MusicApi.readLocalMetadata(path) || {};
@@ -152,52 +117,12 @@ Window {
         mainMedia.play();
     }
 
-    function mediaBridgeQueueKey(mediaId) {
-        return mediaId.sourceId + "/" + mediaId.accountId + "/" + mediaId.nativeId + "/" + mediaId.kind;
-    }
-
     function copyQueueEntry(entry) {
-        return queueBridgeController.copyQueueEntry(entry);
+        return legacyQueueController.copyQueueEntry(entry);
     }
 
     function playQueueEntry(index) {
-        queueBridgeController.playQueueEntry(index);
-    }
-
-    function applyBridgePlayback(entry) {
-        var key = mediaBridgeQueueKey(entry.mediaId);
-        var queueIndex = -1;
-        for (var i = 0; i < playListModel.count; ++i) {
-            var queued = playListModel.get(i);
-            if (queued.bridge === true && queued.mediaId
-                    && mediaBridgeQueueKey(queued.mediaId) === key) {
-                queueIndex = i;
-                break;
-            }
-        }
-        if (queueIndex < 0) {
-            playListModel.append({
-                name: entry.title,
-                path: "bridge:" + key,
-                songer: entry.artist,
-                source: -2,
-                bridge: true,
-                mediaId: entry.mediaId,
-                albumTitle: entry.albumTitle,
-                artworkUrl: entry.artworkUrl,
-                durationMs: entry.durationMs
-            });
-            queueIndex = playListModel.count - 1;
-        }
-        playListModel.playListIndex = queueIndex;
-        mainMedia.urlLocal = false;
-        mainMedia.noTitle = entry.title;
-        mainMedia.album = entry.albumTitle || "";
-        mainMedia.urlStr = entry.artworkUrl || "qrc:/QueMusic/resources/app/musicpic.png";
-        window.musicTitle = entry.title;
-        window.musicArtist = entry.artist;
-        mainMedia.source = entry.url;
-        mainMedia.play();
+        legacyQueueController.playQueueEntry(index);
     }
 
     // 首次加载内容临时存储，防止重新加载浪费内存
@@ -1182,17 +1107,17 @@ Window {
     }
 
     // 播放列表
+    LegacyQueueController {
+        id: legacyQueueController
+        queueModel: playListModel
+        legacyPlayer: musicControlMin
+    }
+
     ListModel {
         id: playListModel
         property int playListIndex: -1
         // 列表增删后同步 SMTC 上一首/下一首按钮可用性
         onCountChanged: updateSmtcControls()
-    }
-    QueueWiring {
-        id: queueBridgeController
-        queueModel: playListModel
-        bridge: mediaBridge
-        legacyPlayer: musicControlMin
     }
     SearchCard {
         id: searchCard

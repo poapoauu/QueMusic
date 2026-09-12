@@ -1,8 +1,8 @@
 # Plugin API
 
 QueMusic source plugins are native Qt plugins loaded at application startup by
-`PluginManager` and adapted by `SourceManager`. This document defines the
-current package format and ABI boundary for music source providers.
+`PluginManager` and opened through `SourceRegistry`. This document defines the
+current v2 package format and ABI boundary for music source providers.
 
 ## Native package format
 
@@ -31,19 +31,24 @@ language plugin APIs; they cannot be loaded yet.
   "library": "libquemusic_example_source.dylib",
   "pluginApi": { "major": 1, "minHostMinor": 0 },
   "interfaces": [
-    { "id": "org.quemusic.MusicSourcePlugin/1.0", "version": "1.0" }
+    { "id": "org.quemusic.MusicSourcePlugin/2.0", "version": "2.0" }
   ],
-  "runtimeRequirements": { "qtMajor": 6 }
+  "runtimeRequirements": {
+    "sourceSdkAbi": 2,
+    "qtMajor": 6,
+    "architecture": "x86_64",
+    "buildKey": "Release"
+  }
 }
 ```
 
 `id`, `sourceId`, `name`, `version`, `category`, `runtime`, `library`,
-`pluginApi`, and the source interface declaration are required. `pluginApi`
+`pluginApi`, the source interface declaration, and `runtimeRequirements` are
+required. `pluginApi`
 must be an object containing numeric integer `major` and `minHostMinor` fields;
-the latter must be non-negative. `runtimeRequirements` may be absent, but when
-present it must be an object: `qtMajor` is a numeric integer greater than or
-equal to `1`, and `architecture` and `buildMode` are non-empty strings whenever
-present. `library` is a
+the latter must be non-negative. For v2, `runtimeRequirements` must contain
+`sourceSdkAbi` equal to `2`, a positive integer `qtMajor`, and non-empty
+`architecture` and `buildKey` strings. `library` is a
 relative filename inside the package: absolute paths, `.` and `..` path
 components, and directories are rejected.
 
@@ -55,40 +60,31 @@ compatibility gate.
 
 ## ABI and IID
 
-- Interface: `IMusicSourcePlugin`
-- Session base class: `IMusicSourceSession`
-- Optional artwork interface: `IMusicSourceArtworkSession`
-- Plugin IID: `org.quemusic.MusicSourcePlugin/1.0`
-- Artwork IID: `org.quemusic.MusicSourceArtworkSession/1.0`
-- SDK version field: `SourceDescriptor::sdkVersion` (exactly `1.0` for IID 1.0)
+- Plugin interface: `IMusicSourcePluginV2`
+- Session base class: `IMusicSourceSessionV2`
+- Plugin IID: `org.quemusic.MusicSourcePlugin/2.0`
+- Required manifest ABI: `runtimeRequirements.sourceSdkAbi = 2`
+- Optional operation interfaces: the provider interfaces in
+  `sdk/source/v2/ISourceProvidersV2.h`
 
-Plugins must be built against the same Qt major version and the QueMusic source
-SDK headers shipped in `sdk/source`. IID 1.0 has one authoritative compatibility
-policy: `sdkVersion` must exactly equal `1.0`; empty, older, newer, or differently
-formatted values are rejected before `initialize()` runs. A future compatible
-version must be added intentionally to the host policy with tests. A plugin is
-also rejected if it does not expose the required IID or has an empty source id
-or display name. Packages with duplicate manifest `sourceId` values are
-rejected during discovery, before a loader is created for the duplicate.
-
-`IMusicSourceSession` is already published with this exact virtual order:
-`search`, `browse`, `resolveStream`, `fetchArtwork`, `fetchLyrics`, `cancel`.
-The legacy `fetchArtwork(const TrackRef &)` slot is retained permanently for
-`MusicSourcePlugin/1.0` binary compatibility. `IMusicSourceArtworkSession` does
-not replace or remove that slot; it is an additive, independently versioned
-interface for explicit runtime capability discovery.
+Plugins must be built against the same Qt major version, build key and target
+architecture as the host, and against the v2 headers shipped in
+`sdk/source/v2`. The host rejects a package before execution when its manifest,
+IID, SDK ABI, architecture or build key is incompatible. Native Qt plugins do
+not have cross-Qt or general C++ binary compatibility; rebuild them whenever
+the host toolchain or SDK ABI changes.
 
 ## Required Metadata
 
-Each plugin must implement `IMusicSourcePlugin::descriptor()` and return a
-`SourceDescriptor` with:
+Each plugin must implement `IMusicSourcePluginV2::descriptor()` and return a
+`SourceDescriptorV2` with:
 
 - `id`: stable unique identifier for the source
 - `name`: user-facing display name
 - `version`: plugin implementation version
-- `protocol`: provider family or protocol label such as `subsonic`
-- `sdkVersion`: the plugin SDK contract version it targets
-- `capabilities`: a `SourceCapabilities` bitmask
+- `pluginPackageId`: manifest package identifier
+- `sdkAbi`: exactly `2`
+- `declaredActions`: conservative package-level action availability
 
 ## Search Paths
 
@@ -111,10 +107,9 @@ directory is intended for user-installed plugins on the local machine.
 ## Discovery, lifecycle, and Settings
 
 `PluginManager::discover()` reads manifests without executing plugin code.
-`load()` creates a compatible Qt plugin instance, and `SourceManager` then
-validates its descriptor, initializes it, and adds its source ID to the source
-registry. Package discovery and lifecycle remain C++-only implementation
-details for the unified media bridge.
+`load()` creates a compatible Qt plugin instance. `SourceRegistry` validates
+the v2 descriptor and creates one session per enabled source account. Package
+discovery and session lifecycle remain C++ implementation details.
 
 The manager's internal package records contain `id`, `sourceId`, `name`,
 `version`, `category`, `state`, `error`, `path`, `activeLeases`, `loadable`,
@@ -123,42 +118,29 @@ States are `discovered`, `loaded`, `failed`, and `unloaded`.
 
 Each source session owns a package lease. Unload and reload return Busy while
 any session from that package remains alive, and the Settings controls are
-disabled in that state. When an unused source package unloads, `SourceManager`
-removes the corresponding source registry entry before it can be used again.
+disabled in that state. Before unloading a package, `SourceRegistry` closes
+and releases its sessions.
 If unload fails, the Failed package retains its loader, cannot load a second
 instance, and exposes an enabled unload retry when no lease is active.
 Reloading creates a new plugin instance and reinitializes the source entry.
 This is a trusted-native-code lifecycle only; there is no sandbox, signature,
 permission, or cross-version ABI isolation.
 
-## Unified Media Bridge and QML boundary
+## Music Hub and QML boundary
 
-`MediaBridge` is the only QML-facing boundary for plugin-backed media. QML
-must never receive `PluginManager`, `SourceManager`, `SourceSessionRegistry`,
-`IMusicSourceSession`, raw plugin `QObject`s, raw provider JSON, credentials,
-or secret references. It receives fixed-role `MediaListModel` rows only:
-`sourceId`, `accountId`, `nativeId`, `kind`, `title`, `subtitle`, `artists`,
-`albumTitle`, `durationMs`, `artworkUrl`, `playable`, `container`, and the
-non-sensitive `extra` map. These roles are a host contract; source-specific
-payload fields must be normalized before crossing it.
+Source plugins feed the existing Recommendation, Category, Favorites and
+Search pages; there is no separate source-library page. `MusicHub` exposes
+page models and aggregate/single-source scope selection. `PlaybackCoordinator`
+resolves a fresh stream and hands it to the native `QtPlaybackController`.
+`PluginSettingsController` is the only settings facade. Operation buttons are
+shown or enabled from the intersected package, server, account and item action
+availability, so one source can never imply support for another source.
 
-`mediaBridge.accountController` is the narrow account-management facade. It
-may expose the source/account identifiers, display name, enabled state,
-server URL, username, and loaded-source descriptors needed by the UI. It must
-not return a password, token, secret, secret reference, authenticated URL, or
-provider response.
-
-Bridge playback is routed through `QueueWiring`. The component allowlists the
-normalized queue fields and preserves the bridge flag plus serialized
-`MediaId`; it then calls `MediaBridge::play()` so each bridge item resolves a
-fresh stream before playback. `QueueWiring` must not pass provider payloads,
-stream URLs, request headers, or source/session objects through QML.
-
-The current QML `MediaPlayer` path supports URL-authenticated streams only.
-If a resolved stream contains any request headers, `MediaBridge` fails that
-playback action with `Unsupported`; it does not silently discard headers or
-attempt unauthenticated playback. A source that requires headers needs a
-native playback backend before it can be played.
+QML must not receive source sessions, provider interfaces, raw plugin JSON,
+credentials, secrets, secret references or authenticated provider responses.
+All page data crosses the boundary as normalized `MediaItemV2` and
+`PageSectionV2` data. Stream headers remain in the native playback path and
+must never be copied into QML models or persisted.
 
 ## Deferred JavaScript runtime
 
@@ -207,47 +189,26 @@ reports unavailable and must never fall back to plaintext settings storage.
 
 ## Legacy provider migration boundary
 
-Navidrome is the first provider using the native source-plugin and
-`MediaBridge` path. Existing NetEase, Kugou, QQ, and local-file behavior stays
-behind `MusicApiService` until that individual provider has a complete bridge
-adapter or native source plugin: normalized search/browse results, account and
-session lifecycle, artwork/lyrics/stream handling, queue re-resolution, and
-regression coverage. This milestone does not remove or bulk-migrate legacy
-providers.
+Navidrome is the first v2 native source plugin. NetEase, Kugou, QQ and local
+files must each gain a v2 adapter or native plugin before joining aggregate
+pages. New UI work must not depend on the removed v1 `MediaBridge` boundary.
 
 ## Capability Rules
 
-Capabilities advertise what a session can do. They are declarative and should
-match real behavior. Current flags come from `SourceCapability`:
+Actions advertise what a session can do and are fail-closed. Current keys come
+from `SourceActionV2`:
 
-- `Search`
-- `Browse`
-- `StreamAudio`
-- `StreamVideo`
-- `Artwork`
-- `Lyrics`
-- `PlaylistRead`
-- `PlaylistWrite`
-- `Favorites`
-- `Download`
-- `Scrobble`
+- `Play`, `Artwork`, `Lyrics`, `Download`
+- `Favorite`, `Unfavorite`, `Rating`, `Scrobble`
+- `CreatePlaylist`, `UpdatePlaylist`, `DeletePlaylist`
+- `AddPlaylistTracks`, `RemovePlaylistTracks`
+- `FetchPlayQueue`, `SavePlayQueue`
+- `FetchBookmarks`, `CreateBookmark`, `DeleteBookmark`
 
-Do not claim a capability unless the session can perform that operation and emit
-either `requestSucceeded` or `requestFailed` for it.
-
-Artwork dispatch is metadata-gated and follows this policy:
-
-- Without `SourceCapability::Artwork`, the host does not call either artwork
-  interface, even if the session exposes `IMusicSourceArtworkSession`.
-- With `SourceCapability::Artwork`, the host prefers
-  `IMusicSourceArtworkSession::fetchArtwork` when that interface is present.
-- A v1 session that advertises Artwork but does not expose the optional
-  interface remains supported through the retained
-  `IMusicSourceSession::fetchArtwork` slot.
-- Newly written plugins that advertise Artwork should implement
-  `IMusicSourceArtworkSession`, declare it with `Q_INTERFACES`, and keep the
-  required v1 base override. One `fetchArtwork` override satisfies both
-  interfaces when their signatures match.
+Do not mark an action `Available` unless the matching optional provider
+interface exists and can complete it. Effective availability is the
+intersection of descriptor, server, account and item layers. Unknown
+constraints and missing interfaces are treated as unsupported.
 
 ## Trusted Native-Code Model
 
@@ -259,71 +220,62 @@ prompt, or ABI isolation layer. Only install plugins from trusted sources.
 
 ## Runtime Contract
 
-- `initialize(SourcePluginContext &context)` runs once when the plugin is loaded.
-- `createSession(const SourceAccount &, QObject *parent)` creates a per-account
+- `createSession(const SourceConfigurationV2 &, QObject *parent)` creates a per-account
   session owned by the provided parent.
-- `SourceAccount` keeps its identity fields (`sourceId`, `accountId`, and
+- `SourceConfigurationV2` keeps its identity fields (`sourceId`, `sourceInstanceId`,
+  `accountId`, and
   `displayName`) first, then provides plugin-defined connection data through
   `parameters` (`QVariantMap`) and sensitive bytes through `secret`
   (`QByteArray`). Plugins must document the parameter keys they accept and must
   never log `secret` or derived credentials.
-- `IMusicSourceSession` handles async provider work and must implement:
-  `search`, `browse`, `resolveStream`, the retained legacy `fetchArtwork`,
-  `fetchLyrics`, and `cancel`, in that virtual order.
-- `IMusicSourceArtworkSession` is optional. Sessions that advertise
-  `SourceCapability::Artwork` should also implement
-  `org.quemusic.MusicSourceArtworkSession/1.0`, declare
-  `Q_INTERFACES(IMusicSourceArtworkSession)`, and be discoverable with
-  `qobject_cast<IMusicSourceArtworkSession *>(session)`.
-- A session reports results with `requestSucceeded`, failures with
-  `requestFailed`, and auth state changes with `authenticationChanged`.
-- Every advertised capability must complete a non-cancelled request. For this
-  contract, `StreamAudio` completes `resolveStream` with a JSON
-  `StreamDescriptor` DTO (`track`, `url`, optional `headers`, `mimeType`,
-  `expiresAt`, `video`, and `seekable`). `Artwork` pairs the capability flag
-  with optional-interface dispatch when available and the retained v1 base
-  fallback otherwise; either path completes with a JSON DTO containing
-  `track`, `url`, and `mimeType`. Unsupported operations emit `requestFailed`
-  with `SourceErrorKind::Unsupported`.
+- `IMusicSourceSessionV2` owns lifecycle (`open`, `close`, `cancel`) and state.
+- Page, playback, favorites, rating, scrobble, playlist, download, play-queue,
+  bookmark and settings behavior is exposed only through the matching optional
+  provider interface.
+- Every asynchronous call emits `requestStarted` before exactly one terminal
+  `pageReady`, `streamReady`, `actionCompleted`, `settingsActionCompleted` or
+  `requestFailed`, unless cancelled.
 
 ## Minimal Plugin Skeleton
 
 The skeleton is declaration-only: method bodies are intentionally omitted.
 Every real request method must return a request ID and later, asynchronously,
-emit exactly one matching `requestSucceeded` or `requestFailed` signal unless
-that request was cancelled. Returning a fresh UUID without scheduling a terminal
-signal violates the contract. `descriptor()` must include
-`SourceCapability::Artwork` when using the artwork interface below.
+emit `requestStarted` and exactly one matching terminal signal unless that
+request was cancelled. Returning a fresh UUID without scheduling those signals
+violates the contract. `descriptor()` and runtime capabilities must mark only
+the actions implemented by the provider interfaces below as available.
 
 ```cpp
-#include "IMusicSourceArtworkSession.h"
-#include "IMusicSourcePlugin.h"
+#include "v2/IMusicSourcePluginV2.h"
+#include "v2/ISourceProvidersV2.h"
 
-class ExampleSession final : public IMusicSourceSession,
-                             public IMusicSourceArtworkSession {
+class ExampleSession final : public IMusicSourceSessionV2,
+                             public IPageProviderV2,
+                             public IPlaybackProviderV2 {
     Q_OBJECT
-    Q_INTERFACES(IMusicSourceArtworkSession)
+    Q_INTERFACES(IPageProviderV2 IPlaybackProviderV2)
 
 public:
-    using IMusicSourceSession::IMusicSourceSession;
-
-    QUuid search(const SearchQuery &) override;
-    QUuid browse(const BrowseQuery &) override;
-    QUuid resolveStream(const TrackRef &) override;
-    QUuid fetchArtwork(const TrackRef &) override;
-    QUuid fetchLyrics(const TrackRef &) override;
+    SourceIdentityV2 identity() const override;
+    SourceSessionStateV2 state() const override;
+    CapabilitySetV2 capabilities() const override;
+    QUuid open() override;
+    void close() override;
     void cancel(const QUuid &) override;
+    QUuid fetchPage(const PageQueryV2 &) override;
+    QUuid resolveStream(const MediaRefV2 &) override;
+    QUuid fetchArtwork(const MediaRefV2 &) override;
+    QUuid fetchLyrics(const MediaRefV2 &) override;
 };
 
-class ExampleSourcePlugin final : public QObject, public IMusicSourcePlugin {
+class ExampleSourcePlugin final : public QObject, public IMusicSourcePluginV2 {
     Q_OBJECT
-    Q_PLUGIN_METADATA(IID QUEMUSIC_MUSIC_SOURCE_PLUGIN_IID)
-    Q_INTERFACES(IMusicSourcePlugin)
+    Q_PLUGIN_METADATA(IID QUEMUSIC_MUSIC_SOURCE_PLUGIN_V2_IID)
+    Q_INTERFACES(IMusicSourcePluginV2)
 
 public:
-    SourceDescriptor descriptor() const override;
-    bool initialize(SourcePluginContext &context) override;
-    IMusicSourceSession *createSession(const SourceAccount &account,
-                                       QObject *parent) override;
+    SourceDescriptorV2 descriptor() const override;
+    IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &configuration,
+                                         QObject *parent) override;
 };
 ```

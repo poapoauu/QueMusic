@@ -32,7 +32,6 @@
 #include <memory>
 Q_IMPORT_QML_PLUGIN(MeshGradientItemPlugin)
 
-extern void qml_register_types_QueMusic();
 extern void qml_register_types_MeshGradientItem();
 
 #if defined(Q_OS_WIN)
@@ -154,10 +153,6 @@ int main(int argc, char *argv[])
 
     QQuickWindow::setDefaultAlphaBuffer(true);
     //QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
-    // 显式注册QML_ELEMENT 类型
-    qml_register_types_QueMusic();
-    qml_register_types_MeshGradientItem();
-
     application.setOrganizationName("BroNekoX");
     application.setOrganizationDomain("com.bronekox.quemusic");
     application.setWindowIcon(QIcon("qrc:/QPlayer/resources/icon.ico"));
@@ -187,6 +182,9 @@ int main(int argc, char *argv[])
     // Engine is declared after every borrowed music service so QML pages are
     // released first during shutdown.
     QQmlApplicationEngine engine;
+    // Register generated QML types after constructing the engine, matching
+    // Qt's module initialization order and avoiding a root-module ambiguity.
+    qml_register_types_MeshGradientItem();
     installSourceRuntimeContext(engine, sourcePlugins.get(), &musicHub,
                                 &playbackCoordinator, &playbackController, &pluginSettings);
 

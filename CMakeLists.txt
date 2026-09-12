@@ -112,7 +112,7 @@ add_library(quemusic_source_startup STATIC
 )
 target_compile_features(quemusic_source_startup PUBLIC cxx_std_17)
 target_link_libraries(quemusic_source_startup PUBLIC
-    quemusic_source_manager
+    quemusic_plugin_core
     quemusic_plugin_settings
     quemusic_music_hub
     quemusic_playback_coordinator
@@ -607,6 +607,18 @@ if(BUILD_TESTING)
     set_tests_properties(quemusic_playback_controls_adapter_qml_test PROPERTIES
         TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    qt_add_executable(quemusic_legacy_queue_qml_test tests/tst_LegacyQueueQml.cpp)
+    target_compile_features(quemusic_legacy_queue_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_legacy_queue_qml_test
+        "quemusic_legacy_queue_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES components/LegacyQueueController.qml)
+    target_link_libraries(quemusic_legacy_queue_qml_test PRIVATE
+        Qt6::Gui Qt6::Qml Qt6::Test)
+    add_test(NAME quemusic_legacy_queue_qml_test COMMAND quemusic_legacy_queue_qml_test)
+    set_tests_properties(quemusic_legacy_queue_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     qt_add_executable(quemusic_music_hub_qml_test tests/tst_MusicHubQml.cpp)
     target_compile_features(quemusic_music_hub_qml_test PRIVATE cxx_std_17)
     qt_add_resources(quemusic_music_hub_qml_test "quemusic_music_hub_qml_test_qml"
@@ -1035,41 +1047,6 @@ if(BUILD_TESTING)
     )
     add_dependencies(quemusic_media_bridge_playback_test quemusic_navidrome_source)
     add_test(NAME quemusic_media_bridge_playback_test COMMAND quemusic_media_bridge_playback_test)
-
-    qt_add_executable(quemusic_media_bridge_qml_test
-        tests/tst_MediaBridgeQml.cpp
-    )
-    target_compile_features(quemusic_media_bridge_qml_test PRIVATE cxx_std_17)
-    target_compile_definitions(quemusic_media_bridge_qml_test PRIVATE
-        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    qt_add_resources(quemusic_media_bridge_qml_test "quemusic_media_bridge_qml_test_qml"
-        PREFIX "/QueMusic"
-        FILES
-            layout/LeftSideBar.qml
-            layout/MainContent.qml
-            pages/HomePage.qml
-            pages/PlaylistPage.qml
-            pages/FavouritePage.qml
-            pages/FilePage.qml
-            pages/DownloadPage.qml
-            pages/SearchPage.qml
-            pages/SourceLibraryPage.qml
-            ${QML_COMPONENTS}
-            components/PluginSettingsText.js
-    )
-    target_link_libraries(quemusic_media_bridge_qml_test PRIVATE
-        quemusic_media_bridge
-        quemusic_source_startup
-        Qt6::Qml
-        Qt6::Quick
-        Qt6::Test
-    )
-    add_dependencies(quemusic_media_bridge_qml_test quemusic_navidrome_source)
-    add_test(NAME quemusic_media_bridge_qml_test COMMAND quemusic_media_bridge_qml_test)
-    set_tests_properties(quemusic_media_bridge_qml_test PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    )
 
     qt_add_executable(quemusic_plugin_settings_qml_test
         tests/tst_PluginSettingsQml.cpp

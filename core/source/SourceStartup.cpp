@@ -1,6 +1,5 @@
 #include "SourceStartup.h"
 
-#include "SourceManager.h"
 #include "PluginManager.h"
 #include "MusicHub.h"
 #include "PlaybackCoordinator.h"
@@ -64,34 +63,4 @@ void installSourceRuntimeContext(QQmlApplicationEngine &engine,
     engine.rootContext()->setContextProperty(QStringLiteral("playbackController"),
                                              playbackController);
     engine.rootContext()->setContextProperty(QStringLiteral("pluginSettings"), pluginSettings);
-}
-
-SourceManager *createAndLoadSourceManager(const QCoreApplication &application, QObject *parent)
-{
-    auto *plugins = new PluginManager(parent);
-    auto *manager = new SourceManager(plugins, parent);
-    const QStringList searchPaths = defaultSourcePluginSearchPaths(application);
-
-    for (const QString &searchPath : searchPaths) {
-        manager->addSearchPath(searchPath);
-    }
-
-    QObject::connect(manager, &SourceManager::sourceLoadFailed, manager,
-                     [](const QString &pluginPath, const QString &error) {
-                         qWarning().noquote()
-                             << QStringLiteral("SourceManager plugin load failed: %1 (%2)")
-                                    .arg(pluginPath, error);
-                     });
-    manager->loadAll();
-    return manager;
-}
-
-SourceManager *initializeSourceStartupBoundary(const QCoreApplication &application,
-                                              QQmlApplicationEngine &engine)
-{
-    SourceManager *manager =
-        createAndLoadSourceManager(application, const_cast<QCoreApplication *>(&application));
-    engine.rootContext()->setContextProperty(QStringLiteral("pluginManager"),
-                                             manager->pluginManager());
-    return manager;
 }
