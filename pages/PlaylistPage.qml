@@ -823,6 +823,7 @@ Item {
         id: adapterDetailWindow
         objectName: "adapterPlaylistDetailWindow"
         mainTarget: playlistChildPage
+        winIndex: 2
         haveControl: false
         content: QListView {
             objectName: "adapterPlaylistDetailList"
@@ -831,6 +832,10 @@ Item {
             width: adapterDetailWindow.width - 32
             height: adapterDetailWindow.height - 128
             model: musicAdapter ? musicAdapter.categoryItems : []
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            toolX: width + 1
             clip: true
             topMargin: 8
             bottomMargin: 24

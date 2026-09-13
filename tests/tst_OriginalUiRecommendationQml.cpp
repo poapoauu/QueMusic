@@ -256,6 +256,7 @@ public:
     int exitIndex = 0;
 signals:
     void exitIndexChanged();
+    void exit();
 };
 
 class PageContext final {
@@ -381,10 +382,16 @@ private slots:
         QObject *detailList = nullptr;
         QTRY_VERIFY((detailList = detail->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList"))));
         QCOMPARE(detailList->property("model").value<QObject *>(), adapter.categoryItems());
+        QCOMPARE(detailList->property("menuModel").toList().size(), 0);
+        QCOMPARE(detailList->property("toolText0").toString(), QString());
+        QCOMPARE(detailList->property("toolText1").toString(), QString());
+        QVERIFY(detailList->property("toolX").toReal() > detailList->property("width").toReal());
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
         QCOMPARE(context.legacyLists()->favoriteQueries, 0);
         QCOMPARE(context.legacyLists()->favoriteCalls, 0);
         QCOMPARE(context.windowObject()->exitIndex, 2);
+        emit context.windowObject()->exit();
+        QTRY_VERIFY(!detail->property("visible").toBool());
     }
 
     void adapterRowsNeverInvokeLegacyPlaylistActions()
