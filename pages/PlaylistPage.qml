@@ -58,12 +58,8 @@ Item {
             const row = musicAdapter.categoryItems.get(index)
             if (!row || !musicAdapter.browse(row))
                 return false
-            playListSongsWindow.opened({id: String(row._adapterKey || ""),
-                                        title: row.title || "",
-                                        artist: row.artist || "",
-                                        cover: row.cover || "qrc:/QueMusic/resources/app/musicpic.png",
-                                        album: row.album || "",
-                                        duration: row.duration || 0})
+            adapterDetailWindow.opened(row.title || "",
+                                       row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
             window.exitIndex = 2
             return true
         }
@@ -818,6 +814,44 @@ Item {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    AnimatorWindow {
+        id: adapterDetailWindow
+        objectName: "adapterPlaylistDetailWindow"
+        mainTarget: playlistChildPage
+        haveControl: false
+        content: QListView {
+            objectName: "adapterPlaylistDetailList"
+            x: 24
+            y: 128
+            width: adapterDetailWindow.width - 32
+            height: adapterDetailWindow.height - 128
+            model: musicAdapter ? musicAdapter.categoryItems : []
+            clip: true
+            topMargin: 8
+            bottomMargin: 24
+            onClicked: (index) => {
+                if (musicAdapter)
+                    musicAdapter.play(model.get(index))
+            }
+            onToolClicked: (index, tool) => {
+                if (musicAdapter && tool === 0)
+                    musicAdapter.enqueue(model.get(index))
+            }
+            onMenuClicked: (index, choice) => {
+                if (musicAdapter)
+                    return
+            }
+            onEnded: {
+                if (musicAdapter && typeof musicAdapter.loadMore === "function") {
+                    musicAdapter.loadMore(1, "")
+                    isEnd = false
+                } else {
+                    isEnd = true
                 }
             }
         }

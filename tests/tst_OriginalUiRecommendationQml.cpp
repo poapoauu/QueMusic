@@ -372,9 +372,18 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseCategory",
                                           Q_ARG(QVariant, QVariant(0))));
         QCOMPARE(adapter.browsedRows.size(), 1);
-        QObject *detail = playlist->findChild<QObject *>(QStringLiteral("playlistDetailWindow"));
+        QObject *detail = playlist->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailWindow"));
+        QObject *legacyDetail = playlist->findChild<QObject *>(QStringLiteral("playlistDetailWindow"));
         QVERIFY(detail);
+        QVERIFY(legacyDetail);
+        QVERIFY(!legacyDetail->property("visible").toBool());
         QTRY_VERIFY(detail->property("visible").toBool());
+        QObject *detailList = nullptr;
+        QTRY_VERIFY((detailList = detail->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList"))));
+        QCOMPARE(detailList->property("model").value<QObject *>(), adapter.categoryItems());
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+        QCOMPARE(context.legacyLists()->favoriteQueries, 0);
+        QCOMPARE(context.legacyLists()->favoriteCalls, 0);
         QCOMPARE(context.windowObject()->exitIndex, 2);
     }
 
