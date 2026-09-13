@@ -15,17 +15,27 @@ private:
         return QString::fromUtf8(file.readAll());
     }
 
+    static void verifyInOrder(const QString &source, const QStringList &needles)
+    {
+        qsizetype previous = -1;
+        for (const QString &needle : needles) {
+            const qsizetype index = source.indexOf(needle);
+            QVERIFY2(index > previous, qPrintable(needle + QStringLiteral(" is missing or out of order")));
+            previous = index;
+        }
+    }
+
 private slots:
     void musicShellMatchesRequiredStructure()
     {
         const QString sidebar = readSource(QStringLiteral("layout/LeftSideBar.qml"));
         QCOMPARE(sidebar.count(QStringLiteral("ListElement {")), 6);
-        QVERIFY(sidebar.contains(QStringLiteral("display: \"推荐\"")));
-        QVERIFY(sidebar.contains(QStringLiteral("display: \"分类\"")));
-        QVERIFY(sidebar.contains(QStringLiteral("display: \"收藏\"")));
-        QVERIFY(sidebar.contains(QStringLiteral("display: \"本地\"")));
-        QVERIFY(sidebar.contains(QStringLiteral("display: \"下载\"")));
-        QVERIFY(sidebar.contains(QStringLiteral("display: \"\"")));
+        verifyInOrder(sidebar, {QStringLiteral("display: \"推荐\""),
+                                QStringLiteral("display: \"分类\""),
+                                QStringLiteral("display: \"\""),
+                                QStringLiteral("display: \"收藏\""),
+                                QStringLiteral("display: \"本地\""),
+                                QStringLiteral("display: \"下载\"")});
         QVERIFY(!sidebar.contains(QStringLiteral("display: \"音乐源\"")));
 
         const QString mainContent = readSource(QStringLiteral("layout/MainContent.qml"));
@@ -34,6 +44,30 @@ private slots:
         QVERIFY(mainContent.contains(QStringLiteral("duration: 320")));
         QVERIFY(mainContent.contains(QStringLiteral("sourceComponent: HomePage")));
         QVERIFY(mainContent.contains(QStringLiteral("sourceComponent: PlaylistPage")));
+        verifyInOrder(mainContent, {QStringLiteral("id: homePage"),
+                                    QStringLiteral("id: playlistPage"),
+                                    QStringLiteral("id: favouritePage"),
+                                    QStringLiteral("id: filePage"),
+                                    QStringLiteral("id: downloadPage"),
+                                    QStringLiteral("id: searchPage")});
+        for (const QString &loader : {QStringLiteral("homePage"),
+                                      QStringLiteral("playlistPage"),
+                                      QStringLiteral("favouritePage"),
+                                      QStringLiteral("filePage"),
+                                      QStringLiteral("downloadPage"),
+                                      QStringLiteral("searchPage")}) {
+            const qsizetype loaderStart = mainContent.indexOf(QStringLiteral("id: ") + loader);
+            QVERIFY2(loaderStart >= 0, qPrintable(loader));
+            const QString loaderSource = mainContent.mid(loaderStart, 520);
+            QVERIFY2(loaderSource.contains(QStringLiteral("objectName: \"") + loader
+                                           + QStringLiteral("Loader\"")), qPrintable(loader));
+            QVERIFY2(loaderSource.contains(QStringLiteral("active:")), qPrintable(loader));
+            QVERIFY2(loaderSource.contains(QStringLiteral("visible:")), qPrintable(loader));
+            QVERIFY2(loaderSource.contains(QStringLiteral("onLoaded: { visible = true;")),
+                     qPrintable(loader));
+        }
+        QVERIFY(mainContent.contains(QStringLiteral("source: \"qrc:/QueMusic/pages/FilePage.qml\"")));
+        QVERIFY(mainContent.contains(QStringLiteral("source: \"qrc:/QueMusic/pages/DownloadPage.qml\"")));
         QVERIFY(!mainContent.contains(QStringLiteral("MusicSectionView")));
         QVERIFY(!mainContent.contains(QStringLiteral("color: \"white\"")));
 

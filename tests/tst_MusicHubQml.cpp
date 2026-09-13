@@ -1,5 +1,7 @@
 #include "MusicPageModel.h"
 
+#include <QAbstractListModel>
+#include <QCoreApplication>
 #include <QMetaObject>
 #include <QPointer>
 #include <QUuid>
@@ -7,6 +9,7 @@
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtQml/QQmlComponent>
+#include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
 
 class FakeActions final : public QObject {
@@ -171,6 +174,225 @@ signals:
     void exit();
 };
 
+class FakeLegacyListModel final : public QAbstractListModel {
+    Q_OBJECT
+    Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+public:
+    int rowCount(const QModelIndex &parent = {}) const override
+    {
+        return parent.isValid() ? 0 : 0;
+    }
+
+    QVariant data(const QModelIndex &, int) const override { return {}; }
+
+    Q_INVOKABLE QVariantMap get(int) const { return {}; }
+    Q_INVOKABLE void clear() { emit countChanged(); }
+    Q_INVOKABLE void append(const QVariantMap &) { emit countChanged(); }
+    Q_INVOKABLE bool isFavorite(const QString &, const QString &) const { return false; }
+    Q_INVOKABLE void addFavorite(const QString &, const QString &, const QString &,
+                                 const QString &, int, int, const QString &) {}
+    Q_INVOKABLE void removeFavorite(const QString &, const QString &) {}
+
+signals:
+    void countChanged();
+};
+
+class FakeLegacyMusicApi final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(int songSource MEMBER songSource NOTIFY songSourceChanged)
+    Q_PROPERTY(int nowIndex MEMBER nowIndex NOTIFY nowIndexChanged)
+    Q_PROPERTY(QString globalid MEMBER globalid NOTIFY globalidChanged)
+    Q_PROPERTY(QString globaltagid MEMBER globaltagid NOTIFY globaltagidChanged)
+    Q_PROPERTY(int loadState MEMBER loadState NOTIFY loadStateChanged)
+    Q_PROPERTY(QObject *allPlaylistMenu READ allPlaylistMenu CONSTANT)
+    Q_PROPERTY(QObject *getHotlistMenu READ getHotlistMenu CONSTANT)
+    Q_PROPERTY(QObject *hotPlayLists READ hotPlayLists CONSTANT)
+    Q_PROPERTY(QObject *musicPlaylists READ musicPlaylists CONSTANT)
+    Q_PROPERTY(QObject *newSongs READ newSongs CONSTANT)
+    Q_PROPERTY(QObject *personalFm READ personalFm CONSTANT)
+    Q_PROPERTY(QObject *personalRadar READ personalRadar CONSTANT)
+    Q_PROPERTY(QObject *playlistSong READ playlistSong CONSTANT)
+    Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
+    Q_PROPERTY(QObject *searchSongsResults READ searchSongsResults CONSTANT)
+    Q_PROPERTY(QObject *singerList READ singerList CONSTANT)
+    Q_PROPERTY(QObject *toplistList READ toplistList CONSTANT)
+public:
+    int songSource = 0;
+    int nowIndex = 0;
+    QString globalid;
+    QString globaltagid;
+    int loadState = 0;
+    FakeLegacyListModel allPlaylistMenuModel;
+    FakeLegacyListModel hotlistMenuModel;
+    FakeLegacyListModel hotPlayListsModel;
+    FakeLegacyListModel musicPlaylistsModel;
+    FakeLegacyListModel newSongsModel;
+    FakeLegacyListModel personalFmModel;
+    FakeLegacyListModel personalRadarModel;
+    FakeLegacyListModel playlistSongModel;
+    FakeLegacyListModel recommendSongsModel;
+    FakeLegacyListModel searchSongsResultsModel;
+    FakeLegacyListModel singerListModel;
+    FakeLegacyListModel toplistListModel;
+
+    QObject *allPlaylistMenu() { return &allPlaylistMenuModel; }
+    QObject *getHotlistMenu() { return &hotlistMenuModel; }
+    QObject *hotPlayLists() { return &hotPlayListsModel; }
+    QObject *musicPlaylists() { return &musicPlaylistsModel; }
+    QObject *newSongs() { return &newSongsModel; }
+    QObject *personalFm() { return &personalFmModel; }
+    QObject *personalRadar() { return &personalRadarModel; }
+    QObject *playlistSong() { return &playlistSongModel; }
+    QObject *recommendSongs() { return &recommendSongsModel; }
+    QObject *searchSongsResults() { return &searchSongsResultsModel; }
+    QObject *singerList() { return &singerListModel; }
+    QObject *toplistList() { return &toplistListModel; }
+
+    Q_INVOKABLE void getHotPlaylistMenu(int) {}
+    Q_INVOKABLE void getHotPlaylists(int) {}
+    Q_INVOKABLE void getPlaylistMenu(int) {}
+    Q_INVOKABLE void getNewSongs(int, int, int) {}
+    Q_INVOKABLE void getAllToplist() {}
+    Q_INVOKABLE void getHotSingers(int, int, int) {}
+    Q_INVOKABLE void getSingerCategory(int, int, int, int) {}
+
+signals:
+    void songSourceChanged();
+    void nowIndexChanged();
+    void globalidChanged();
+    void globaltagidChanged();
+    void loadStateChanged();
+};
+
+class FakeCompletedStart final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool homeLoaded MEMBER homeLoaded NOTIFY homeLoadedChanged)
+    Q_PROPERTY(bool playlistLoaded MEMBER playlistLoaded NOTIFY playlistLoadedChanged)
+public:
+    bool homeLoaded = false;
+    bool playlistLoaded = false;
+
+signals:
+    void homeLoadedChanged();
+    void playlistLoadedChanged();
+};
+
+class FakePageWindow final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QObject *completedStart READ completedStart CONSTANT)
+    Q_PROPERTY(int exitIndex MEMBER exitIndex NOTIFY exitIndexChanged)
+public:
+    FakeCompletedStart completed;
+    int exitIndex = 0;
+    QObject *completedStart() { return &completed; }
+
+signals:
+    void exitIndexChanged();
+};
+
+class PageTestContext final {
+public:
+    explicit PageTestContext(QQmlEngine &engine)
+    {
+        const QVariantMap themes{
+            {QStringLiteral("containColor"), QStringLiteral("#ffffff")},
+            {QStringLiteral("fontColor"), QStringLiteral("#202020")},
+            {QStringLiteral("fullColor"), QStringLiteral("#ffffff")},
+            {QStringLiteral("hoverColor"), QStringLiteral("#10000000")},
+            {QStringLiteral("primaryBlurColor"), QStringLiteral("#f0f0f0")},
+            {QStringLiteral("primaryColor"), QStringLiteral("#ffffff")},
+            {QStringLiteral("secondaryColor"), QStringLiteral("#f5f5f5")},
+            {QStringLiteral("shadowColor"), QStringLiteral("#20000000")},
+            {QStringLiteral("sideColor"), QStringLiteral("#eeeeee")},
+            {QStringLiteral("textColor"), QStringLiteral("#505050")},
+            {QStringLiteral("themeColor"), QStringLiteral("#3481fa")}};
+        const QVariantMap settings{
+            {QStringLiteral("cubeRadius"), 8}, {QStringLiteral("labelRadius"), 12},
+            {QStringLiteral("pageTitle"), 20}, {QStringLiteral("text"), 14},
+            {QStringLiteral("textH1"), 18}, {QStringLiteral("textH2"), 16},
+            {QStringLiteral("textTip"), 12}, {QStringLiteral("texticon"), 16},
+            {QStringLiteral("textmain"), 14}};
+        const QVariantMap lastSong{{QStringLiteral("hash"), QString{}},
+                                  {QStringLiteral("name"), QString{}},
+                                  {QStringLiteral("artist"), QString{}},
+                                  {QStringLiteral("cover"), QString{}},
+                                  {QStringLiteral("source"), 0}};
+
+        QQmlContext *context = engine.rootContext();
+        context->setContextProperty(QStringLiteral("MusicApi"), &musicApi);
+        context->setContextProperty(QStringLiteral("window"), &window);
+        context->setContextProperty(QStringLiteral("favoritesList"), &favoritesList);
+        context->setContextProperty(QStringLiteral("favoritesSong"), &favoritesSong);
+        context->setContextProperty(QStringLiteral("favoritesArtist"), &favoritesArtist);
+        context->setContextProperty(QStringLiteral("playListModel"), &playListModel);
+        context->setContextProperty(QStringLiteral("Style"),
+                                    QVariantMap{{QStringLiteral("themes"), themes},
+                                                {QStringLiteral("settings"), settings}});
+        context->setContextProperty(QStringLiteral("Options"),
+                                    QVariantMap{{QStringLiteral("lastSongs"), lastSong},
+                                                {QStringLiteral("settings"),
+                                                 QVariantMap{{QStringLiteral("soundQuality"), 0}}}});
+        context->setContextProperty(QStringLiteral("iconFont"),
+                                    QVariantMap{{QStringLiteral("name"), QString{}}});
+        context->setContextProperty(QStringLiteral("mainLayout"),
+                                    QVariantMap{{QStringLiteral("state"), QString{}}});
+        context->setContextProperty(QStringLiteral("mainSearchInput"),
+                                    QVariantMap{{QStringLiteral("text"), QString{}}});
+        context->setContextProperty(QStringLiteral("mainWarn"), &mainWarn);
+    }
+
+private:
+    FakeLegacyMusicApi musicApi;
+    FakePageWindow window;
+    FakeLegacyListModel favoritesList;
+    FakeLegacyListModel favoritesSong;
+    FakeLegacyListModel favoritesArtist;
+    FakeLegacyListModel playListModel;
+    FakeLegacyListModel mainWarn;
+};
+
+class QmlDiagnosticCapture final {
+public:
+    QmlDiagnosticCapture()
+    {
+        Q_ASSERT(!activeCapture);
+        activeCapture = this;
+        previousHandler = qInstallMessageHandler(messageHandler);
+    }
+
+    ~QmlDiagnosticCapture()
+    {
+        qInstallMessageHandler(previousHandler);
+        activeCapture = nullptr;
+    }
+
+    QString runtimeErrors() const
+    {
+        QStringList errors;
+        for (const QString &message : messages) {
+            if (message.contains(QStringLiteral("ReferenceError"))
+                || message.contains(QStringLiteral("TypeError"))
+                || message.contains(QStringLiteral("Cannot read property"))
+                || message.contains(QStringLiteral("Cannot call method"))
+                || message.contains(QStringLiteral("is not defined"))
+                || message.contains(QStringLiteral("is not a function")))
+                errors << message;
+        }
+        return errors.join(QLatin1Char('\n'));
+    }
+
+private:
+    static void messageHandler(QtMsgType, const QMessageLogContext &, const QString &message)
+    {
+        if (activeCapture)
+            activeCapture->messages << message;
+    }
+
+    inline static QmlDiagnosticCapture *activeCapture = nullptr;
+    QtMessageHandler previousHandler = nullptr;
+    QStringList messages;
+};
+
 namespace {
 std::unique_ptr<QObject> load(QQmlEngine &engine, const QString &name,
                               const QVariantMap &properties, QString *error)
@@ -260,12 +482,18 @@ private slots:
                                     QStringLiteral("pages/FavouritePage.qml"),
                                     QStringLiteral("pages/SearchPage.qml")}) {
             QQmlEngine engine;
+            PageTestContext context(engine);
+            QmlDiagnosticCapture diagnostics;
             QString error;
             auto object = loadUrl(engine, page,
                                   {{QStringLiteral("musicAdapter"), QVariant::fromValue<QObject *>(nullptr)},
                                    {QStringLiteral("playbackAdapter"), QVariant::fromValue<QObject *>(nullptr)}},
                                   &error);
             QVERIFY2(object, qPrintable(page + QStringLiteral(": ") + error));
+            QCoreApplication::processEvents();
+            QVERIFY2(diagnostics.runtimeErrors().isEmpty(),
+                     qPrintable(page + QStringLiteral(" emitted a QML runtime error:\n")
+                                + diagnostics.runtimeErrors()));
         }
     }
 
@@ -276,6 +504,8 @@ private slots:
                                     QStringLiteral("pages/FavouritePage.qml"),
                                     QStringLiteral("pages/SearchPage.qml")}) {
             QQmlEngine engine;
+            PageTestContext context(engine);
+            QmlDiagnosticCapture diagnostics;
             FakeHub hub;
             FakePlayback playback;
             QString error;
@@ -287,21 +517,65 @@ private slots:
             QCOMPARE(object->property("musicAdapter").value<QObject *>(), &hub);
             QCOMPARE(object->property("playbackAdapter").value<QObject *>(),
                      static_cast<QObject *>(&playback));
+            QCoreApplication::processEvents();
+            QVERIFY2(diagnostics.runtimeErrors().isEmpty(),
+                     qPrintable(page + QStringLiteral(" emitted a QML runtime error:\n")
+                                + diagnostics.runtimeErrors()));
         }
     }
 
     void navigationHasNoSourceLibraryRoute()
     {
         QQmlEngine engine;
+        PageTestContext context(engine);
+        QmlDiagnosticCapture diagnostics;
         QString error;
         auto content = loadUrl(engine, QStringLiteral("layout/MainContent.qml"), {}, &error);
         QVERIFY2(content, qPrintable(error));
         QVERIFY(!content->findChild<QObject *>(QStringLiteral("sourceLibrary" "Page")));
         QCOMPARE(content->metaObject()->indexOfSignal("configureSourceRequested()"), -1);
-        QVariant accepted;
-        QVERIFY(QMetaObject::invokeMethod(content.get(), "contentIndexed",
-                                         Q_RETURN_ARG(QVariant, accepted), Q_ARG(QVariant, 7)));
-        QCOMPARE(accepted.toBool(), false);
+        for (const QVariant &invalid : {QVariant(-1), QVariant(2), QVariant(7),
+                                        QVariant(1.5), QVariant(QStringLiteral("1")), QVariant()})
+            QCOMPARE(invokeVariant(content.get(), "contentIndexed", invalid).toBool(), false);
+        QCOMPARE(content->property("pageIndex").toInt(), 0);
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(),
+                 qPrintable(QStringLiteral("invalid navigation emitted a QML runtime error:\n")
+                            + diagnostics.runtimeErrors()));
+
+        QObject *home = content->findChild<QObject *>(QStringLiteral("homePageLoader"));
+        QObject *playlist = content->findChild<QObject *>(QStringLiteral("playlistPageLoader"));
+        QObject *favourite = content->findChild<QObject *>(QStringLiteral("favouritePageLoader"));
+        QObject *file = content->findChild<QObject *>(QStringLiteral("filePageLoader"));
+        QObject *download = content->findChild<QObject *>(QStringLiteral("downloadPageLoader"));
+        QObject *search = content->findChild<QObject *>(QStringLiteral("searchPageLoader"));
+        QVERIFY(home);
+        QVERIFY(playlist);
+        QVERIFY(favourite);
+        QVERIFY(file);
+        QVERIFY(download);
+        QVERIFY(search);
+        QCOMPARE(home->property("active").toBool(), true);
+        QCOMPARE(home->property("visible").toBool(), true);
+        QCOMPARE(playlist->property("active").toBool(), false);
+        QCOMPARE(playlist->property("visible").toBool(), false);
+
+        QCOMPARE(invokeVariant(content.get(), "contentIndexed", 1).toBool(), true);
+        QCOMPARE(content->property("pageIndex").toInt(), 1);
+        QCOMPARE(home->property("active").toBool(), false);
+        QCOMPARE(home->property("visible").toBool(), false);
+        QCOMPARE(playlist->property("active").toBool(), true);
+        QCOMPARE(playlist->property("visible").toBool(), true);
+
+        QCOMPARE(invokeVariant(content.get(), "contentIndexed", 3).toBool(), true);
+        QCOMPARE(content->property("pageIndex").toInt(), 3);
+        QCOMPARE(playlist->property("active").toBool(), false);
+        QCOMPARE(playlist->property("visible").toBool(), false);
+        QCOMPARE(favourite->property("active").toBool(), true);
+        QCOMPARE(favourite->property("visible").toBool(), true);
+
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(),
+                 qPrintable(QStringLiteral("navigation emitted a QML runtime error:\n")
+                            + diagnostics.runtimeErrors()));
 
         FakeContentController controller;
         FakeNavigationWindow window;
@@ -329,6 +603,7 @@ private slots:
     void mainContentAcceptsNullableAdapterInjection()
     {
         QQmlEngine engine;
+        PageTestContext context(engine);
         FakeHub hub;
         FakePlayback playback;
         QString error;

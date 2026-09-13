@@ -26,12 +26,26 @@ Rectangle {
     property int pageIndex: 0
     //signal stackChange(int index)
     function contentIndexed(choice) {
-        if(choice !== mainContent.pageIndex) {
-            mainContent.pages[mainContent.pageIndex].visible = false;
-            mainContent.pages[mainContent.pageIndex].active = false;
-            mainContent.pages[choice].active = true;
-            mainContent.pageIndex = choice;
+        if (!Number.isInteger(choice)
+                || choice < 0
+                || choice >= mainContent.pages.length
+                || mainContent.pages[choice] === null)
+            return false;
+
+        if (choice === mainContent.pageIndex)
+            return true;
+
+        const previous = mainContent.pages[mainContent.pageIndex];
+        if (previous) {
+            previous.visible = false;
+            previous.active = false;
         }
+
+        const next = mainContent.pages[choice];
+        next.active = true;
+        next.visible = true;
+        mainContent.pageIndex = choice;
+        return true;
     }
     function finishedLoaderPage(choice) {
         pageAnine.stop();
@@ -63,6 +77,7 @@ Rectangle {
     // Home
     Loader {
         id: homePage
+        objectName: "homePageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -81,6 +96,7 @@ Rectangle {
     // 分类
     Loader {
         id: playlistPage
+        objectName: "playlistPageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -99,6 +115,7 @@ Rectangle {
     // 收藏
     Loader {
         id: favouritePage
+        objectName: "favouritePageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -118,6 +135,7 @@ Rectangle {
     // 本地文件
     Loader {
         id: filePage
+        objectName: "filePageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -133,6 +151,7 @@ Rectangle {
     // 下载
     Loader {
         id: downloadPage
+        objectName: "downloadPageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -148,6 +167,7 @@ Rectangle {
     // 搜索页
     Loader {
         id: searchPage
+        objectName: "searchPageLoader"
         x: 0
         y: 60
         opacity: 1
