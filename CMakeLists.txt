@@ -189,6 +189,21 @@ add_library(quemusic_music_hub STATIC core/music/MusicHub.cpp core/music/MusicHu
 target_compile_features(quemusic_music_hub PUBLIC cxx_std_17)
 target_link_libraries(quemusic_music_hub PUBLIC quemusic_music_repository quemusic_music_page_model)
 
+add_library(quemusic_original_ui_music_adapter STATIC
+    core/music/OriginalUiMusicAdapter.cpp
+    core/music/OriginalUiMusicAdapter.h
+    api/OnlineListModel.cpp
+    api/OnlineListModel.h
+)
+target_compile_features(quemusic_original_ui_music_adapter PUBLIC cxx_std_17)
+target_include_directories(quemusic_original_ui_music_adapter PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/api
+)
+target_link_libraries(quemusic_original_ui_music_adapter PUBLIC
+    quemusic_music_hub
+    quemusic_playback_coordinator
+)
+
 file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS "components/*.qml")
 
 if(BUILD_TESTING)
@@ -426,6 +441,14 @@ if(BUILD_TESTING)
     add_dependencies(quemusic_music_hub_test quemusic_hub_fixture)
     add_test(NAME quemusic_music_hub_test COMMAND quemusic_music_hub_test)
     set_tests_properties(quemusic_music_hub_test PROPERTIES TIMEOUT 30)
+
+    qt_add_executable(quemusic_original_ui_music_adapter_test
+        tests/tst_OriginalUiMusicAdapter.cpp)
+    target_link_libraries(quemusic_original_ui_music_adapter_test PRIVATE
+        quemusic_original_ui_music_adapter
+        Qt6::Test)
+    add_test(NAME quemusic_original_ui_music_adapter_test
+        COMMAND quemusic_original_ui_music_adapter_test)
 
     # Task12c isolated private playback core and dynamically loaded fixture.
     set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_playback_fixture)
