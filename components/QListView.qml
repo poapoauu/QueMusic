@@ -333,22 +333,25 @@ ListView {
             onClicked: (mouse) => {
                 if (mouse.button === Qt.LeftButton) {
                     onClicked: view.clicked(index);
-                } else {
+                } else if (view.menuModel.length > 0) {
                     menu.index = index;
                     view.menu.popup();
                 }
                 forceActiveFocus();
             }
 
-            Row {
+            // Keep the original tool slots when an unsupported action is hidden.
+            Item {
                 x: view.toolX
-                spacing: 2
+                width: 112
                 y: 12
                 height: 36
                 opacity: listArea.containsMouse ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 SButton {
                     iconCharacter: "\uf050"
+                    visible: view.menuModel.length > 0
+                    enabled: view.menuModel.length > 0
                     width: 36
                     height: 36
                     radius: 36
@@ -361,7 +364,10 @@ ListView {
                     }
                 }
                 SButton {
+                    x: 38
                     iconCharacter: view.toolText1
+                    visible: view.toolText1.length > 0
+                    enabled: view.toolText1.length > 0
                     width: 36
                     height: 36
                     radius: 36
@@ -371,6 +377,7 @@ ListView {
                     onClicked: view.toolClicked(index,1)
                 }
                 SButton {
+                    x: 76
                     iconCharacter: view.toolText0
                     width: 36
                     height: 36

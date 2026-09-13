@@ -1,6 +1,8 @@
 #include <QAbstractListModel>
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QTest>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
@@ -287,6 +289,18 @@ private:
 };
 
 namespace {
+QQuickItem *findToolButton(QQuickItem *item, const QString &icon)
+{
+    const QVariant character = item->property("iconCharacter");
+    if (character.isValid() && character.toString() == icon)
+        return item;
+    for (QQuickItem *child : item->childItems()) {
+        if (auto *button = findToolButton(child, icon))
+            return button;
+    }
+    return nullptr;
+}
+
 std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, QObject *adapter, QString *error)
 {
     QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/QueMusic/") + page));
@@ -395,10 +409,17 @@ private slots:
     void adapterDetailKeepsOnlyEnqueueActionAvailable()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        QQuickWindow window;
+        window.resize(810, 540);
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
         QVERIFY2(playlist, qPrintable(error));
         playlist->setProperty("width", 810);
         playlist->setProperty("height", 540);
+        auto *pageItem = qobject_cast<QQuickItem *>(playlist.get());
+        QVERIFY(pageItem);
+        pageItem->setParentItem(window.contentItem());
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
         adapter.category.setRows(categoryRows());
         QTRY_COMPARE(playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"))
                          ->property("count").toInt(), 1);
@@ -420,11 +441,39 @@ private slots:
         QCOMPARE(detailList->property("toolText1").toString(), QString());
         QCOMPARE(detailList->property("menuModel").toList().size(), 0);
 
-        QVERIFY(QMetaObject::invokeMethod(detailList, "toolClicked",
-                                          Q_ARG(int, 0), Q_ARG(int, 0)));
-        QCOMPARE(adapter.enqueuedRows.size(), 1);
+        QQuickItem *row = nullptr;
+        QTRY_VERIFY((row = detailList->property("currentItem").value<QQuickItem *>()));
+        auto *menuButton = findToolButton(row, QStringLiteral("\uf050"));
+        auto *favoriteButton = findToolButton(row, QString{});
+        auto *enqueueButton = findToolButton(row, detailList->property("toolText0").toString());
+        QVERIFY(menuButton); QVERIFY(favoriteButton); QVERIFY(enqueueButton);
+        QVERIFY(!menuButton->isVisible());
+        QVERIFY(!menuButton->isEnabled());
+        QVERIFY(!favoriteButton->isVisible());
+        QVERIFY(!favoriteButton->isEnabled());
+        QVERIFY(enqueueButton->isVisible());
+        QVERIFY(enqueueButton->isEnabled());
+        QCOMPARE(enqueueButton->mapToItem(row, QPointF()).x(), toolX + 76);
+
+        // Finish the existing detail transition before sending real pointer events.
+        QTRY_COMPARE(detail->property("scale").toReal(), 1.0);
+        QTRY_COMPARE(detail->property("opacity").toReal(), 1.0);
+        const QPoint enqueueCenter = enqueueButton->mapToScene(
+            QPointF(enqueueButton->width() / 2, enqueueButton->height() / 2)).toPoint();
+        QVERIFY(window.contentItem()->contains(enqueueCenter));
+        QTest::mouseMove(&window, enqueueCenter);
+        QTRY_COMPARE(enqueueButton->parentItem()->opacity(), 1.0);
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, enqueueCenter);
+        QTRY_COMPARE(adapter.enqueuedRows.size(), 1);
         QCOMPARE(adapter.enqueuedRows.constFirst().value(QStringLiteral("_adapterKey")).toULongLong(),
                  73ULL);
+        QCOMPARE(adapter.enqueuedRows.constFirst(), categoryRows().constFirst().toMap());
+
+        QObject *menu = detailList->property("menu").value<QObject *>();
+        QVERIFY(menu);
+        QTest::mouseClick(&window, Qt::RightButton, Qt::NoModifier,
+                          row->mapToScene(QPointF(100, 30)).toPoint());
+        QVERIFY(!menu->property("visible").toBool());
 
         QVERIFY(QMetaObject::invokeMethod(detailList, "toolClicked",
                                           Q_ARG(int, 0), Q_ARG(int, 1)));
@@ -434,6 +483,35 @@ private slots:
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
         QCOMPARE(context.legacyLists()->favoriteQueries, 0);
         QCOMPARE(context.legacyLists()->favoriteCalls, 0);
+    }
+
+    void legacyListControlsRemainAvailable()
+    {
+        QQmlEngine engine; PageContext context(engine);
+        FakeListModel model(recommendationRows());
+        QQuickWindow window;
+        window.resize(810, 540);
+        QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/QueMusic/components/QListView.qml")));
+        std::unique_ptr<QObject> list(component.createWithInitialProperties({
+            {QStringLiteral("model"), QVariant::fromValue(&model)},
+            {QStringLiteral("width"), 810}, {QStringLiteral("height"), 540}}));
+        QVERIFY2(list, qPrintable(component.errorString()));
+        auto *listItem = qobject_cast<QQuickItem *>(list.get());
+        QVERIFY(listItem);
+        listItem->setParentItem(window.contentItem());
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QQuickItem *row = nullptr;
+        QTRY_VERIFY((row = list->property("currentItem").value<QQuickItem *>()));
+        const QStringList icons{QStringLiteral("\uf050"), QStringLiteral("\uf0c8"),
+                                QStringLiteral("\uf095")};
+        for (int i = 0; i < icons.size(); ++i) {
+            auto *button = findToolButton(row, icons.at(i));
+            QVERIFY(button);
+            QVERIFY(button->isVisible());
+            QVERIFY(button->isEnabled());
+            QCOMPARE(button->mapToItem(row, QPointF()).x(), list->property("toolX").toReal() + i * 38);
+        }
     }
 
     void adapterRowsNeverInvokeLegacyPlaylistActions()
