@@ -5,12 +5,49 @@
 #include "PlaybackCoordinator.h"
 #include "OnlineListModel.h"
 
+#include <QRegularExpression>
+
 namespace {
 
 QString artistName(const QVariantMap &item)
 {
     const QStringList artists = item.value(QStringLiteral("artists")).toStringList();
     return artists.join(QStringLiteral(", "));
+}
+
+QString safeReasonKey(const QVariant &value)
+{
+    const QString key = value.toString();
+    static const QRegularExpression pattern(QStringLiteral("^[A-Za-z][A-Za-z0-9_.-]{0,127}$"));
+    return pattern.match(key).hasMatch() ? key : QStringLiteral("music.actionUnavailable");
+}
+
+QVariantMap unavailable(const QString &reason = QStringLiteral("music.actionUnavailable"))
+{
+    return {{QStringLiteral("enabled"), false}, {QStringLiteral("reasonKey"), reason}};
+}
+
+QVariantMap actionCapability(const QVariantMap &item, SourceActionV2 action)
+{
+    const QVariantMap actions = item.value(QStringLiteral("availableActions")).toMap();
+    const QVariantMap value = actions.value(QString::number(int(action))).toMap();
+    if (value.value(QStringLiteral("state")).toInt() != int(AvailabilityV2::Available))
+        return unavailable(safeReasonKey(value.value(QStringLiteral("reasonKey"))));
+    return {{QStringLiteral("enabled"), true}, {QStringLiteral("reasonKey"), QString{}}};
+}
+
+QVariantMap browseCapability(const QVariantMap &item)
+{
+    const QVariant entityValue = item.value(QStringLiteral("ref")).toMap()
+        .value(QStringLiteral("entityType"));
+    const int entityType = entityValue.isValid() ? entityValue.toInt() : -1;
+    const bool supported = entityType == int(MediaEntityTypeV2::Album)
+        || entityType == int(MediaEntityTypeV2::Artist)
+        || entityType == int(MediaEntityTypeV2::Playlist)
+        || entityType == int(MediaEntityTypeV2::Genre);
+    return supported ? QVariantMap{{QStringLiteral("enabled"), true},
+                                   {QStringLiteral("reasonKey"), QString{}}}
+                     : unavailable(QStringLiteral("music.browseUnsupported"));
 }
 
 } // namespace
@@ -70,6 +107,26 @@ void OriginalUiMusicAdapter::search(const QString &text)
     if (m_hub) m_hub->search(text);
 }
 
+QVariantMap OriginalUiMusicAdapter::capabilities(const QVariant &rows) const
+{
+    QVariantList values;
+    if (rows.metaType().id() == QMetaType::QVariantMap)
+        values.append(rows);
+    else if (rows.metaType().id() == QMetaType::QVariantList)
+        values = rows.toList();
+    return capabilitiesFor(values);
+}
+
+void OriginalUiMusicAdapter::loadMore(int pageKind, const QString &sectionId)
+{
+    if (m_hub) m_hub->loadMore(pageKind, sectionId);
+}
+
+void OriginalUiMusicAdapter::retry(int pageKind, const QString &sectionId)
+{
+    if (m_hub) m_hub->retrySection(pageKind, sectionId);
+}
+
 QVariantMap OriginalUiMusicAdapter::resolvePresentationItem(const QVariantMap &row) const
 {
     bool ok = false;
@@ -80,26 +137,88 @@ QVariantMap OriginalUiMusicAdapter::resolvePresentationItem(const QVariantMap &r
 bool OriginalUiMusicAdapter::browse(const QVariantMap &row)
 {
     const QVariantMap item = resolvePresentationItem(row);
-    return m_hub && !item.isEmpty() && m_hub->browse(item);
+    return m_hub && !item.isEmpty() && permits(item, QStringLiteral("canBrowse"))
+        && m_hub->browse(item);
 }
 
 QUuid OriginalUiMusicAdapter::play(const QVariantMap &row)
 {
     const QVariantMap item = resolvePresentationItem(row);
-    return m_playback && !item.isEmpty() ? m_playback->play(item) : QUuid{};
+    return m_playback && !item.isEmpty() && permits(item, QStringLiteral("canPlay"))
+        ? m_playback->play(item) : QUuid{};
 }
 
 QUuid OriginalUiMusicAdapter::enqueue(const QVariantMap &row)
 {
     const QVariantMap item = resolvePresentationItem(row);
-    return m_playback && !item.isEmpty() ? m_playback->enqueue(item) : QUuid{};
+    return m_playback && !item.isEmpty() && permits(item, QStringLiteral("canEnqueue"))
+        ? m_playback->enqueue(item) : QUuid{};
 }
 
 QUuid OriginalUiMusicAdapter::setFavorite(const QVariantMap &row, bool favorite)
 {
     const QVariantMap item = resolvePresentationItem(row);
     return m_hub && m_hub->actions() && !item.isEmpty()
+        && permits(item, favorite ? QStringLiteral("canFavorite") : QStringLiteral("canUnfavorite"))
         ? m_hub->actions()->setFavorite(item, favorite) : QUuid{};
+}
+
+QVariantMap OriginalUiMusicAdapter::capabilitiesForItem(const QVariantMap &item) const
+{
+    const auto browse = browseCapability(item);
+    const auto play = actionCapability(item, SourceActionV2::Play);
+    const auto favorite = actionCapability(item, SourceActionV2::Favorite);
+    const auto unfavorite = actionCapability(item, SourceActionV2::Unfavorite);
+    return {{QStringLiteral("canBrowse"), browse.value(QStringLiteral("enabled"))},
+            {QStringLiteral("browseReasonKey"), browse.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canPlay"), play.value(QStringLiteral("enabled"))},
+            {QStringLiteral("playReasonKey"), play.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canEnqueue"), play.value(QStringLiteral("enabled"))},
+            {QStringLiteral("enqueueReasonKey"), play.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canFavorite"), favorite.value(QStringLiteral("enabled"))},
+            {QStringLiteral("favoriteReasonKey"), favorite.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canUnfavorite"), unfavorite.value(QStringLiteral("enabled"))},
+            {QStringLiteral("unfavoriteReasonKey"), unfavorite.value(QStringLiteral("reasonKey"))}};
+}
+
+QVariantMap OriginalUiMusicAdapter::capabilitiesFor(const QVariantList &rows) const
+{
+    const QStringList names{QStringLiteral("Browse"), QStringLiteral("Play"),
+                            QStringLiteral("Enqueue"), QStringLiteral("Favorite"),
+                            QStringLiteral("Unfavorite")};
+    QVariantMap result;
+    for (const QString &name : names) {
+        result.insert(QStringLiteral("can") + name, false);
+        result.insert(name.left(1).toLower() + name.mid(1) + QStringLiteral("ReasonKey"),
+                      QStringLiteral("music.actionInvalidItem"));
+    }
+    if (rows.isEmpty()) return result;
+
+    bool first = true;
+    for (const QVariant &value : rows) {
+        if (value.metaType().id() != QMetaType::QVariantMap) return result;
+        const QVariantMap item = resolvePresentationItem(value.toMap());
+        if (item.isEmpty()) return result;
+        const QVariantMap itemCapabilities = capabilitiesForItem(item);
+        for (const QString &name : names) {
+            const QString enabled = QStringLiteral("can") + name;
+            const QString reason = name.left(1).toLower() + name.mid(1) + QStringLiteral("ReasonKey");
+            if (first) {
+                result.insert(enabled, itemCapabilities.value(enabled));
+                result.insert(reason, itemCapabilities.value(reason));
+            } else if (!itemCapabilities.value(enabled).toBool()) {
+                result.insert(enabled, false);
+                result.insert(reason, itemCapabilities.value(reason));
+            }
+        }
+        first = false;
+    }
+    return result;
+}
+
+bool OriginalUiMusicAdapter::permits(const QVariantMap &item, const QString &capability) const
+{
+    return capabilitiesForItem(item).value(capability).toBool();
 }
 
 QVariantMap OriginalUiMusicAdapter::presentationItem(const QVariantMap &full)

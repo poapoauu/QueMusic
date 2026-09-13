@@ -39,6 +39,11 @@ public:
 
     Q_INVOKABLE void activatePage(int pageKind);
     Q_INVOKABLE void search(const QString &text);
+    // The argument is either one opaque presentation row or a list of rows.
+    // Returned values are limited to booleans and vetted reason keys.
+    Q_INVOKABLE QVariantMap capabilities(const QVariant &rows) const;
+    Q_INVOKABLE void loadMore(int pageKind, const QString &sectionId);
+    Q_INVOKABLE void retry(int pageKind, const QString &sectionId);
     Q_INVOKABLE bool browse(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid play(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &presentationItem);
@@ -50,6 +55,9 @@ signals:
 
 private:
     QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
+    QVariantMap capabilitiesFor(const QVariantList &rows) const;
+    QVariantMap capabilitiesForItem(const QVariantMap &fullItem) const;
+    bool permits(const QVariantMap &fullItem, const QString &capability) const;
     QVariantMap presentationItem(const QVariantMap &fullItem);
     void clearPresentationState();
     void rebuild();

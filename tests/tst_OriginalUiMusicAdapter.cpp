@@ -387,6 +387,61 @@ private slots:
         QVERIFY(adapter.setFavorite(unknown, true).isNull());
     }
 
+    void projectsCapabilitiesAndRejectsUnavailableActions()
+    {
+        RoutingHarness harness;
+        QVERIFY(harness.init());
+        MediaItemV2 item = routedItem(MediaEntityTypeV2::Track, QStringLiteral("capability-track"));
+        item.availableActions = {
+            {SourceActionV2::Play, {AvailabilityV2::Available, {}, {}}},
+            {SourceActionV2::Favorite, {AvailabilityV2::Unsupported,
+                                        QStringLiteral("music.favorite.unsupported"), {}}},
+            {SourceActionV2::Unfavorite, {AvailabilityV2::Unavailable,
+                                          QStringLiteral("music.favorite.signIn"), {}}}};
+        accept(harness.hub->recommendation(), resultWith({item}, QStringLiteral("recommend")));
+        const QVariantMap row = harness.adapter->recommendSongs()->get(0);
+
+        QVariantMap projected;
+        QVERIFY(QMetaObject::invokeMethod(harness.adapter.get(), "capabilities",
+                                          Q_RETURN_ARG(QVariantMap, projected),
+                                          Q_ARG(QVariant, QVariant(row))));
+        QVERIFY(projected.value(QStringLiteral("canPlay")).toBool());
+        QVERIFY(projected.value(QStringLiteral("canEnqueue")).toBool());
+        QVERIFY(!projected.value(QStringLiteral("canFavorite")).toBool());
+        QCOMPARE(projected.value(QStringLiteral("favoriteReasonKey")).toString(),
+                 QStringLiteral("music.favorite.unsupported"));
+        QVERIFY(!projected.value(QStringLiteral("canUnfavorite")).toBool());
+        QCOMPARE(projected.value(QStringLiteral("unfavoriteReasonKey")).toString(),
+                 QStringLiteral("music.favorite.signIn"));
+        QVERIFY(harness.adapter->setFavorite(row, true).isNull());
+        QVERIFY(harness.adapter->setFavorite(row, false).isNull());
+    }
+
+    void intersectsCapabilitiesForMixedPresentationSelections()
+    {
+        RoutingHarness harness;
+        QVERIFY(harness.init());
+        MediaItemV2 first = routedItem(MediaEntityTypeV2::Track, QStringLiteral("first"));
+        first.availableActions = {{SourceActionV2::Play, {AvailabilityV2::Available, {}, {}}},
+                                  {SourceActionV2::Favorite, {AvailabilityV2::Available, {}, {}}}};
+        MediaItemV2 second = routedItem(MediaEntityTypeV2::Track, QStringLiteral("second"));
+        second.availableActions = {{SourceActionV2::Play, {AvailabilityV2::Available, {}, {}}},
+                                   {SourceActionV2::Favorite, {AvailabilityV2::Unsupported,
+                                                               QStringLiteral("music.favorite.unsupported"), {}}}};
+        accept(harness.hub->recommendation(), resultWith({first, second}, QStringLiteral("recommend")));
+
+        QVariantMap projected;
+        const QVariantList rows{harness.adapter->recommendSongs()->get(0),
+                                harness.adapter->recommendSongs()->get(1)};
+        QVERIFY(QMetaObject::invokeMethod(harness.adapter.get(), "capabilities",
+                                          Q_RETURN_ARG(QVariantMap, projected),
+                                          Q_ARG(QVariant, QVariant(rows))));
+        QVERIFY(projected.value(QStringLiteral("canPlay")).toBool());
+        QVERIFY(!projected.value(QStringLiteral("canFavorite")).toBool());
+        QCOMPARE(projected.value(QStringLiteral("favoriteReasonKey")).toString(),
+                 QStringLiteral("music.favorite.unsupported"));
+    }
+
     void doesNotExposeFullV2ItemsThroughTheMetaObject()
     {
         const QMetaObject &metaObject = OriginalUiMusicAdapter::staticMetaObject;

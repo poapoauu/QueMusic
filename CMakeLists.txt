@@ -569,6 +569,28 @@ if(BUILD_TESTING)
         TIMEOUT 30 ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QML_IMPORT_PATH=${CMAKE_CURRENT_BINARY_DIR}")
 
+    qt_add_executable(quemusic_original_ui_actions_qml_test
+        tests/tst_OriginalUiActionsQml.cpp)
+    target_compile_features(quemusic_original_ui_actions_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_original_ui_actions_qml_test
+        "quemusic_original_ui_actions_qml_test_qml"
+        PREFIX "/QueMusic" FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js)
+    qt_add_resources(quemusic_original_ui_actions_qml_test
+        "quemusic_original_ui_actions_qml_test_pages"
+        PREFIX "/QueMusic" FILES
+            pages/FavouritePage.qml
+            pages/SearchPage.qml
+            pages/DownloadPage.qml)
+    target_link_libraries(quemusic_original_ui_actions_qml_test PRIVATE
+        Qt6::Qml Qt6::Quick Qt6::Test)
+    add_test(NAME quemusic_original_ui_actions_qml_test
+        COMMAND quemusic_original_ui_actions_qml_test)
+    set_tests_properties(quemusic_original_ui_actions_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QML_IMPORT_PATH=${CMAKE_CURRENT_BINARY_DIR}")
+
     qt_add_executable(quemusic_original_ui_structure_test
         tests/tst_OriginalUiStructure.cpp)
     target_compile_features(quemusic_original_ui_structure_test PRIVATE cxx_std_17)

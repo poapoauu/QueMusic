@@ -11,6 +11,25 @@ Item {
 
     property int searchTab: 0
 
+    function capabilitiesFor(row) {
+        return musicAdapter && row ? musicAdapter.capabilities(row) : ({})
+    }
+
+    function modelCapabilities(model) {
+        if (!musicAdapter || !model) return ({})
+        var rows = []
+        for (var i = 0; i < model.count; ++i)
+            rows.push(model.get(i))
+        return musicAdapter.capabilities(rows)
+    }
+
+    Component.onCompleted: {
+        if (musicAdapter) {
+            musicAdapter.activatePage(3)
+            musicAdapter.search(mainSearchInput.text)
+        }
+    }
+
 
     QPages {
         x: 24
@@ -56,6 +75,7 @@ Item {
                 radius: 18
                 cardRadius: Style.settings.labelRadius
                 model: ["酷狗音乐","网易云音乐","QQ音乐(x)","自定义源(x)"]
+                visible: !musicAdapter
                 onTransformed: (choiced) => {
                     MusicApi.songSource = choiced;
                     MusicApi.searchSongsResults.clear();
@@ -75,6 +95,12 @@ Item {
             rectXy: Qt.rect(0, 12, width, 40)
             blurSource: searchChildPage.pageList[searchChildPage.lastIndex]
             onTabChange: (index) => {
+                if (musicAdapter) {
+                    searchChildPage.stack(index)
+                    searchPage.searchTab = index
+                    musicAdapter.search(mainSearchInput.text)
+                    return
+                }
                 MusicApi.searchSongsResults.clear()
                 searchChildPage.stack(index)
                 MusicApi.nowIndex = index
@@ -86,11 +112,18 @@ Item {
             id: searchSong
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: musicAdapter ? musicAdapter.searchSongs : MusicApi.searchSongsResults
             clip: true
             topMargin: 72
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: musicAdapter && !searchPage.modelCapabilities(model).canEnqueue ? "" : "\uf095"
+            toolText1: musicAdapter && !searchPage.modelCapabilities(model).canFavorite ? "" : "\uf0c8"
 
             onEnded: {
+                if (musicAdapter) {
+                    musicAdapter.loadMore(3, "")
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,0,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -102,6 +135,12 @@ Item {
             }
 
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canPlay)
+                        musicAdapter.play(adapterRow)
+                    return
+                }
                 if(Options.settings.soundQuality === 0) {
                     MusicApi.getMusicInfo(model.get(index).hash);
                 } else if(Options.settings.soundQuality === 1) {
@@ -111,6 +150,14 @@ Item {
                 }
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 0 && capabilitiesFor(adapterRow).canEnqueue)
+                        musicAdapter.enqueue(adapterRow)
+                    else if (tool === 1 && capabilitiesFor(adapterRow).canFavorite)
+                        musicAdapter.setFavorite(adapterRow, true)
+                    return
+                }
                 switch(tool) {
                 case 0:
                     var listIndex = -1;
@@ -138,6 +185,8 @@ Item {
                 }
             }
             onMenuClicked: (index,choice) => {
+                if (musicAdapter)
+                    return
                 switch(choice) {
                 case 0:
                     if(Options.settings.soundQuality === 0) {
@@ -155,14 +204,21 @@ Item {
             id: searchLists
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: musicAdapter ? musicAdapter.searchSongs : MusicApi.searchSongsResults
             clip: true
             visible: false
             topMargin: 72
             bottomMargin: 24
             isList: true
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: ""
+            toolText1: musicAdapter && !searchPage.modelCapabilities(model).canFavorite ? "" : "\uf0c8"
 
             onEnded: {
+                if (musicAdapter) {
+                    musicAdapter.loadMore(3, "")
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,1,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -174,6 +230,12 @@ Item {
             }
 
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canBrowse)
+                        musicAdapter.browse(adapterRow)
+                    return
+                }
                 MusicApi.playlistSong.clear();
                 MusicApi.globalid = model.get(index).hash;
                 MusicApi.getPlaylistSongs(model.get(index).hash,1,20);
@@ -183,6 +245,12 @@ Item {
                 window.exitIndex = 2;
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 1 && capabilitiesFor(adapterRow).canFavorite)
+                        musicAdapter.setFavorite(adapterRow, true)
+                    return
+                }
                 switch(tool) {
                 case 1:
                     if (favoritesList.isFavorite(model.get(index).hash, "playlist")) {
@@ -200,14 +268,21 @@ Item {
             id: searchAlbum
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: musicAdapter ? musicAdapter.searchSongs : MusicApi.searchSongsResults
             clip: true
             visible: false
             topMargin: 72
             bottomMargin: 24
             isList: true
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: musicAdapter && !searchPage.modelCapabilities(model).canEnqueue ? "" : "\uf095"
+            toolText1: ""
 
             onEnded: {
+                if (musicAdapter) {
+                    musicAdapter.loadMore(3, "")
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,2,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -218,9 +293,21 @@ Item {
                 }
             }
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canBrowse)
+                        musicAdapter.browse(adapterRow)
+                    return
+                }
                 MusicApi.getMusicInfo(model.get(index).hash);
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 0 && capabilitiesFor(adapterRow).canEnqueue)
+                        musicAdapter.enqueue(adapterRow)
+                    return
+                }
                 switch(tool) {
                 case 0:
                     var listIndex = -1;
@@ -243,13 +330,20 @@ Item {
             id: searchLyrics
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: musicAdapter ? musicAdapter.searchSongs : MusicApi.searchSongsResults
             clip: true
             visible: false
             topMargin: 72
             bottomMargin: 24
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: musicAdapter && !searchPage.modelCapabilities(model).canEnqueue ? "" : "\uf095"
+            toolText1: musicAdapter && !searchPage.modelCapabilities(model).canFavorite ? "" : "\uf0c8"
 
             onEnded: {
+                if (musicAdapter) {
+                    musicAdapter.loadMore(3, "")
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,3,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -260,6 +354,12 @@ Item {
                 }
             }
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canPlay)
+                        musicAdapter.play(adapterRow)
+                    return
+                }
                 if(Options.settings.soundQuality === 0) {
                     MusicApi.getMusicInfo(model.get(index).hash);
                 } else if(Options.settings.soundQuality === 1) {
@@ -269,6 +369,14 @@ Item {
                 }
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 0 && capabilitiesFor(adapterRow).canEnqueue)
+                        musicAdapter.enqueue(adapterRow)
+                    else if (tool === 1 && capabilitiesFor(adapterRow).canFavorite)
+                        musicAdapter.setFavorite(adapterRow, true)
+                    return
+                }
                 switch(tool) {
                 case 0:
                     var listIndex = -1;
@@ -296,6 +404,8 @@ Item {
                 }
             }
             onMenuClicked: (index,choice) => {
+                if (musicAdapter)
+                    return
                 switch(choice) {
                 case 0:
                     if(Options.settings.soundQuality === 0) {
