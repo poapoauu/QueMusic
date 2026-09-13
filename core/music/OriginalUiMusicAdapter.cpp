@@ -36,6 +36,12 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     connect(m_hub, &MusicHub::sourceOptionsChanged, this, &OriginalUiMusicAdapter::sourceOptionsChanged);
     connect(m_hub, &MusicHub::selectedSourceInstanceIdChanged,
             this, &OriginalUiMusicAdapter::selectedSourceInstanceIdChanged);
+    connect(m_hub, &QObject::destroyed, this, [this] {
+        m_hub = nullptr;
+        clearPresentationState();
+        emit sourceOptionsChanged();
+        emit selectedSourceInstanceIdChanged();
+    });
     rebuild();
 }
 
@@ -64,7 +70,7 @@ void OriginalUiMusicAdapter::search(const QString &text)
     if (m_hub) m_hub->search(text);
 }
 
-QVariantMap OriginalUiMusicAdapter::fullItem(const QVariantMap &row) const
+QVariantMap OriginalUiMusicAdapter::resolvePresentationItem(const QVariantMap &row) const
 {
     bool ok = false;
     const quint64 key = row.value(QStringLiteral("_adapterKey")).toULongLong(&ok);
@@ -73,25 +79,25 @@ QVariantMap OriginalUiMusicAdapter::fullItem(const QVariantMap &row) const
 
 bool OriginalUiMusicAdapter::browse(const QVariantMap &row)
 {
-    const QVariantMap item = fullItem(row);
+    const QVariantMap item = resolvePresentationItem(row);
     return m_hub && !item.isEmpty() && m_hub->browse(item);
 }
 
 QUuid OriginalUiMusicAdapter::play(const QVariantMap &row)
 {
-    const QVariantMap item = fullItem(row);
+    const QVariantMap item = resolvePresentationItem(row);
     return m_playback && !item.isEmpty() ? m_playback->play(item) : QUuid{};
 }
 
 QUuid OriginalUiMusicAdapter::enqueue(const QVariantMap &row)
 {
-    const QVariantMap item = fullItem(row);
+    const QVariantMap item = resolvePresentationItem(row);
     return m_playback && !item.isEmpty() ? m_playback->enqueue(item) : QUuid{};
 }
 
 QUuid OriginalUiMusicAdapter::setFavorite(const QVariantMap &row, bool favorite)
 {
-    const QVariantMap item = fullItem(row);
+    const QVariantMap item = resolvePresentationItem(row);
     return m_hub && m_hub->actions() && !item.isEmpty()
         ? m_hub->actions()->setFavorite(item, favorite) : QUuid{};
 }
@@ -110,6 +116,16 @@ QVariantMap OriginalUiMusicAdapter::presentationItem(const QVariantMap &full)
             {QStringLiteral("entityType"), ref.value(QStringLiteral("entityType"))},
             {QStringLiteral("subtitle"), full.value(QStringLiteral("subtitle")).toString()},
             {QStringLiteral("_adapterKey"), QVariant::fromValue<qulonglong>(key)}};
+}
+
+void OriginalUiMusicAdapter::clearPresentationState()
+{
+    m_fullItems.clear();
+    m_recommendSongs->setItems({});
+    m_categoryItems->setItems({});
+    m_favoriteSongs->setItems({});
+    m_favoriteLists->setItems({});
+    m_searchSongs->setItems({});
 }
 
 void OriginalUiMusicAdapter::rebuild()

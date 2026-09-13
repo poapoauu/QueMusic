@@ -43,14 +43,15 @@ public:
     Q_INVOKABLE QUuid play(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &presentationItem, bool favorite);
-    Q_INVOKABLE QVariantMap fullItem(const QVariantMap &presentationItem) const;
 
 signals:
     void sourceOptionsChanged();
     void selectedSourceInstanceIdChanged();
 
 private:
+    QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
     QVariantMap presentationItem(const QVariantMap &fullItem);
+    void clearPresentationState();
     void rebuild();
 
     QPointer<MusicHub> m_hub;

@@ -442,11 +442,33 @@ if(BUILD_TESTING)
     add_test(NAME quemusic_music_hub_test COMMAND quemusic_music_hub_test)
     set_tests_properties(quemusic_music_hub_test PROPERTIES TIMEOUT 30)
 
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_original_ui_adapter_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.original-ui-adapter")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "adapter")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Original UI Adapter Fixture")
+    set(QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-original-ui-adapter-packages/$<CONFIG>")
+    set(QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_DIR
+        "${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_ROOT}/adapter")
+    add_library(quemusic_original_ui_adapter_fixture MODULE
+        tests/tst_OriginalUiMusicAdapter.cpp)
+    target_compile_definitions(quemusic_original_ui_adapter_fixture PRIVATE
+        QUEMUSIC_ORIGINAL_UI_ADAPTER_FIXTURE)
+    target_link_libraries(quemusic_original_ui_adapter_fixture PRIVATE
+        quemusic_source_sdk)
+    set_target_properties(quemusic_original_ui_adapter_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_original_ui_adapter_fixture
+        "${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_DIR}")
     qt_add_executable(quemusic_original_ui_music_adapter_test
         tests/tst_OriginalUiMusicAdapter.cpp)
     target_link_libraries(quemusic_original_ui_music_adapter_test PRIVATE
         quemusic_original_ui_music_adapter
         Qt6::Test)
+    target_compile_definitions(quemusic_original_ui_music_adapter_test PRIVATE
+        QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGES="${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_ROOT}")
+    add_dependencies(quemusic_original_ui_music_adapter_test
+        quemusic_original_ui_adapter_fixture)
     add_test(NAME quemusic_original_ui_music_adapter_test
         COMMAND quemusic_original_ui_music_adapter_test)
 
