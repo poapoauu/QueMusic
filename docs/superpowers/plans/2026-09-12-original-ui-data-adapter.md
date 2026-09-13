@@ -131,7 +131,8 @@ public:
     Q_INVOKABLE QUuid play(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &presentationItem, bool favorite);
-    Q_INVOKABLE QVariantMap fullItem(const QVariantMap &presentationItem) const;
+private:
+    QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
 };
 ```
 
@@ -144,12 +145,12 @@ QCOMPARE(row["title"], QStringLiteral("Track 42"));
 QCOMPARE(row["artist"], QStringLiteral("Artist"));
 QCOMPARE(row["album"], QStringLiteral("Album"));
 QCOMPARE(row["source"], QStringLiteral("navidrome"));
-QCOMPARE(adapter.fullItem(row)["ref"].toMap()["entityId"], QStringLiteral("42"));
 QVERIFY(!row.contains("url"));
 QVERIFY(!row.contains("headers"));
+QVERIFY(adapter.play(row) != QUuid{});
 ```
 
-Also cover duplicate titles from different sources, aggregate partial failure, specific scope, favorites split by entity type, and stale generation replacement.
+Also cover duplicate titles from different sources, aggregate partial failure, specific scope, favorites split by entity type, stale generation replacement, and valid routing through public action methods. Tests must not expose the private resolver to QML or production callers.
 
 - [ ] **Step 2: Run the adapter test and verify RED**
 
@@ -165,7 +166,7 @@ Expected: build fails because `OriginalUiMusicAdapter` does not exist.
 Use owned `OnlineListModel` instances. Store an opaque integer adapter key in each presentation row and keep `QHash<quint64, QVariantMap> m_fullItems` privately. Rebuild only from accepted `MusicPageModel` contents. Copy only allowlisted roles (`title`, `artist`, `album`, `cover`, `duration`, `source`, `entityType`, display subtitle); never blindly copy the full v2 map into QML roles.
 
 ```cpp
-QVariantMap OriginalUiMusicAdapter::fullItem(const QVariantMap &row) const
+QVariantMap OriginalUiMusicAdapter::resolvePresentationItem(const QVariantMap &row) const
 {
     bool ok = false;
     const quint64 key = row.value(QStringLiteral("_adapterKey")).toULongLong(&ok);
@@ -173,7 +174,7 @@ QVariantMap OriginalUiMusicAdapter::fullItem(const QVariantMap &row) const
 }
 ```
 
-Action methods reject unknown keys and delegate complete private items to `MusicHub::actions()` or `PlaybackCoordinator`.
+Action methods call the private resolver, reject unknown keys, and delegate complete private items to `MusicHub::actions()` or `PlaybackCoordinator`. When the hub is destroyed, clear every presentation model and the private map so stale rows cannot route actions.
 
 - [ ] **Step 4: Verify adapter and existing data-layer tests GREEN**
 
@@ -261,7 +262,7 @@ git commit -m "feat: feed original discovery UI from source v2"
 - Modify: `CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: private full-item lookup and `MediaActionRouter`.
+- Consumes: private presentation-item resolver and `MediaActionRouter`.
 - Produces: `capabilities(row) -> QVariantMap`, `loadMore(pageKind, sectionId)`, `retry(pageKind, sectionId)`, and action wrappers that return null UUID when identity/capability validation fails.
 
 - [ ] **Step 1: Write failing capability and page interaction tests**
@@ -311,7 +312,7 @@ git commit -m "feat: route original music actions through source capabilities"
 - Modify: `CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `PlaybackCoordinator`, `QtPlaybackController`, adapter presentation rows.
+- Consumes: `PlaybackCoordinator`, `QtPlaybackController`, adapter presentation rows resolved privately by the adapter.
 - Produces: original player/queue gestures routed by full v2 identity; no stream descriptor in QML.
 
 - [ ] **Step 1: Write failing playback and warning regression tests**
