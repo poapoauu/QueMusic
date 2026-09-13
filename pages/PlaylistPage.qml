@@ -54,8 +54,19 @@ Item {
         return false
     }
     function browseCategory(index) {
-        if (musicAdapter)
-            return musicAdapter.browse(musicAdapter.categoryItems.get(index))
+        if (musicAdapter) {
+            const row = musicAdapter.categoryItems.get(index)
+            if (!row || !musicAdapter.browse(row))
+                return false
+            playListSongsWindow.opened({id: String(row._adapterKey || ""),
+                                        title: row.title || "",
+                                        artist: row.artist || "",
+                                        cover: row.cover || "qrc:/QueMusic/resources/app/musicpic.png",
+                                        album: row.album || "",
+                                        duration: row.duration || 0})
+            window.exitIndex = 2
+            return true
+        }
         return false
     }
     Component.onCompleted: {
@@ -104,9 +115,9 @@ Item {
                 //radius: 18
                 anchors.right: parent.right
                 choice: playlistPage.sourceChoice()
-                textColor: MusicApi.songSource == 0 ? "#0F3975" : MusicApi.songSource == 1 ? "#750F0F" : MusicApi.songSource == 2 ? "#16750F" : "#756F0F"
-                color: MusicApi.songSource == 0 ? "#CDE8FF" : MusicApi.songSource == 1 ? "#FFCDCD" : MusicApi.songSource == 2 ? "#CDFFCD" : "#FFFFCD"
-                border.color: MusicApi.songSource == 0 ? "#4384F5" : MusicApi.songSource == 1 ? "#F54343" : MusicApi.songSource == 2 ? "#4DF543" : "#F5F543"
+                textColor: playlistPage.sourceChoice() == 0 ? "#0F3975" : playlistPage.sourceChoice() == 1 ? "#750F0F" : playlistPage.sourceChoice() == 2 ? "#16750F" : "#756F0F"
+                color: playlistPage.sourceChoice() == 0 ? "#CDE8FF" : playlistPage.sourceChoice() == 1 ? "#FFCDCD" : playlistPage.sourceChoice() == 2 ? "#CDFFCD" : "#FFFFCD"
+                border.color: playlistPage.sourceChoice() == 0 ? "#4384F5" : playlistPage.sourceChoice() == 1 ? "#F54343" : playlistPage.sourceChoice() == 2 ? "#4DF543" : "#F5F543"
                 radius: 18
                 cardRadius: Style.settings.labelRadius
                 text: {
@@ -281,8 +292,11 @@ Item {
                 //topMargin: 72
 
                 onEnded: {
-                    if (playlistPage.loadMoreCategory()) {
-                        isEnd = false;
+                    if (musicAdapter) {
+                        if (playlistPage.loadMoreCategory())
+                            isEnd = false;
+                        else
+                            isEnd = true;
                     } else if(MusicApi.newSongs.count % 20 === 0 && MusicApi.newSongs.count !== 0) {
                         MusicApi.getNewSongs(MusicApi.globalid, MusicApi.newSongs.count / 20 + 1, 20);
                         isEnd = false;
@@ -327,6 +341,8 @@ Item {
                     }
                 }
                 onMenuClicked: (index,choice) => {
+                    if (musicAdapter)
+                        return
                     switch(choice) {
                     case 0:
                         if(Options.settings.soundQuality === 0) {
@@ -412,8 +428,11 @@ Item {
                 bottomMargin: 24
 
                 onEnded: {
-                    if (playlistPage.loadMoreCategory()) {
-                        isEnd = false;
+                    if (musicAdapter) {
+                        if (playlistPage.loadMoreCategory())
+                            isEnd = false;
+                        else
+                            isEnd = true;
                     } else if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
                         MusicApi.getMusicPlaylists(MusicApi.globaltagid, MusicApi.musicPlaylists.count / 20 + 1, 20);
                         isEnd = false;
@@ -438,6 +457,8 @@ Item {
                     }
                 }
                 onToolClicked: (index,tool) => {
+                    if (musicAdapter)
+                        return
                     switch(tool) {
                     case 1:
                         if (favoritesList.isFavorite(model.get(index).hash, "playlist")) {
@@ -719,6 +740,7 @@ Item {
     // 歌单/榜单/歌手歌曲共用窗口
     PlayListWindow {
         id: playListSongsWindow
+        objectName: "playlistDetailWindow"
         mainTarget: playlistChildPage
         winIndex: 2
         property string listType: "playlist"   // playlist 歌单 / singer 歌手 / toplist 榜单
@@ -734,6 +756,8 @@ Item {
                 topMargin: 8
                 bottomMargin: 24
                 onClicked: (index) => {
+                    if (musicAdapter)
+                        return
                     if(Options.settings.soundQuality === 0) {
                         MusicApi.getMusicInfo(model.get(index).hash);
                     } else if(Options.settings.soundQuality === 1) {
@@ -743,6 +767,8 @@ Item {
                     }
                 }
                 onToolClicked: (index,tool) => {
+                    if (musicAdapter)
+                        return
                     switch(tool) {
                     case 0:
                         var listIndex = -1;
@@ -770,6 +796,7 @@ Item {
                         iconCharacter: "\uf0f8"
                         text: "更多"
                         onClicked: {
+                            if (musicAdapter) return;
                             if(MusicApi.loadState) return;
                             var id = MusicApi.globalid;
                             var page = MusicApi.playlistSong.count / 20 + 1;

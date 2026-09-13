@@ -57,9 +57,21 @@ Item {
         }
         return false
     }
+    function categoryStripItems() {
+        if (!musicAdapter)
+            return MusicApi.getHotlistMenu
+        const model = musicAdapter.categoryItems
+        const items = []
+        for (let i = 0; i < model.count; ++i) {
+            const row = model.get(i)
+            if (row.entityType === 2 || row.entityType === 4)
+                items.push(row)
+        }
+        return items
+    }
     function browseCategory(index) {
         if (musicAdapter) {
-            const row = musicAdapter.categoryItems.get(index)
+            const row = categoryStripItems()[index]
             if (!row || !musicAdapter.browse(row))
                 return false
             recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
@@ -132,9 +144,9 @@ Item {
                 //radius: 18
                 anchors.right: parent.right
                 choice: homePage.sourceChoice()
-                textColor: MusicApi.songSource == 0 ? "#0F3975" : MusicApi.songSource == 1 ? "#750F0F" : MusicApi.songSource == 2 ? "#16750F" : "#756F0F"
-                color: MusicApi.songSource == 0 ? "#CDE8FF" : MusicApi.songSource == 1 ? "#FFCDCD" : MusicApi.songSource == 2 ? "#CDFFCD" : "#FFFFCD"
-                border.color: MusicApi.songSource == 0 ? "#4384F5" : MusicApi.songSource == 1 ? "#F54343" : MusicApi.songSource == 2 ? "#4DF543" : "#F5F543"
+                textColor: homePage.sourceChoice() == 0 ? "#0F3975" : homePage.sourceChoice() == 1 ? "#750F0F" : homePage.sourceChoice() == 2 ? "#16750F" : "#756F0F"
+                color: homePage.sourceChoice() == 0 ? "#CDE8FF" : homePage.sourceChoice() == 1 ? "#FFCDCD" : homePage.sourceChoice() == 2 ? "#CDFFCD" : "#FFFFCD"
+                border.color: homePage.sourceChoice() == 0 ? "#4384F5" : homePage.sourceChoice() == 1 ? "#F54343" : homePage.sourceChoice() == 2 ? "#4DF543" : "#F5F543"
                 radius: 18
                 cardRadius: Style.settings.labelRadius
                 text: {
@@ -509,7 +521,7 @@ Item {
                             leftMargin: 16
                             rightMargin: 16
                             clip: true
-                            model: musicAdapter ? musicAdapter.categoryItems : MusicApi.getHotlistMenu
+                            model: homePage.categoryStripItems()
 
                             // 隐藏系统滚动条，用惯性和鼠标拖拽
                             interactive: true
@@ -906,8 +918,11 @@ Item {
                                }
 
                 onEnded: {
-                    if (homePage.requestRecommendationMore()) {
-                        isEnd = false;
+                    if (musicAdapter) {
+                        if (homePage.requestRecommendationMore())
+                            isEnd = false;
+                        else
+                            isEnd = true;
                     } else if(MusicApi.recommendSongs.count % 20 === 0 && MusicApi.recommendSongs.count !== 0) {
                         MusicApi.getRecommendSongs(MusicApi.recommendSongs.count / 20 + 1, 20, MusicApi.songSource);
                         isEnd = false;
@@ -1001,6 +1016,7 @@ Item {
 
     AnimatorWindow {
         id: recommendWindow
+        objectName: "recommendationDetailWindow"
         mainTarget: homeMain
         haveControl: false
         content: QListView {
@@ -1017,9 +1033,13 @@ Item {
             isList: true
 
             onEnded: {
-                if (musicAdapter && typeof musicAdapter.loadMore === "function") {
-                    musicAdapter.loadMore(1, "")
-                    isEnd = false
+                if (musicAdapter) {
+                    if (typeof musicAdapter.loadMore === "function") {
+                        musicAdapter.loadMore(1, "")
+                        isEnd = false
+                    } else {
+                        isEnd = true
+                    }
                 } else if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
                     MusicApi.getMusicPlaylists(MusicApi.globaltagid,MusicApi.musicPlaylists.count / 20 + 1,20);
                     isEnd = false;
@@ -1032,7 +1052,11 @@ Item {
 
             onClicked: (index) => {
                 if (musicAdapter) {
-                    musicAdapter.browse(model.get(index))
+                    const row = model.get(index)
+                    if (!row || !musicAdapter.browse(row))
+                        return
+                    recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
+                    window.exitIndex = 1
                     return
                 }
                 hotlistsWindow.mainTarget = recommendWindow;

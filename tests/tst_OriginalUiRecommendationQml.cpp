@@ -35,6 +35,10 @@ public:
         return index >= 0 && index < m_rows.size() ? m_rows.at(index).toMap() : QVariantMap{};
     }
     Q_INVOKABLE void clear() {}
+    Q_INVOKABLE bool isFavorite(const QString &, const QString &) { ++favoriteQueries; return false; }
+    Q_INVOKABLE void addFavorite(const QString &, const QString &, const QString &, const QString &,
+                                 int, int, const QString &) { ++favoriteCalls; }
+    Q_INVOKABLE void removeFavorite(const QString &, const QString &) { ++favoriteCalls; }
     void setRows(QVariantList rows)
     {
         beginResetModel();
@@ -51,6 +55,10 @@ public:
 
 signals:
     void countChanged();
+
+public:
+    int favoriteQueries = 0;
+    int favoriteCalls = 0;
 
 private:
     QVariantList m_rows;
@@ -106,6 +114,36 @@ private:
     QString selected;
 };
 
+class FakeOriginalUiMusicNoPagination final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
+    Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
+    Q_PROPERTY(QVariantList sourceOptions READ sourceOptions CONSTANT)
+    Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId CONSTANT)
+public:
+    QObject *recommendSongs() { return &recommend; }
+    QObject *categoryItems() { return &category; }
+    QVariantList sourceOptions() const
+    {
+        return {QVariantMap{{QStringLiteral("sourceInstanceId"), QString{}},
+                            {QStringLiteral("displayName"), QStringLiteral("全部音源")},
+                            {QStringLiteral("available"), true}}};
+    }
+    QString selectedSourceInstanceId() const { return {}; }
+
+    Q_INVOKABLE void activatePage(int page) { activatedPages << page; }
+    Q_INVOKABLE bool browse(const QVariantMap &row) { browsedRows << row; return true; }
+    Q_INVOKABLE void play(const QVariantMap &row) { playedRows << row; }
+    Q_INVOKABLE void enqueue(const QVariantMap &row) { enqueuedRows << row; }
+
+    FakeListModel recommend;
+    FakeListModel category;
+    QList<int> activatedPages;
+    QList<QVariantMap> browsedRows;
+    QList<QVariantMap> playedRows;
+    QList<QVariantMap> enqueuedRows;
+};
+
 QVariantList recommendationRows()
 {
     return {QVariantMap{{QStringLiteral("title"), QStringLiteral("Mapped recommendation")},
@@ -119,7 +157,27 @@ QVariantList categoryRows()
     return {QVariantMap{{QStringLiteral("title"), QStringLiteral("Mapped category")},
                          {QStringLiteral("artist"), QStringLiteral("Mapped curator")},
                          {QStringLiteral("cover"), QString{}}, {QStringLiteral("duration"), 0},
+                         {QStringLiteral("entityType"), 4},
                          {QStringLiteral("_adapterKey"), 73ULL}}};
+}
+
+QVariantList mixedCategoryRows()
+{
+    return {QVariantMap{{QStringLiteral("title"), QStringLiteral("Mapped genre")},
+                         {QStringLiteral("artist"), QStringLiteral("Mapped curator")},
+                         {QStringLiteral("cover"), QString{}}, {QStringLiteral("duration"), 0},
+                         {QStringLiteral("entityType"), 4},
+                         {QStringLiteral("_adapterKey"), 73ULL}},
+            QVariantMap{{QStringLiteral("title"), QStringLiteral("Mapped album")},
+                         {QStringLiteral("artist"), QStringLiteral("Mapped artist")},
+                         {QStringLiteral("cover"), QString{}}, {QStringLiteral("duration"), 0},
+                         {QStringLiteral("entityType"), 1},
+                         {QStringLiteral("_adapterKey"), 74ULL}},
+            QVariantMap{{QStringLiteral("title"), QStringLiteral("Mapped track")},
+                         {QStringLiteral("artist"), QStringLiteral("Mapped artist")},
+                         {QStringLiteral("cover"), QString{}}, {QStringLiteral("duration"), 180},
+                         {QStringLiteral("entityType"), 0},
+                         {QStringLiteral("_adapterKey"), 75ULL}}};
 }
 
 class FakeLegacyMusicApi final : public QObject {
@@ -150,10 +208,10 @@ public:
     QObject *newSongs() { return &lists; } QObject *toplistList() { return &lists; }
     QObject *singerList() { return &lists; }
     Q_INVOKABLE void getHotPlaylistMenu(int) {} Q_INVOKABLE void getHotPlaylists(int) {}
-    Q_INVOKABLE void getPlaylistMenu(int) {} Q_INVOKABLE void getNewSongs(int, int, int) {}
-    Q_INVOKABLE void getAllToplist() {} Q_INVOKABLE void getRecommendSongs(int, int, int = 0) {}
-    Q_INVOKABLE void getMusicPlaylists(int, int, int) {} Q_INVOKABLE void getMenuInfo(int) {}
-    Q_INVOKABLE void getMusicInfo(const QString &, int = 0, int = 0) {}
+    Q_INVOKABLE void getPlaylistMenu(int) {} Q_INVOKABLE void getNewSongs(int, int, int) { ++newSongsMoreCalls; }
+    Q_INVOKABLE void getAllToplist() {} Q_INVOKABLE void getRecommendSongs(int, int, int = 0) { ++recommendMoreCalls; }
+    Q_INVOKABLE void getMusicPlaylists(int, int, int) { ++musicPlaylistsMoreCalls; } Q_INVOKABLE void getMenuInfo(int) {}
+    Q_INVOKABLE void getMusicInfo(const QString &, int = 0, int = 0) { ++musicInfoCalls; }
     Q_INVOKABLE void getPersonalFm(int, int, int) {} Q_INVOKABLE void getPersonalRadar(int, int, int) {}
     Q_INVOKABLE void getPlaylistSongs(const QString &, int, int) {}
     Q_INVOKABLE void getHotSingers(int, int, int) {} Q_INVOKABLE void getSingerCategory(int, int, int, int) {}
@@ -165,6 +223,11 @@ public:
     QString globalid;
     QString globaltagid;
     int loadState = 0;
+    int recommendMoreCalls = 0;
+    int newSongsMoreCalls = 0;
+    int musicPlaylistsMoreCalls = 0;
+    int musicInfoCalls = 0;
+    FakeListModel *listModel() { return &lists; }
 signals:
     void songSourceChanged(); void nowIndexChanged(); void globalidChanged(); void globaltagidChanged(); void loadStateChanged();
 private:
@@ -213,6 +276,9 @@ public:
         context->setContextProperty(QStringLiteral("mainWarn"), &lists); context->setContextProperty(QStringLiteral("mainLayout"), QVariantMap{{QStringLiteral("state"), QString{}}});
         context->setContextProperty(QStringLiteral("mainSearchInput"), QVariantMap{{QStringLiteral("text"), QString{}}});
     }
+    FakeLegacyMusicApi *legacyMusicApi() { return &musicApi; }
+    FakeWindow *windowObject() { return &window; }
+    FakeListModel *legacyLists() { return &lists; }
 private:
     FakeLegacyMusicApi musicApi;
     FakeWindow window;
@@ -220,7 +286,7 @@ private:
 };
 
 namespace {
-std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, FakeOriginalUiMusic *adapter, QString *error)
+std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, QObject *adapter, QString *error)
 {
     QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/QueMusic/") + page));
     if (component.status() != QQmlComponent::Ready) { *error = component.errorString(); return {}; }
@@ -278,14 +344,86 @@ private slots:
         auto home = loadPage(engine, QStringLiteral("pages/HomePage.qml"), &adapter, &error);
         QVERIFY2(home, qPrintable(error));
         QObject *list = home->findChild<QObject *>(QStringLiteral("recommendationCategoryList"));
-        QVERIFY(list); QCOMPARE(list->property("model").value<QObject *>(), adapter.categoryItems());
-        adapter.category.setRows(categoryRows());
-        QCoreApplication::processEvents();
+        QVERIFY(list);
+        adapter.category.setRows(mixedCategoryRows());
+        QTRY_COMPARE(list->property("count").toInt(), 1);
+        const QVariantList stripRows = list->property("model").toList();
+        QCOMPARE(stripRows.size(), 1);
+        QCOMPARE(stripRows.constFirst().toMap().value(QStringLiteral("title")), QStringLiteral("Mapped genre"));
         QVERIFY(QMetaObject::invokeMethod(home.get(), "browseCategory",
                                           Q_ARG(QVariant, QVariant(0))));
         QCOMPARE(adapter.browsedRows.size(), 1);
         QCOMPARE(adapter.browsedRows.constFirst().value(QStringLiteral("_adapterKey")).toULongLong(), 73ULL);
         QVERIFY(!adapter.browsedRows.constFirst().contains(QStringLiteral("ref")));
+        QObject *homeDetail = home->findChild<QObject *>(QStringLiteral("recommendationDetailWindow"));
+        QVERIFY(homeDetail);
+        QTRY_VERIFY(homeDetail->property("visible").toBool());
+        QCOMPARE(context.windowObject()->exitIndex, 1);
+    }
+
+    void playlistBrowseRetainsDetailNavigation()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        adapter.category.setRows(categoryRows());
+        QTRY_COMPARE(playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"))
+                         ->property("count").toInt(), 1);
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseCategory",
+                                          Q_ARG(QVariant, QVariant(0))));
+        QCOMPARE(adapter.browsedRows.size(), 1);
+        QObject *detail = playlist->findChild<QObject *>(QStringLiteral("playlistDetailWindow"));
+        QVERIFY(detail);
+        QTRY_VERIFY(detail->property("visible").toBool());
+        QCOMPARE(context.windowObject()->exitIndex, 2);
+    }
+
+    void adapterRowsNeverInvokeLegacyPlaylistActions()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        adapter.category.setRows(categoryRows());
+        QObject *songs = playlist->findChild<QObject *>(QStringLiteral("categoryList"));
+        QObject *lists = playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"));
+        QVERIFY(songs); QVERIFY(lists);
+        QTRY_COMPARE(songs->property("count").toInt(), 1);
+        QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(songs, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(songs, "menuClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(lists, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
+        QCOMPARE(adapter.playedRows.size(), 1);
+        QCOMPARE(adapter.enqueuedRows.size(), 1);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+        QCOMPARE(context.legacyLists()->favoriteQueries, 0);
+        QCOMPARE(context.legacyLists()->favoriteCalls, 0);
+    }
+
+    void adapterWithoutLoadMoreNeverFallsIntoLegacyPagination()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusicNoPagination adapter; QString error;
+        context.legacyMusicApi()->listModel()->setRows(recommendationRows());
+        auto home = loadPage(engine, QStringLiteral("pages/HomePage.qml"), &adapter, &error);
+        QVERIFY2(home, qPrintable(error));
+        QObject *dailyWindow = home->findChild<QObject *>(QStringLiteral("dailyRecommendationWindow"));
+        QVERIFY(dailyWindow);
+        QVERIFY(QMetaObject::invokeMethod(dailyWindow, "opened",
+                                          Q_ARG(QVariant, QVariant(QStringLiteral("Daily"))),
+                                          Q_ARG(QVariant, QVariant(QString{}))));
+        QTRY_VERIFY(home->findChild<QObject *>(QStringLiteral("recommendationList")));
+        QObject *recommendations = home->findChild<QObject *>(QStringLiteral("recommendationList"));
+        QVERIFY(QMetaObject::invokeMethod(recommendations, "ended"));
+        QCOMPARE(context.legacyMusicApi()->recommendMoreCalls, 0);
+        QCOMPARE(recommendations->property("isEnd").toBool(), true);
+
+        context.legacyMusicApi()->listModel()->clear();
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        QObject *songs = playlist->findChild<QObject *>(QStringLiteral("categoryList"));
+        QVERIFY(songs);
+        QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
+        QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
+        QCOMPARE(songs->property("isEnd").toBool(), true);
     }
 };
 
