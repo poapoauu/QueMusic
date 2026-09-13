@@ -383,15 +383,57 @@ private slots:
         QTRY_VERIFY((detailList = detail->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList"))));
         QCOMPARE(detailList->property("model").value<QObject *>(), adapter.categoryItems());
         QCOMPARE(detailList->property("menuModel").toList().size(), 0);
-        QCOMPARE(detailList->property("toolText0").toString(), QString());
         QCOMPARE(detailList->property("toolText1").toString(), QString());
-        QVERIFY(detailList->property("toolX").toReal() > detailList->property("width").toReal());
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
         QCOMPARE(context.legacyLists()->favoriteQueries, 0);
         QCOMPARE(context.legacyLists()->favoriteCalls, 0);
         QCOMPARE(context.windowObject()->exitIndex, 2);
         emit context.windowObject()->exit();
         QTRY_VERIFY(!detail->property("visible").toBool());
+    }
+
+    void adapterDetailKeepsOnlyEnqueueActionAvailable()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        playlist->setProperty("width", 810);
+        playlist->setProperty("height", 540);
+        adapter.category.setRows(categoryRows());
+        QTRY_COMPARE(playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"))
+                         ->property("count").toInt(), 1);
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseCategory",
+                                          Q_ARG(QVariant, QVariant(0))));
+
+        QObject *detail = playlist->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailWindow"));
+        QVERIFY(detail);
+        QTRY_VERIFY(detail->property("visible").toBool());
+        QObject *detailList = nullptr;
+        QTRY_VERIFY((detailList = detail->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList"))));
+        QTRY_COMPARE(detailList->property("count").toInt(), 1);
+
+        const qreal toolX = detailList->property("toolX").toReal();
+        const qreal width = detailList->property("width").toReal();
+        QVERIFY(toolX >= 0);
+        QVERIFY(toolX + 112 <= width);
+        QVERIFY(!detailList->property("toolText0").toString().isEmpty());
+        QCOMPARE(detailList->property("toolText1").toString(), QString());
+        QCOMPARE(detailList->property("menuModel").toList().size(), 0);
+
+        QVERIFY(QMetaObject::invokeMethod(detailList, "toolClicked",
+                                          Q_ARG(int, 0), Q_ARG(int, 0)));
+        QCOMPARE(adapter.enqueuedRows.size(), 1);
+        QCOMPARE(adapter.enqueuedRows.constFirst().value(QStringLiteral("_adapterKey")).toULongLong(),
+                 73ULL);
+
+        QVERIFY(QMetaObject::invokeMethod(detailList, "toolClicked",
+                                          Q_ARG(int, 0), Q_ARG(int, 1)));
+        QVERIFY(QMetaObject::invokeMethod(detailList, "menuClicked",
+                                          Q_ARG(int, 0), Q_ARG(int, 0)));
+        QCOMPARE(adapter.enqueuedRows.size(), 1);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+        QCOMPARE(context.legacyLists()->favoriteQueries, 0);
+        QCOMPARE(context.legacyLists()->favoriteCalls, 0);
     }
 
     void adapterRowsNeverInvokeLegacyPlaylistActions()

@@ -833,9 +833,7 @@ Item {
             height: adapterDetailWindow.height - 128
             model: musicAdapter ? musicAdapter.categoryItems : []
             menuModel: []
-            toolText0: ""
             toolText1: ""
-            toolX: width + 1
             clip: true
             topMargin: 8
             bottomMargin: 24
