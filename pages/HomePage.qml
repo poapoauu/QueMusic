@@ -12,9 +12,75 @@ Item {
     //property alias animatedWindow: animationWrapper
     property real toolsWindow: 0
     //property bool displaytop: flickable.contentY > 60 ? true : false
+    function sourceOptions() {
+        if (musicAdapter && musicAdapter.sourceOptions)
+            return musicAdapter.sourceOptions
+        return [
+            { sourceInstanceId: "", displayName: "酷狗音乐", available: true },
+            { sourceInstanceId: "", displayName: "网易云音乐", available: true },
+            { sourceInstanceId: "", displayName: "QQ音乐(x)", available: true },
+            { sourceInstanceId: "", displayName: "自定义源(x)", available: true }
+        ]
+    }
+    function sourceChoice() {
+        if (!musicAdapter)
+            return MusicApi.songSource
+        const options = sourceOptions()
+        for (let i = 0; i < options.length; ++i) {
+            if (options[i].sourceInstanceId === musicAdapter.selectedSourceInstanceId)
+                return i
+        }
+        return 0
+    }
+    function selectSource(choice) {
+        if (musicAdapter) {
+            const option = sourceOptions()[choice]
+            if (option && option.available)
+                musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
+            return
+        }
+        MusicApi.songSource = choice
+        if(MusicApi.songSource === 0) {
+            MusicApi.hotPlayLists.clear()
+        }
+        if(MusicApi.hotPlayLists.count % 20 === 0) {
+            MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1)
+        } else {
+            MusicApi.hotPlayLists.clear()
+            MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1)
+        }
+    }
+    function requestRecommendationMore() {
+        if (musicAdapter && typeof musicAdapter.loadMore === "function") {
+            musicAdapter.loadMore(0, "")
+            return true
+        }
+        return false
+    }
+    function browseCategory(index) {
+        if (musicAdapter) {
+            const row = musicAdapter.categoryItems.get(index)
+            if (!row || !musicAdapter.browse(row))
+                return false
+            recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
+            window.exitIndex = 1
+            return true
+        }
+        MusicApi.musicPlaylists.clear()
+        MusicApi.globaltagid = MusicApi.getHotlistMenu.get(index).tagid
+        MusicApi.getMusicPlaylists(MusicApi.globaltagid, 1, 20)
+        const legacyRow = MusicApi.getHotlistMenu.get(index)
+        recommendWindow.opened(legacyRow.title, (legacyRow.cover || "").replace("{size}", "256") || "qrc:/QueMusic/resources/app/musicpic.png")
+        window.exitIndex = 1
+        return true
+    }
 
 
     Component.onCompleted: {
+        if (musicAdapter) {
+            musicAdapter.activatePage(0)
+            return
+        }
         if(!window.completedStart.homeLoaded) {
             MusicApi.getHotlistMenu.clear();
             MusicApi.getHotPlaylistMenu(3);
@@ -59,29 +125,25 @@ Item {
             }
             //QButton { x: parent.width - 120; y: 0; height: 40; width: 120; iconCharacter: "\uf10c"; text: "刷新" }
             QDrop {
+                objectName: "recommendationSourceScope"
                 x: parent.width - 96
                 y: 0
                 height: 36; width: 120
                 //radius: 18
                 anchors.right: parent.right
-                choice: MusicApi.songSource
+                choice: homePage.sourceChoice()
                 textColor: MusicApi.songSource == 0 ? "#0F3975" : MusicApi.songSource == 1 ? "#750F0F" : MusicApi.songSource == 2 ? "#16750F" : "#756F0F"
                 color: MusicApi.songSource == 0 ? "#CDE8FF" : MusicApi.songSource == 1 ? "#FFCDCD" : MusicApi.songSource == 2 ? "#CDFFCD" : "#FFFFCD"
                 border.color: MusicApi.songSource == 0 ? "#4384F5" : MusicApi.songSource == 1 ? "#F54343" : MusicApi.songSource == 2 ? "#4DF543" : "#F5F543"
                 radius: 18
                 cardRadius: Style.settings.labelRadius
-                model: ["酷狗音乐","网易云音乐","QQ音乐(x)","自定义源(x)"]
+                text: {
+                    const option = homePage.sourceOptions()[choice]
+                    return option ? option.displayName : ""
+                }
+                model: homePage.sourceOptions().map((option) => option.displayName)
                 onTransformed: (choiced) => {
-                    MusicApi.songSource = choiced;
-                    if(MusicApi.songSource === 0) {
-                        MusicApi.hotPlayLists.clear();
-                    }
-                    if(MusicApi.hotPlayLists.count % 20 === 0) {
-                        MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1);
-                    } else {
-                        MusicApi.hotPlayLists.clear();
-                        MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1);
-                    }
+                    homePage.selectSource(choiced)
                 }
             }
         }
@@ -209,8 +271,12 @@ Item {
                         }
 
                         onClicked: {
-                            MusicApi.recommendSongs.clear();
-                            MusicApi.getRecommendSongs(1, 20, MusicApi.songSource);
+                            if(musicAdapter) {
+                                musicAdapter.activatePage(0)
+                            } else {
+                                MusicApi.recommendSongs.clear();
+                                MusicApi.getRecommendSongs(1, 20, MusicApi.songSource);
+                            }
                             var image = "qrc:/QueMusic/resources/app/rainbowMusicIcon.png";
                             var title = "每日推荐";
                             dailyRecomWindow.opened(title,image);
@@ -228,8 +294,12 @@ Item {
                             textColor: Style.themes.fullColor
                             iconColor: Style.themes.fullColor
                             onClicked: {
-                                MusicApi.recommendSongs.clear();
-                                MusicApi.getRecommendSongs(1, 20, MusicApi.songSource);
+                                if(musicAdapter) {
+                                    musicAdapter.activatePage(0)
+                                } else {
+                                    MusicApi.recommendSongs.clear();
+                                    MusicApi.getRecommendSongs(1, 20, MusicApi.songSource);
+                                }
                                 var image = "qrc:/QueMusic/resources/app/rainbowMusicIcon.png";
                                 var title = "每日推荐";
                                 dailyRecomWindow.opened(title,image);
@@ -430,6 +500,7 @@ Item {
 
                         ListView {
                             id: categoryList
+                            objectName: "recommendationCategoryList"
                             y: 56
                             width: parent.width
                             height: 96
@@ -438,7 +509,7 @@ Item {
                             leftMargin: 16
                             rightMargin: 16
                             clip: true
-                            model: MusicApi.getHotlistMenu
+                            model: musicAdapter ? musicAdapter.categoryItems : MusicApi.getHotlistMenu
 
                             // 隐藏系统滚动条，用惯性和鼠标拖拽
                             interactive: true
@@ -508,12 +579,7 @@ Item {
                                     onCanceled: catDel.scale = 1.0
 
                                     onClicked: {
-                                        MusicApi.musicPlaylists.clear();
-                                        MusicApi.globaltagid = model.tagid;
-                                        MusicApi.getMusicPlaylists(model.tagid, 1, 20);
-                                        var image = (model.cover || "").replace("{size}", "256") || "qrc:/QueMusic/resources/app/musicpic.png";
-                                        recommendWindow.opened(model.title, image);
-                                        window.exitIndex = 1;
+                                        homePage.browseCategory(index)
                                     }
                                 }
                             }
@@ -776,24 +842,28 @@ Item {
     }
     AnimatorWindow {
         id: dailyRecomWindow
+        objectName: "dailyRecommendationWindow"
         mainTarget: homeMain
         haveControl: false
         content: Item {
 
             QListView {
                 id: dailyRecomView
+                objectName: "recommendationList"
                 x: 24
                 y: 128
                 width: hotlistsWindow.width - 32
                 height: hotlistsWindow.height - 128
-                model: MusicApi.recommendSongs
+                model: musicAdapter ? musicAdapter.recommendSongs : MusicApi.recommendSongs
                 clip: true
                 //reuseItems: true
                 topMargin: 8
                 bottomMargin: 24
 
                 onClicked: (index) => {
-                               if(Options.settings.soundQuality === 0) {
+                               if(musicAdapter) {
+                                   musicAdapter.play(model.get(index));
+                               } else if(Options.settings.soundQuality === 0) {
                                    MusicApi.getMusicInfo(model.get(index).hash);
                                } else if(Options.settings.soundQuality === 1) {
                                    MusicApi.getMusicInfo(model.get(index).hashhq);
@@ -803,6 +873,11 @@ Item {
                            }
 
                 onToolClicked: (index,tool) => {
+                                   if (musicAdapter) {
+                                       if (tool === 0)
+                                           musicAdapter.enqueue(model.get(index));
+                                       return;
+                                   }
                                    switch(tool) {
                                    case 0:
                                        var listIndex = -1;
@@ -831,7 +906,9 @@ Item {
                                }
 
                 onEnded: {
-                    if(MusicApi.recommendSongs.count % 20 === 0 && MusicApi.recommendSongs.count !== 0) {
+                    if (homePage.requestRecommendationMore()) {
+                        isEnd = false;
+                    } else if(MusicApi.recommendSongs.count % 20 === 0 && MusicApi.recommendSongs.count !== 0) {
                         MusicApi.getRecommendSongs(MusicApi.recommendSongs.count / 20 + 1, 20, MusicApi.songSource);
                         isEnd = false;
                     } else {
@@ -932,7 +1009,7 @@ Item {
             y: 128
             width: recommendWindow.width - 32
             height: recommendWindow.height - 128
-            model: MusicApi.musicPlaylists
+            model: musicAdapter ? musicAdapter.categoryItems : MusicApi.musicPlaylists
             clip: true
             //reuseItems: true
             topMargin: 8
@@ -940,7 +1017,10 @@ Item {
             isList: true
 
             onEnded: {
-                if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
+                if (musicAdapter && typeof musicAdapter.loadMore === "function") {
+                    musicAdapter.loadMore(1, "")
+                    isEnd = false
+                } else if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
                     MusicApi.getMusicPlaylists(MusicApi.globaltagid,MusicApi.musicPlaylists.count / 20 + 1,20);
                     isEnd = false;
                 } else {
@@ -951,6 +1031,10 @@ Item {
             }
 
             onClicked: (index) => {
+                if (musicAdapter) {
+                    musicAdapter.browse(model.get(index))
+                    return
+                }
                 hotlistsWindow.mainTarget = recommendWindow;
                 MusicApi.playlistSong.clear();
                 MusicApi.globalid = model.get(index).hash;

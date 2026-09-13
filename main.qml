@@ -15,7 +15,7 @@ import QtQuick.Controls.Basic
 
 Window {
     id: window
-    property var musicAdapter: null
+    property var musicAdapter: originalUiMusic
     property var playbackAdapter: null
     width: 1140
     height: 720

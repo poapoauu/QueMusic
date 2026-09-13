@@ -15,6 +15,7 @@
 #include "core/media/MacKeychainSecretStore.h"
 #include "core/media/SourceAccountStore.h"
 #include "core/music/MusicHub.h"
+#include "core/music/OriginalUiMusicAdapter.h"
 #include "core/music/PlaybackCoordinator.h"
 #include "core/music/SourceScopeStore.h"
 #include "core/playback/QtPlaybackController.h"
@@ -176,12 +177,15 @@ int main(int argc, char *argv[])
     PlaybackCoordinator playbackCoordinator(&sourceRegistry, &playbackController);
     playbackController.setCoordinator(&playbackCoordinator);
     MusicHub musicHub(&sourceRegistry, &sourceScope, &sourceAccountSettings);
+    OriginalUiMusicAdapter originalUiMusic(&musicHub, &playbackCoordinator);
     PluginSettingsController pluginSettings(sourcePlugins.get(), &sourceRegistry,
                                             &sourceAccountStore);
 
     // Engine is declared after every borrowed music service so QML pages are
     // released first during shutdown.
     QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("originalUiMusic"),
+                                             &originalUiMusic);
     // Register generated QML types after constructing the engine, matching
     // Qt's module initialization order and avoiding a root-module ambiguity.
     qml_register_types_MeshGradientItem();
