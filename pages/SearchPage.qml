@@ -80,10 +80,8 @@ Item {
     }
 
     Component.onCompleted: {
-        if (musicAdapter) {
+        if (musicAdapter)
             musicAdapter.activatePage(3)
-            musicAdapter.search(mainSearchInput.text, searchTab)
-        }
     }
 
 
@@ -628,6 +626,14 @@ Item {
             clip: true
             topMargin: 8
             bottomMargin: 24
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            sectionId: musicAdapter ? searchPage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(1, sectionId) } : null
             toolText0ForRow: musicAdapter ? function(index) {
                 return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
             } : null
@@ -647,6 +653,10 @@ Item {
                     musicAdapter.enqueue(row)
                 else if (tool === 1 && searchPage.capabilitiesFor(row).canFavorite)
                     musicAdapter.setFavorite(row, true)
+            }
+            onEnded: {
+                if (musicAdapter && sectionId && hasMore && !loadingMore)
+                    musicAdapter.loadMore(1, sectionId)
             }
         }
     }

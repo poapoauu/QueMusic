@@ -411,6 +411,8 @@ Item {
                     text: "加入播放列表"
                     onClicked: {
                         if (musicAdapter) {
+                            if (favouriteChildPage.lastIndex === 1)
+                                return
                             var adapterSongs = musicAdapter.favoriteSongs
                             if (selectedCapabilities(adapterSongs).canEnqueue) {
                                 var rows = selectedRows(adapterSongs)
@@ -560,6 +562,14 @@ Item {
             clip: true
             topMargin: 8
             bottomMargin: 24
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            sectionId: musicAdapter ? favouritePage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(1, sectionId) } : null
             toolText0ForRow: musicAdapter ? function(index) {
                 return favouritePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
             } : null
@@ -579,6 +589,10 @@ Item {
                     musicAdapter.enqueue(row)
                 else if (tool === 1 && favouritePage.capabilitiesFor(row).canFavorite)
                     musicAdapter.setFavorite(row, true)
+            }
+            onEnded: {
+                if (musicAdapter && sectionId && hasMore && !loadingMore)
+                    musicAdapter.loadMore(1, sectionId)
             }
         }
     }

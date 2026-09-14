@@ -330,7 +330,7 @@ private slots:
         auto page = load(engine, QStringLiteral("pages/SearchPage.qml"), &adapter, &error);
         QVERIFY2(page, qPrintable(error));
         QVERIFY(adapter.activated.contains(3));
-        QVERIFY(adapter.searches.contains(qMakePair(QStringLiteral("needle"), 0)));
+        QVERIFY(adapter.searches.isEmpty());
         QObject *songs = page->findChild<QObject *>(QStringLiteral("searchSongsList"));
         QObject *lists = page->findChild<QObject *>(QStringLiteral("searchListsList"));
         QObject *albums = page->findChild<QObject *>(QStringLiteral("searchAlbumsList"));
