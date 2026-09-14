@@ -12,6 +12,7 @@
 #include <QSettings>
 #include <QFileInfo>
 #include "core/source/SourceStartup.h"
+#include "core/logging/RuntimeLoggingPolicy.h"
 #include "core/media/MacKeychainSecretStore.h"
 #include "core/media/SourceAccountStore.h"
 #include "core/music/MusicHub.h"
@@ -131,6 +132,7 @@ static void registerSmtcAppIdentity()
 
 int main(int argc, char *argv[])
 {
+    RuntimeLoggingPolicy::install();
 #if defined(Q_OS_WIN)
     registerSmtcAppIdentity();
 #endif

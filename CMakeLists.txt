@@ -609,6 +609,19 @@ if(BUILD_TESTING)
     set_tests_properties(quemusic_original_ui_playback_qml_test PROPERTIES
         TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    qt_add_executable(quemusic_sensitive_playback_logging_test
+        tests/tst_SensitivePlaybackLogging.cpp
+        core/logging/RuntimeLoggingPolicy.cpp
+        core/logging/RuntimeLoggingPolicy.h)
+    target_compile_features(quemusic_sensitive_playback_logging_test PRIVATE cxx_std_17)
+    target_include_directories(quemusic_sensitive_playback_logging_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/logging)
+    target_link_libraries(quemusic_sensitive_playback_logging_test PRIVATE
+        Qt6::Core Qt6::Test)
+    add_test(NAME quemusic_sensitive_playback_logging_test
+        COMMAND quemusic_sensitive_playback_logging_test)
+    set_tests_properties(quemusic_sensitive_playback_logging_test PROPERTIES TIMEOUT 30)
+
     qt_add_executable(quemusic_original_ui_structure_test
         tests/tst_OriginalUiStructure.cpp)
     target_compile_features(quemusic_original_ui_structure_test PRIVATE cxx_std_17)
@@ -1030,6 +1043,8 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
         cpp/CustomFlow.h
         cpp/WindowsSmtcManager.cpp
         cpp/WindowsSmtcManager.h
+        core/logging/RuntimeLoggingPolicy.cpp
+        core/logging/RuntimeLoggingPolicy.h
         cpp/LogManager.cpp
         cpp/LogManager.h
         api/MusicApiService.cpp
