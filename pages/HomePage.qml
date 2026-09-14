@@ -61,6 +61,8 @@ Item {
         if (!musicAdapter)
             return MusicApi.getHotlistMenu
         const model = musicAdapter.categoryItems
+        if (!model || typeof model.get !== "function" || model.count === undefined)
+            return []
         const items = []
         for (let i = 0; i < model.count; ++i) {
             const row = model.get(i)

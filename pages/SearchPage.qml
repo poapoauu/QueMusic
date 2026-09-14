@@ -46,11 +46,17 @@ Item {
     }
 
     function capabilitiesFor(row) {
-        return musicAdapter && row ? musicAdapter.capabilities(row) : ({})
+        return musicAdapter && row && typeof musicAdapter.capabilities === "function"
+                ? musicAdapter.capabilities(row) : ({})
+    }
+
+    function modelFor(name, fallback) {
+        const candidate = musicAdapter ? musicAdapter[name] : null
+        return candidate || fallback
     }
 
     function modelCapabilities(model) {
-        if (!musicAdapter || !model) return ({})
+        if (!musicAdapter || !model || typeof musicAdapter.capabilities !== "function") return ({})
         var rows = []
         for (var i = 0; i < model.count; ++i)
             rows.push(model.get(i))
@@ -67,10 +73,10 @@ Item {
     function currentModel() {
         if (!musicAdapter) return null
         switch (searchTab) {
-        case 1: return musicAdapter.searchLists
-        case 2: return musicAdapter.searchAlbums
-        case 3: return musicAdapter.searchLyrics
-        default: return musicAdapter.searchSongs
+        case 1: return modelFor("searchLists", MusicApi.searchSongsResults)
+        case 2: return modelFor("searchAlbums", MusicApi.searchSongsResults)
+        case 3: return modelFor("searchLyrics", MusicApi.searchSongsResults)
+        default: return modelFor("searchSongs", MusicApi.searchSongsResults)
         }
     }
 
@@ -173,7 +179,7 @@ Item {
             objectName: "searchSongsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: musicAdapter ? musicAdapter.searchSongs : MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchSongs", MusicApi.searchSongsResults)
             clip: true
             topMargin: 72
             menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
@@ -279,7 +285,7 @@ Item {
             objectName: "searchListsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: musicAdapter ? musicAdapter.searchLists : MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchLists", MusicApi.searchSongsResults)
             clip: true
             visible: false
             topMargin: 72
@@ -357,7 +363,7 @@ Item {
             objectName: "searchAlbumsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: musicAdapter ? musicAdapter.searchAlbums : MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchAlbums", MusicApi.searchSongsResults)
             clip: true
             visible: false
             topMargin: 72
@@ -433,7 +439,7 @@ Item {
             objectName: "searchLyricsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: musicAdapter ? musicAdapter.searchLyrics : MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchLyrics", MusicApi.searchSongsResults)
             clip: true
             visible: false
             topMargin: 72
@@ -622,7 +628,7 @@ Item {
             y: 184
             width: searchAdapterDetailWindow.width - 32
             height: searchAdapterDetailWindow.height - 184
-            model: musicAdapter ? musicAdapter.categoryItems : null
+            model: searchPage.modelFor("categoryItems", MusicApi.searchSongsResults)
             clip: true
             topMargin: 8
             bottomMargin: 24

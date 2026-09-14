@@ -12,7 +12,13 @@ Item {
     property list<int> chooseIndex: []
 
     function capabilitiesFor(row) {
-        return musicAdapter && row ? musicAdapter.capabilities(row) : ({})
+        return musicAdapter && row && typeof musicAdapter.capabilities === "function"
+                ? musicAdapter.capabilities(row) : ({})
+    }
+
+    function modelFor(name, fallback) {
+        const candidate = musicAdapter ? musicAdapter[name] : null
+        return candidate || fallback
     }
 
     function selectedRows(model) {
@@ -25,11 +31,12 @@ Item {
     }
 
     function selectedCapabilities(model) {
-        return musicAdapter ? musicAdapter.capabilities(selectedRows(model)) : ({})
+        return musicAdapter && typeof musicAdapter.capabilities === "function"
+                ? musicAdapter.capabilities(selectedRows(model)) : ({})
     }
 
     function modelCapabilities(model) {
-        if (!musicAdapter || !model) return ({})
+        if (!musicAdapter || !model || typeof musicAdapter.capabilities !== "function") return ({})
         var rows = []
         for (var i = 0; i < model.count; ++i)
             rows.push(model.get(i))
@@ -46,7 +53,7 @@ Item {
     function retryCurrentSection() {
         if (!musicAdapter) return
         var model = favouriteChildPage.lastIndex === 1
-                ? musicAdapter.favoriteLists : musicAdapter.favoriteSongs
+                ? modelFor("favoriteLists", favoritesList) : modelFor("favoriteSongs", favoritesSong)
         musicAdapter.retry(2, sectionFor(model))
     }
 
@@ -124,7 +131,7 @@ Item {
             id: songs
             width: favouriteChildPage.width + 16
             height: favouriteChildPage.height
-            model: musicAdapter ? musicAdapter.favoriteSongs : favoritesSong
+            model: favouritePage.modelFor("favoriteSongs", favoritesSong)
             clip: true
             topMargin: 72
             selectedIndices: favouritePage.chooseIndex
@@ -210,7 +217,7 @@ Item {
             }
             Text {
                 anchors.centerIn: parent
-                visible: (musicAdapter ? musicAdapter.favoriteSongs : favoritesSong).count === 0
+                visible: favouritePage.modelFor("favoriteSongs", favoritesSong).count === 0
                 text: "没有收藏的内容？快去收藏一些歌曲吧"
                 color: Style.themes.textColor
                 font.pixelSize: 14
@@ -220,7 +227,7 @@ Item {
             id: lists
             width: favouriteChildPage.width + 16
             height: favouriteChildPage.height
-            model: musicAdapter ? musicAdapter.favoriteLists : favoritesList
+            model: favouritePage.modelFor("favoriteLists", favoritesList)
             clip: true
             isList: true
             topMargin: 72
@@ -285,7 +292,7 @@ Item {
             }
             Text {
                 anchors.centerIn: parent
-                visible: (musicAdapter ? musicAdapter.favoriteLists : favoritesList).count === 0
+                visible: favouritePage.modelFor("favoriteLists", favoritesList).count === 0
                 text: "没有收藏的内容？快去收藏一些歌单吧"
                 color: Style.themes.textColor
                 font.pixelSize: 14
@@ -367,7 +374,8 @@ Item {
                     onClicked: {
                         if (musicAdapter) {
                             var adapterModel = favouriteChildPage.lastIndex === 1
-                                ? musicAdapter.favoriteLists : musicAdapter.favoriteSongs
+                                ? favouritePage.modelFor("favoriteLists", favoritesList)
+                                : favouritePage.modelFor("favoriteSongs", favoritesSong)
                             if (selectedCapabilities(adapterModel).canUnfavorite) {
                                 var rows = selectedRows(adapterModel)
                                 for (var selected = 0; selected < rows.length; ++selected)
@@ -413,7 +421,7 @@ Item {
                         if (musicAdapter) {
                             if (favouriteChildPage.lastIndex === 1)
                                 return
-                            var adapterSongs = musicAdapter.favoriteSongs
+                            var adapterSongs = favouritePage.modelFor("favoriteSongs", favoritesSong)
                             if (selectedCapabilities(adapterSongs).canEnqueue) {
                                 var rows = selectedRows(adapterSongs)
                                 for (var selected = 0; selected < rows.length; ++selected)
@@ -558,7 +566,7 @@ Item {
             y: 184
             width: favoriteAdapterDetailWindow.width - 32
             height: favoriteAdapterDetailWindow.height - 184
-            model: musicAdapter ? musicAdapter.categoryItems : null
+            model: favouritePage.modelFor("categoryItems", favoritesSong)
             clip: true
             topMargin: 8
             bottomMargin: 24
