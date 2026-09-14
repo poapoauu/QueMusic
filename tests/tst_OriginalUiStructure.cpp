@@ -86,6 +86,27 @@ private slots:
             QVERIFY2(!source.contains(QStringLiteral("SourceManager")), qPrintable(page));
         }
     }
+
+    void adapterSearchEntryAndTabsDoNotUseLegacyRequests()
+    {
+        const QString main = readSource(QStringLiteral("main.qml"));
+        QCOMPARE(main.count(QStringLiteral("window.musicAdapter.search(")), 3);
+        QVERIFY(main.contains(QStringLiteral("if (window.musicAdapter)")));
+
+        const QString search = readSource(QStringLiteral("pages/SearchPage.qml"));
+        QVERIFY(search.contains(QStringLiteral("objectName: \"searchSongsList\"")));
+        QVERIFY(search.contains(QStringLiteral("objectName: \"searchListsList\"")));
+        QVERIFY(search.contains(QStringLiteral("objectName: \"searchAlbumsList\"")));
+        QVERIFY(search.contains(QStringLiteral("objectName: \"searchLyricsList\"")));
+        QVERIFY(search.contains(QStringLiteral("musicAdapter.search(mainSearchInput.text, index)")));
+        QVERIFY(!search.contains(QStringLiteral("musicAdapter.loadMore(3, \"\")")));
+
+        const QString list = readSource(QStringLiteral("components/QListView.qml"));
+        QVERIFY(list.contains(QStringLiteral("property var toolText0ForRow")));
+        QVERIFY(list.contains(QStringLiteral("property var toolText1ForRow")));
+        QVERIFY(list.contains(QStringLiteral("visible: parent.tool0.length > 0")));
+        QVERIFY(list.contains(QStringLiteral("visible: parent.tool1.length > 0")));
+    }
 };
 
 QTEST_GUILESS_MAIN(OriginalUiStructureTest)

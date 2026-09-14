@@ -9,6 +9,18 @@
 
 namespace {
 bool validPage(int page) { return page >= 0 && page <= int(MusicPageKindV2::Search); }
+bool validSearchTab(int tab) { return tab >= 0 && tab <= 3; }
+PageSectionKindV2 searchSectionForTab(int tab)
+{
+    switch (tab) {
+    case 1: return PageSectionKindV2::Playlists;
+    case 2: return PageSectionKindV2::Albums;
+    // Providers return tracks for both the song and lyric presentation tabs;
+    // lyrics are resolved only after an item is selected.
+    case 3: return PageSectionKindV2::Tracks;
+    default: return PageSectionKindV2::Tracks;
+    }
+}
 QList<PageSectionKindV2> sectionsForPage(MusicPageKindV2 page)
 {
     using K = PageSectionKindV2;
@@ -87,6 +99,7 @@ struct MusicHub::Impl {
     QVariantList options;
     QList<Context> stack;
     QString searchText;
+    int searchTab = 0;
     quint64 contextRevision = 0;
     bool synchronizing = false;
 
@@ -224,7 +237,10 @@ struct MusicHub::Impl {
         if (index == 1 && !stack.isEmpty()) return stack.last().query;
         PageQueryV2 query;
         query.page = MusicPageKindV2(index); query.scope.sourceInstanceId = selected();
-        if (index == 3) query.searchText = searchText;
+        if (index == 3) {
+            query.searchText = searchText;
+            query.section = searchSectionForTab(searchTab);
+        }
         return query;
     }
     void refresh(int index)
@@ -234,7 +250,8 @@ struct MusicHub::Impl {
         if (page.revision != revision) return;
         const auto query = baseQuery(index);
         const auto sections = index == 1 && !stack.isEmpty() ? QList<PageSectionKindV2>{query.section}
-                                                           : sectionsForPage(query.page);
+            : index == int(MusicPageKindV2::Search) ? QList<PageSectionKindV2>{query.section}
+                                                     : sectionsForPage(query.page);
         page.expected = sections.size();
         // Publish the expected generation before beginRequest emits Loading:
         // QML can synchronously cancel, refresh or change the shared scope.
@@ -311,18 +328,34 @@ struct MusicHub::Impl {
     void sectionRequest(int index, const QString &id, bool append)
     {
         auto &page = pages[index];
-        if (!page.origins.contains(id)) return;
-        auto query = page.origins.value(id);
+        QString sectionId = id;
+        // Original list controls did not carry a section identity. Prefer their
+        // row-provided IDs, but keep the one-section fallback working for an
+        // empty/error model where no presentation row exists yet.
+        if (sectionId.isEmpty()) {
+            for (int i = 0; i < page.model->rowCount(); ++i) {
+                const auto section = page.model->section(i);
+                const bool retryable = !page.model->data(page.model->index(i), MusicPageModel::ErrorRole)
+                                            .toMap().isEmpty();
+                if ((!append && retryable) || (append && section.hasMore
+                                                && !section.nextCursor.isEmpty())) {
+                    sectionId = section.sectionId;
+                    break;
+                }
+            }
+        }
+        if (!page.origins.contains(sectionId)) return;
+        auto query = page.origins.value(sectionId);
         for (int i = 0; i < page.model->rowCount(); ++i) {
             const auto section = page.model->section(i);
-            if (section.sectionId != id) continue;
+            if (section.sectionId != sectionId) continue;
             if (append && (!section.hasMore || section.nextCursor.isEmpty())) return;
             query.section = section.kind;
             query.cursor = append ? section.nextCursor : QString{};
             const auto generation = page.generation;
-            if (!page.model->beginSectionRequest(generation, id) || page.generation != generation) return;
+            if (!page.model->beginSectionRequest(generation, sectionId) || page.generation != generation) return;
             const auto requestId = repository->requestPage(query, generation);
-            pending.insert(requestId, {index, generation, query, id, append});
+            pending.insert(requestId, {index, generation, query, sectionId, append});
             return;
         }
     }
@@ -381,9 +414,14 @@ void MusicHub::activatePage(int page)
 void MusicHub::refresh(int page) { if (validPage(page)) d->refresh(page); }
 void MusicHub::loadMore(int page, const QString &id) { if (validPage(page)) d->sectionRequest(page, id, true); }
 void MusicHub::retrySection(int page, const QString &id) { if (validPage(page)) d->sectionRequest(page, id, false); }
-void MusicHub::search(const QString &text)
+void MusicHub::search(const QString &text, int searchTab)
 {
-    if (d->searchText != text) { d->searchText = text; d->invalidate(3, true); }
+    if (!validSearchTab(searchTab)) return;
+    if (d->searchText != text || d->searchTab != searchTab) {
+        d->searchText = text;
+        d->searchTab = searchTab;
+        d->invalidate(3, true);
+    }
     d->pages[3].activated = true; d->refresh(3);
 }
 void MusicHub::cancel(int page) { if (validPage(page)) d->invalidate(page, false); }

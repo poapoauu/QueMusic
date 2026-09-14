@@ -44,7 +44,8 @@ public:
     Q_INVOKABLE void activatePage(int pageKind);
     Q_INVOKABLE void refresh(int pageKind);
     Q_INVOKABLE void loadMore(int pageKind, const QString &sectionId);
-    Q_INVOKABLE void search(const QString &text);
+    // searchTab follows the original UI order: songs, playlists, albums, lyrics.
+    Q_INVOKABLE void search(const QString &text, int searchTab = 0);
     Q_INVOKABLE void cancel(int pageKind);
     Q_INVOKABLE void retrySection(int pageKind, const QString &sectionId);
     // Full item maps. Specified shared scope rejects foreign instances; aggregate

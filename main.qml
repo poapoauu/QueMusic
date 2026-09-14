@@ -309,11 +309,15 @@ Window {
                         mainWarn.tiped("请输入文本>-<",0);
                         return;
                     }
-                    MusicApi.searchSongsResults.clear();
                     mainContent.contentIndexed(6);
                     Options.settings.searchList = Options.settings.searchList.filter(value => value !== mainSearchInput.text);
                     Options.settings.searchList.splice(0, 0, mainSearchInput.text);
-                    MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    if (window.musicAdapter)
+                        window.musicAdapter.search(mainSearchInput.text, 0);
+                    else {
+                        MusicApi.searchSongsResults.clear();
+                        MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    }
                     window.exitIndex = 1;
                     searchCard.close();
                 }
@@ -337,11 +341,15 @@ Window {
                         mainWarn.tiped("请输入文本>-<",0);
                         return;
                     }
-                    MusicApi.searchSongsResults.clear();
                     mainContent.contentIndexed(6);
                     Options.settings.searchList = Options.settings.searchList.filter(value => value !== mainSearchInput.text);
                     Options.settings.searchList.splice(0, 0, mainSearchInput.text);
-                    MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    if (window.musicAdapter)
+                        window.musicAdapter.search(mainSearchInput.text, 0);
+                    else {
+                        MusicApi.searchSongsResults.clear();
+                        MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    }
                     window.exitIndex = 1;
                     searchCard.close();
                 }
@@ -1121,13 +1129,17 @@ Window {
     SearchCard {
         id: searchCard
         onSearchIndex: (index) => {
-            MusicApi.searchSongsResults.clear();
             mainContent.contentIndexed(6);
             var name = Options.settings.searchList[index];
             mainSearchInput.text = name;
             Options.settings.searchList = Options.settings.searchList.filter(value => value !== name);
             Options.settings.searchList.splice(0, 0, name);
-            MusicApi.searchSongs(name,MusicApi.nowIndex,1,20);
+            if (window.musicAdapter)
+                window.musicAdapter.search(name, 0);
+            else {
+                MusicApi.searchSongsResults.clear();
+                MusicApi.searchSongs(name,MusicApi.nowIndex,1,20);
+            }
             window.exitIndex = 1;
             searchCard.close();
         }

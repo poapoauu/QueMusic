@@ -36,6 +36,20 @@ Item {
         return musicAdapter.capabilities(rows)
     }
 
+    function sectionFor(model) {
+        if (!model) return ""
+        if (model.count > 0)
+            return model.get(model.count - 1).sectionId || ""
+        return model.sectionId || ""
+    }
+
+    function retryCurrentSection() {
+        if (!musicAdapter) return
+        var model = favouriteChildPage.lastIndex === 1
+                ? musicAdapter.favoriteLists : musicAdapter.favoriteSongs
+        musicAdapter.retry(2, sectionFor(model))
+    }
+
     Component.onCompleted: {
         if (musicAdapter)
             musicAdapter.activatePage(2)
@@ -115,8 +129,25 @@ Item {
             topMargin: 72
             selectedIndices: favouritePage.chooseIndex
             menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
-            toolText0: musicAdapter && !favouritePage.modelCapabilities(model).canEnqueue ? "" : "\uf095"
-            toolText1: musicAdapter && !favouritePage.modelCapabilities(model).canUnfavorite ? "" : "\uf0c8"
+            toolText0: musicAdapter ? "" : "\uf095"
+            toolText1: musicAdapter ? "" : "\uf0c8"
+            toolText0ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            toolText1ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canUnfavorite ? "\uf0c8" : ""
+            } : null
+            sectionId: musicAdapter ? favouritePage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(2, sectionId) } : null
+
+            onEnded: {
+                if (musicAdapter && sectionId)
+                    if (hasMore && !loadingMore)
+                        musicAdapter.loadMore(2, sectionId)
+            }
 
             onClicked: (index) => {
                 if (favouritePage.setMode === 1) {
@@ -197,7 +228,21 @@ Item {
             selectedIndices: favouritePage.chooseIndex
             menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
             toolText0: ""
-            toolText1: musicAdapter && !favouritePage.modelCapabilities(model).canUnfavorite ? "" : "\uf0c8"
+            toolText1: musicAdapter ? "" : "\uf0c8"
+            toolText1ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canUnfavorite ? "\uf0c8" : ""
+            } : null
+            sectionId: musicAdapter ? favouritePage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(2, sectionId) } : null
+
+            onEnded: {
+                if (musicAdapter && sectionId)
+                    if (hasMore && !loadingMore)
+                        musicAdapter.loadMore(2, sectionId)
+            }
 
             onClicked: (index) => {
                 if (favouritePage.setMode === 1) {
@@ -210,8 +255,11 @@ Item {
                 } else {
                     var row = model.get(index)
                     if (musicAdapter) {
-                        if (capabilitiesFor(row).canBrowse && musicAdapter.browse(row))
+                        if (capabilitiesFor(row).canBrowse && musicAdapter.browse(row)) {
+                            favoriteAdapterDetailWindow.opened(row)
+                            mainContent.contentIndexed(1)
                             window.exitIndex = 1;
+                        }
                     } else {
                         MusicApi.playlistSong.clear();
                         MusicApi.globalid = row.id;
@@ -479,6 +527,58 @@ Item {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    Item {
+        id: favoriteAdapterDetailWindow
+        objectName: "favoriteAdapterDetailWindow"
+        z: 20
+        anchors.fill: parent
+        visible: false
+        function opened(info) { visible = true }
+        Connections {
+            target: window
+            enabled: favoriteAdapterDetailWindow.visible
+            function onExit() {
+                if (window.exitIndex <= 1)
+                    favoriteAdapterDetailWindow.visible = false
+            }
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Style.themes.primaryColor
+        }
+        QListView {
+            objectName: "favoriteAdapterDetailList"
+            x: 24
+            y: 184
+            width: favoriteAdapterDetailWindow.width - 32
+            height: favoriteAdapterDetailWindow.height - 184
+            model: musicAdapter ? musicAdapter.categoryItems : null
+            clip: true
+            topMargin: 8
+            bottomMargin: 24
+            toolText0ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            toolText1ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+            } : null
+            onClicked: (index) => {
+                if (!musicAdapter) return
+                var row = model.get(index)
+                if (favouritePage.capabilitiesFor(row).canPlay)
+                    musicAdapter.play(row)
+            }
+            onToolClicked: (index, tool) => {
+                if (!musicAdapter) return
+                var row = model.get(index)
+                if (tool === 0 && favouritePage.capabilitiesFor(row).canEnqueue)
+                    musicAdapter.enqueue(row)
+                else if (tool === 1 && favouritePage.capabilitiesFor(row).canFavorite)
+                    musicAdapter.setFavorite(row, true)
             }
         }
     }

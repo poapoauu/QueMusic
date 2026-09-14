@@ -42,11 +42,36 @@ public:
         const QUuid id = QUuid::createUuid();
         auto requests = property("pageRequests").toList();
         requests.append(QVariantMap{{QStringLiteral("page"), int(query.page)},
+                                    {QStringLiteral("section"), int(query.section)},
                                     {QStringLiteral("scope"), query.scope.sourceInstanceId},
+                                    {QStringLiteral("search"), query.searchText},
+                                    {QStringLiteral("cursor"), query.cursor},
                                     {QStringLiteral("filters"), query.filters}});
         setProperty("pageRequests", requests);
         emit requestStarted(id);
+        const int pageFailures = property("pageFailures").toInt();
+        if (pageFailures > 0) {
+            setProperty("pageFailures", pageFailures - 1);
+            emit requestFailed(id, {SourceErrorKindV2::Network,
+                                    QStringLiteral("source.network"), {}, std::nullopt, true});
+            return id;
+        }
         PageResultV2 result;
+        if (property("continuable").toBool()) {
+            PageSectionV2 section;
+            section.kind = query.section;
+            section.sectionId = QStringLiteral("fixture-search");
+            section.hasMore = query.cursor.isEmpty();
+            section.nextCursor = section.hasMore ? QStringLiteral("fixture-next") : QString{};
+            MediaItemV2 item;
+            item.ref = {QStringLiteral("adapter"), m_configuration.sourceInstanceId,
+                        m_configuration.accountId, MediaEntityTypeV2::Track,
+                        QStringLiteral("fixture-track")};
+            item.title = QStringLiteral("Fixture track");
+            item.availableActions.insert(SourceActionV2::Play, {AvailabilityV2::Available, {}, {}});
+            section.items = {item};
+            result.sections = {section};
+        }
         result.sourceStates.insert(m_configuration.sourceInstanceId,
                                    {SourcePageLoadStateV2::Empty, std::nullopt});
         emit pageReady(id, result);
@@ -210,7 +235,7 @@ struct RoutingHarness {
     std::unique_ptr<PlaybackCoordinator> playback;
     std::unique_ptr<OriginalUiMusicAdapter> adapter;
 
-    bool init()
+    bool init(bool addSecondAccount = false)
     {
         plugins.addSearchPath(QStringLiteral(QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGES));
         const int discovered = plugins.discover();
@@ -227,6 +252,12 @@ struct RoutingHarness {
             qWarning() << "adapter fixture account";
             return false;
         }
+        if (addSecondAccount
+            && !accounts.saveResolvedV2({QStringLiteral("adapter"), QStringLiteral("office"),
+                                         QStringLiteral("Office"), {}, {}})) {
+            qWarning() << "adapter fixture second account";
+            return false;
+        }
         hub = std::make_unique<MusicHub>(&registry, &scope, &settings);
         playback = std::make_unique<PlaybackCoordinator>(&registry, &sink);
         adapter = std::make_unique<OriginalUiMusicAdapter>(hub.get(), playback.get());
@@ -239,7 +270,8 @@ struct RoutingHarness {
         hub.reset();
         musicCacheIoPool()->waitForDone();
     }
-    IMusicSourceSessionV2 *session() { return registry.sessionFor(QStringLiteral("adapter/home")); }
+    IMusicSourceSessionV2 *session(const QString &id = QStringLiteral("adapter/home"))
+    { return registry.sessionFor(id); }
 };
 
 } // namespace
@@ -440,6 +472,121 @@ private slots:
         QVERIFY(!projected.value(QStringLiteral("canFavorite")).toBool());
         QCOMPARE(projected.value(QStringLiteral("favoriteReasonKey")).toString(),
                  QStringLiteral("music.favorite.unsupported"));
+    }
+
+    void searchesTheRequestedTabThroughTheUnifiedQuery()
+    {
+        RoutingHarness harness;
+        QVERIFY(harness.init(true));
+        harness.adapter->setSelectedSourceInstanceId(QStringLiteral("adapter/home"));
+
+        harness.adapter->search(QStringLiteral("needle"), 2);
+
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 1);
+        const QVariantMap request = harness.session()->property("pageRequests").toList().first().toMap();
+        QCOMPARE(request.value(QStringLiteral("page")).toInt(), int(MusicPageKindV2::Search));
+        QCOMPARE(request.value(QStringLiteral("section")).toInt(), int(PageSectionKindV2::Albums));
+        QCOMPARE(request.value(QStringLiteral("search")).toString(), QStringLiteral("needle"));
+        QCOMPARE(request.value(QStringLiteral("scope")).toString(), QStringLiteral("adapter/home"));
+        QVERIFY(harness.session(QStringLiteral("adapter/office"))
+                    ->property("pageRequests").toList().isEmpty());
+    }
+
+    void exposesSectionIdentityAndStateOnFlattenedRows()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        PageResultV2 result = resultWith({makeItem(MediaEntityTypeV2::Track,
+            QStringLiteral("navidrome"), QStringLiteral("nas-a"), QStringLiteral("42"))},
+            QStringLiteral("search-tracks"));
+        result.sections.first().hasMore = true;
+        result.sections.first().nextCursor = QStringLiteral("next");
+        accept(hub.searchResults(), result);
+
+        const QVariantMap row = adapter.searchSongs()->get(0);
+        QCOMPARE(row.value(QStringLiteral("sectionId")).toString(), QStringLiteral("search-tracks"));
+        QVERIFY(row.value(QStringLiteral("hasMore")).toBool());
+        QVERIFY(!row.value(QStringLiteral("loadingMore")).toBool());
+        QVERIFY(row.value(QStringLiteral("error")).toMap().isEmpty());
+    }
+
+    void retainsRetryStateWhenASectionHasNoPresentationRows()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        auto *search = hub.searchResults();
+        const quint64 generation = search->beginRequest();
+        PageSectionV2 section;
+        section.kind = PageSectionKindV2::Tracks;
+        section.sectionId = QStringLiteral("failed-search-tracks");
+        QVERIFY(search->applyQueryFailure(generation, section,
+                                           {SourceErrorKindV2::Network, QStringLiteral("source.network")}));
+        QVERIFY(search->finishGeneration(generation, 1));
+        QCoreApplication::processEvents();
+
+        QCOMPARE(adapter.searchSongs()->rowCount(), 0);
+        QCOMPARE(adapter.searchSongs()->sectionId(), QStringLiteral("failed-search-tracks"));
+        QCOMPARE(adapter.searchSongs()->error().value(QString{}).toMap()
+                     .value(QStringLiteral("messageKey")).toString(),
+                 QStringLiteral("source.network"));
+    }
+
+    void continuesTheFlattenedSearchSectionByItsPresentationId()
+    {
+        RoutingHarness harness;
+        QVERIFY(harness.init());
+        harness.session()->setProperty("continuable", true);
+
+        harness.adapter->search(QStringLiteral("needle"), 0);
+        QTRY_COMPARE(harness.adapter->searchSongs()->rowCount(), 1);
+        const QVariantMap row = harness.adapter->searchSongs()->get(0);
+        QCOMPARE(row.value(QStringLiteral("sectionId")).toString(), QStringLiteral("fixture-search"));
+        QVERIFY(row.value(QStringLiteral("hasMore")).toBool());
+
+        harness.adapter->loadMore(3, row.value(QStringLiteral("sectionId")).toString());
+
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 2);
+        QCOMPARE(harness.session()->property("pageRequests").toList().last().toMap()
+                     .value(QStringLiteral("cursor")).toString(), QStringLiteral("fixture-next"));
+        QTRY_VERIFY(!harness.adapter->searchSongs()->hasMore());
+
+        harness.adapter->loadMore(3, row.value(QStringLiteral("sectionId")).toString());
+        QCoreApplication::processEvents();
+        QCOMPARE(harness.session()->property("pageRequests").toList().size(), 2);
+    }
+
+    void retriesTheFailedSearchSectionWithItsTabAndSourceScope()
+    {
+        RoutingHarness harness;
+        QVERIFY(harness.init(true));
+        harness.adapter->setSelectedSourceInstanceId(QStringLiteral("adapter/home"));
+        harness.session()->setProperty("pageFailures", 1);
+
+        harness.adapter->search(QStringLiteral("needle"), 1);
+
+        QTRY_VERIFY(!harness.adapter->searchLists()->error().isEmpty());
+        const QString sectionId = harness.adapter->searchLists()->sectionId();
+        QVERIFY(!sectionId.isEmpty());
+        QCOMPARE(harness.session()->property("pageRequests").toList().size(), 1);
+
+        harness.adapter->retry(3, sectionId);
+
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 2);
+        const QVariantMap retry = harness.session()->property("pageRequests").toList().last().toMap();
+        QCOMPARE(retry.value(QStringLiteral("section")).toInt(), int(PageSectionKindV2::Playlists));
+        QCOMPARE(retry.value(QStringLiteral("scope")).toString(), QStringLiteral("adapter/home"));
+        QCOMPARE(retry.value(QStringLiteral("search")).toString(), QStringLiteral("needle"));
+        QVERIFY(retry.value(QStringLiteral("cursor")).toString().isEmpty());
+        QVERIFY(harness.session(QStringLiteral("adapter/office"))
+                    ->property("pageRequests").toList().isEmpty());
     }
 
     void doesNotExposeFullV2ItemsThroughTheMetaObject()
