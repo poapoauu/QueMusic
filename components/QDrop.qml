@@ -16,12 +16,18 @@ Rectangle {
     color: Style.themes.primaryColor
     border.width: 2
     border.color: Style.themes.borderColor
-    property string text: model[choice]
+    // Keep the display role strictly textual. QAudioDevice is an object and
+    // must remain available through selectedValue rather than being coerced
+    // into a QString by QML.
+    property var selectedValue: choice >= 0 && choice < model.length ? model[choice] : null
+    property string text: displayText
+    readonly property string displayText: useId
+        ? (selectedValue && selectedValue.description ? String(selectedValue.description) : "")
+        : (selectedValue === null || selectedValue === undefined ? "" : String(selectedValue))
     property bool useId: false
     property string icon: "\uf096"
     property var model: ["Click1","Click2"]
     property int choice: 0
-    property bool enabled: true
     property color textColor: Style.themes.textColor
     property string iconFontFamily: iconFont.name    // 图标字体
     property int cardRadius: radius
@@ -52,7 +58,7 @@ Rectangle {
         width: root.width - root.height
         height: root.height
         clip: true
-        text: root.useId ? root.model[choice].description : root.text
+        text: root.text
         color: root.textColor
         font.pixelSize: Style.settings.textmain
         font.bold: true
@@ -129,7 +135,9 @@ Rectangle {
                     radius: root.cardRadius
                     Text {
                         anchors.fill: parent
-                        text: root.useId ? root.model[index].description : modelData
+                        text: root.useId
+                              ? (modelData && modelData.description ? String(modelData.description) : "")
+                              : (modelData === null || modelData === undefined ? "" : String(modelData))
                         color: root.choice == index ? Style.themes.primaryColor : Style.themes.textColor
                         font.pixelSize: Style.settings.textmain
                         verticalAlignment: Text.AlignVCenter

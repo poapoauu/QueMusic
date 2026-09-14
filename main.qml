@@ -16,7 +16,11 @@ import QtQuick.Controls.Basic
 Window {
     id: window
     property var musicAdapter: originalUiMusic
-    property var playbackAdapter: null
+    property var playbackAdapter: securePlaybackControls
+    readonly property bool securePlaybackActive: playbackCoordinator
+        && playbackCoordinator.queue.length > 0
+    readonly property bool securePlaybackCurrent: securePlaybackActive
+        && playbackCoordinator.currentIndex >= 0
     width: 1140
     height: 720
     minimumWidth: 810
@@ -54,6 +58,11 @@ Window {
     property int exitIndex: 0
     property string version: "Beta-0.4.1"
     property int versionCode: 41
+
+    PlaybackControlsAdapter {
+        id: securePlaybackControls
+        controller: playbackController
+    }
 
     property string localLyricsRequestPath: ""
 
@@ -124,6 +133,31 @@ Window {
         legacyQueueController.playQueueEntry(index);
     }
 
+    function togglePlayback() {
+        if (securePlaybackActive) {
+            if (!securePlaybackCurrent)
+                return;
+            if (playbackAdapter.playing)
+                playbackAdapter.pause();
+            else
+                playbackAdapter.play();
+            return;
+        }
+        if (mainMedia.playing)
+            mainMedia.pause();
+        else
+            mainMedia.play();
+    }
+
+    function syncSecureCurrent() {
+        if (!securePlaybackCurrent)
+            return;
+        const item = playbackCoordinator.currentItem || {};
+        const artists = item.artists || [];
+        window.musicTitle = item.title || "QueMusic";
+        window.musicArtist = artists instanceof Array ? artists.join(", ") : (item.subtitle || "");
+    }
+
     // 首次加载内容临时存储，防止重新加载浪费内存
     property QtObject completedStart: QtObject {
         property bool homeLoaded: false
@@ -176,12 +210,7 @@ Window {
         enabled: Options.settings.openShortCut
         onActivated: {
             console.log("shortcut--play")
-            if (mainMedia.playing === false) {
-                mainMedia.play();
-            }
-            else {
-                mainMedia.pause();
-            }
+            window.togglePlayback();
         }
     }
     Shortcut {
@@ -897,6 +926,17 @@ Window {
         }
     }
 
+    Connections {
+        target: playbackCoordinator
+        function onCurrentChanged() {
+            window.syncSecureCurrent();
+        }
+        function onPlaybackFailed(generation, messageKey) {
+            if (generation === playbackCoordinator.currentGeneration)
+                mainWarn.tiped(messageKey, 2);
+        }
+    }
+
 
     AudioOutput { id: volumeValue; volume: Options.settings.musicVolume; device: Options.settings.useDefaultDevice ? musicDevices.defaultAudioOutput : musicDevices.audioOutputs[Options.settings.audioDevice] }
     MediaDevices { id: musicDevices }
@@ -1117,7 +1157,10 @@ Window {
     LegacyQueueController {
         id: legacyQueueController
         queueModel: playListModel
+        secureQueueModel: playbackCoordinator ? playbackCoordinator.queue : []
         legacyPlayer: musicControlMin
+        playbackCoordinator: playbackCoordinator
+        useCoordinator: window.securePlaybackActive
     }
 
     ListModel {

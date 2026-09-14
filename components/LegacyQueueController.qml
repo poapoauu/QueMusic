@@ -5,7 +5,10 @@ import QtQml
 
 QtObject {
     property var queueModel
+    property var secureQueueModel
     property var legacyPlayer
+    property var playbackCoordinator
+    property bool useCoordinator: false
 
     function copyQueueEntry(entry) {
         return {
@@ -17,8 +20,16 @@ QtObject {
     }
 
     function playQueueEntry(index) {
-        if (!queueModel || index < 0 || index >= queueModel.count)
+        const activeQueue = useCoordinator && playbackCoordinator
+            ? (secureQueueModel || queueModel) : queueModel;
+        const count = activeQueue && activeQueue.count !== undefined
+            ? activeQueue.count : (activeQueue ? activeQueue.length : 0);
+        if (!activeQueue || index < 0 || index >= count)
             return;
+        if (useCoordinator && playbackCoordinator) {
+            playbackCoordinator.playQueueEntry(index);
+            return;
+        }
         legacyPlayer.refreshLegacyMusicPlay();
     }
 }

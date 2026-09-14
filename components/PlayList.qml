@@ -10,9 +10,33 @@ Popup {
     id: playList
     // 列表中： source：-1：本地 0.酷狗 1.网易云 2.qq音乐
     property alias model: playListView.model
+    property var secureModel: []
+    property bool secureMode: false
+
+    function activeIndex() {
+        return secureMode ? playbackCoordinator.currentIndex : playListModel.playListIndex;
+    }
+
+    function displayName(index) {
+        const value = secureMode ? secureModel[index] : playListModel.get(index);
+        return secureMode ? (value.title || "") : value.name;
+    }
+
+    function displayArtist(index) {
+        const value = secureMode ? secureModel[index] : playListModel.get(index);
+        return secureMode ? ((value.artists || []).join(", ")) : (value.songer || "");
+    }
+
+    function displaySource(index) {
+        const value = secureMode ? secureModel[index] : playListModel.get(index);
+        return secureMode ? (value.source || "在线") : (value.source == -1 ? "本地" : "在线");
+    }
+
+    onSecureModeChanged: playListView.model = secureMode ? secureModel : playListModel
+    onSecureModelChanged: if (secureMode) playListView.model = secureModel
 
     function clearOtherSongs() {
-        if (playListModel.count === 0 || playListModel.playListIndex < 0
+        if (secureMode || playListModel.count === 0 || playListModel.playListIndex < 0
                 || playListModel.playListIndex >= playListModel.count)
             return;
         var currentEntry = window.copyQueueEntry(playListModel.get(playListModel.playListIndex));
@@ -131,7 +155,7 @@ Popup {
                 height: 60
                 width: parent.width
                 radius: Style.settings.labelRadius
-                color: playListModel.playListIndex === index ? Style.themes.containColor : "transparent"
+                color: playList.activeIndex() === index ? Style.themes.containColor : "transparent"
 
                 Behavior on color { ColorAnimation { duration: 120 } }
                 Text {
@@ -154,7 +178,7 @@ Popup {
                     width: 200
                     height: 20
                     clip: true
-                    text: model.name
+                    text: playList.displayName(index)
                     elide: Text.ElideRight
                     color: Style.themes.fontColor
                     font.pixelSize: Style.settings.text
@@ -168,12 +192,12 @@ Popup {
                     width: 200
                     height: 20
                     clip: true
-                    text: model.songer
+                    text: playList.displayArtist(index)
                     color: Style.themes.textColor
                     elide: Text.ElideRight
                     font.pixelSize: Style.settings.textTip
                     verticalAlignment: Text.AlignVCenter
-                    visible: model.songer ? true : false
+                    visible: playList.displayArtist(index) ? true : false
                     Behavior on color { ColorAnimation { duration: 120 } }
                 }
 
@@ -190,7 +214,7 @@ Popup {
                         width: 56
                         height: 40
                         color: Style.themes.textColor
-                        text: model.source == -1 ? "本地" : "在线"
+                        text: playList.displaySource(index)
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         font.pixelSize: Style.settings.text
@@ -205,9 +229,9 @@ Popup {
                     onEntered: listHover.opacity = 1
                     onExited: listHover.opacity = 0
                     onClicked: {
-                        playListModel.playListIndex = index;
+                        if (!playList.secureMode)
+                            playListModel.playListIndex = index;
                         window.playQueueEntry(index);
-                        console.log("name:",model.name," path:",model.path," source:",model.source," artist:",model.songer)
                     }
                     Rectangle {
                         id: listHover
@@ -229,6 +253,7 @@ Popup {
                             buttonColor: "transparent"
                             hoverColor: Qt.rgba(0.5,0.5,0.5,0.5)
                             shadowEnabled: false
+                            visible: !playList.secureMode
                             onClicked: {
                             }
                         }
