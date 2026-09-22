@@ -91,6 +91,22 @@ b509c4c fix: redact authenticated playback diagnostics
 
 `CMAKE_OSX_ARCHITECTURES` 未显式设置，当前构建随本机编译器目标使用 `x86_64`。
 
+### Source Plugin 兼容基线
+
+以下值来自 fresh build 生成的 Navidrome `manifest.json`，并与 Source SDK/PluginManager contract tests 一致：
+
+| 兼容项 | 基线值 |
+| --- | --- |
+| Host Plugin API | major `1`，minimum host minor `0` |
+| Source interface IID | `org.quemusic.MusicSourcePlugin/2.0` |
+| Source interface version | `2.0` |
+| Source SDK ABI | `2` |
+| Qt major | `6` |
+| Native architecture | `x86_64` |
+| Build key | `Debug` |
+
+`PluginManager` 会对 Source SDK ABI、Qt major、进程架构和 build key 执行运行时兼容检查；后续插件必须以该元组或届时明确发布的新兼容版本为目标。
+
 ## 6. Fresh configure / build
 
 配置命令：
@@ -141,6 +157,47 @@ Configure 仍报告三个既有非阻塞警告：MeshGradient QML module 的输�
 - 总耗时 62.76 秒。
 
 该 36 项是纯 `b94e181` 提交树的权威测试数量。既有脏工作树中的 40 项还包含四项未提交 CMake/测试工作：`AppStoragePaths`、`LogManager`、macOS local-network plist 校验和 macOS runtime-library 校验；它们没有被混入本基线。
+
+### CTest 名称清单
+
+以下顺序来自 fresh build 的 `ctest --test-dir build-phase0-clean -N`：
+
+1. `quemusic_navidrome_smoke_state_test`
+2. `quemusic_source_v2_types_test`
+3. `quemusic_music_page_model_test`
+4. `quemusic_source_v2_contract_test`
+5. `quemusic_source_settings_storage_test`
+6. `quemusic_source_account_store_test`
+7. `quemusic_playback_plugin_contract_test`
+8. `quemusic_plugin_settings_operation_test`
+9. `quemusic_plugin_settings_controller_test`
+10. `quemusic_music_hub_test`
+11. `quemusic_original_ui_music_adapter_test`
+12. `quemusic_playback_coordinator_test`
+13. `quemusic_qt_playback_controller_test`
+14. `quemusic_playback_controls_adapter_qml_test`
+15. `quemusic_legacy_queue_qml_test`
+16. `quemusic_music_hub_qml_test`
+17. `quemusic_original_ui_recommendation_qml_test`
+18. `quemusic_original_ui_actions_qml_test`
+19. `quemusic_original_ui_playback_qml_test`
+20. `quemusic_sensitive_playback_logging_test`
+21. `quemusic_original_ui_structure_test`
+22. `quemusic_capability_resolver_test`
+23. `quemusic_media_action_router_v2_test`
+24. `quemusic_aggregate_composer_test`
+25. `quemusic_page_repository_test`
+26. `quemusic_music_caches_test`
+27. `quemusic_plugin_startup_test`
+28. `quemusic_plugin_manifest_test`
+29. `quemusic_plugin_manager_test`
+30. `quemusic_plugin_v2_fixture_package_test`
+31. `quemusic_source_registry_v2_test`
+32. `quemusic_plugin_settings_qml_test`
+33. `quemusic_macos_bundle_plugin_test`
+34. `quemusic_macos_bundle_plugin_incremental_test`
+35. `quemusic_local_lyrics_test`
+36. `quemusic_navidrome_source_test`
 
 ## 8. Source SDK v2 生产边界
 
