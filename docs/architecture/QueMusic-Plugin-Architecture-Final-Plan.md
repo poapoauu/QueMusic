@@ -1,8 +1,8 @@
 # QueMusic 全音源插件化改造最终落地方案
 
-> 版本：Final Architecture Plan v1.0  
-> 日期：2026-09-15  
-> 目标基线：QueMusic `main` + 已完成的 `codex/unified-media-bridge` / Source SDK v2 / Original UI Adapter 工作成果  
+> 版本：Final Architecture Plan v1.0
+> 日期：2026-09-15
+> 目标基线：QueMusic `main` + 已完成的 `codex/unified-media-bridge` / Source SDK v2 / Original UI Adapter 工作成果
 > 核心原则：**尽量保留现有 QueMusic UI；所有音乐源（包括本地音乐）统一插件化；音源特有登录/配置/管理业务由插件提供；视觉体系由 QueMusic 统一控制。**
 
 ---
