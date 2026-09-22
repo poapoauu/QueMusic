@@ -18,6 +18,7 @@ Popup {
     z: 3
     height: cardFlow.height + 42 > 200 ? 200 : cardFlow.height + 42
     width: 320
+    property int selectedIndex: -1
     signal searchIndex(int index)
     //onClosed: { input.text = ""; input.focus = false }
     Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutExpo } }
@@ -104,7 +105,12 @@ Popup {
                         id: searchArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: dialog.searchIndex(index);
+                        onClicked: {
+                            if (index < 0 || index >= Options.settings.searchList.length)
+                                return;
+                            dialog.selectedIndex = index;
+                            dialog.searchIndex(index);
+                        }
                     }
                 }
             }

@@ -2,13 +2,65 @@
 // Copyright (c) 2025-2026 QueMusic Contributors
 //
 import QtQuick
-import QueMusic 1.0
 import 'qrc:/QueMusic/components'
 
 Item {
     id: favouritePage
+    property var musicAdapter: null
+    property var playbackAdapter: null
     property int setMode: 0
     property list<int> chooseIndex: []
+
+    function capabilitiesFor(row) {
+        return musicAdapter && row && typeof musicAdapter.capabilities === "function"
+                ? musicAdapter.capabilities(row) : ({})
+    }
+
+    function modelFor(name, fallback) {
+        const candidate = musicAdapter ? musicAdapter[name] : null
+        return candidate || fallback
+    }
+
+    function selectedRows(model) {
+        var rows = []
+        for (var i = 0; i < chooseIndex.length; ++i) {
+            var row = model.get(chooseIndex[i])
+            if (row) rows.push(row)
+        }
+        return rows
+    }
+
+    function selectedCapabilities(model) {
+        return musicAdapter && typeof musicAdapter.capabilities === "function"
+                ? musicAdapter.capabilities(selectedRows(model)) : ({})
+    }
+
+    function modelCapabilities(model) {
+        if (!musicAdapter || !model || typeof musicAdapter.capabilities !== "function") return ({})
+        var rows = []
+        for (var i = 0; i < model.count; ++i)
+            rows.push(model.get(i))
+        return musicAdapter.capabilities(rows)
+    }
+
+    function sectionFor(model) {
+        if (!model) return ""
+        if (model.count > 0)
+            return model.get(model.count - 1).sectionId || ""
+        return model.sectionId || ""
+    }
+
+    function retryCurrentSection() {
+        if (!musicAdapter) return
+        var model = favouriteChildPage.lastIndex === 1
+                ? modelFor("favoriteLists", favoritesList) : modelFor("favoriteSongs", favoritesSong)
+        musicAdapter.retry(2, sectionFor(model))
+    }
+
+    Component.onCompleted: {
+        if (musicAdapter)
+            musicAdapter.activatePage(2)
+    }
 
     QPages {
         id: favouriteChildPage
@@ -79,10 +131,30 @@ Item {
             id: songs
             width: favouriteChildPage.width + 16
             height: favouriteChildPage.height
-            model: favoritesSong
+            model: favouritePage.modelFor("favoriteSongs", favoritesSong)
             clip: true
             topMargin: 72
             selectedIndices: favouritePage.chooseIndex
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: musicAdapter ? "" : "\uf095"
+            toolText1: musicAdapter ? "" : "\uf0c8"
+            toolText0ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            toolText1ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canUnfavorite ? "\uf0c8" : ""
+            } : null
+            sectionId: musicAdapter ? favouritePage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(2, sectionId) } : null
+
+            onEnded: {
+                if (musicAdapter && sectionId)
+                    if (hasMore && !loadingMore)
+                        musicAdapter.loadMore(2, sectionId)
+            }
 
             onClicked: (index) => {
                 if (favouritePage.setMode === 1) {
@@ -93,12 +165,24 @@ Item {
                         favouritePage.chooseIndex = favouritePage.chooseIndex.filter(v => v !== index);
                     }
                 } else {
-                    MusicApi.getMusicInfo(model.get(index).id, 0, model.get(index).source);
+                    var row = model.get(index)
+                    if (musicAdapter) {
+                        if (capabilitiesFor(row).canPlay)
+                            musicAdapter.play(row)
+                    } else {
+                        MusicApi.getMusicInfo(row.id, 0, row.source);
+                    }
                 }
             }
             onToolClicked: (index,tool) => {
                 switch(tool) {
                 case 0:
+                    var row = model.get(index);
+                    if (musicAdapter) {
+                        if (capabilitiesFor(row).canEnqueue)
+                            musicAdapter.enqueue(row);
+                        break;
+                    }
                     var listIndex = -1;
                     var indexHash = model.get(index).id;
                     for(var i = 0;i < playListModel.count;i++) {
@@ -113,20 +197,27 @@ Item {
                     }
                     break;
                 case 1:
-                    favoritesSong.removeFavorite(model.get(index).id, "song");
-                    mainWarn.tiped("取消收藏",0);
+                    var favoriteRow = model.get(index);
+                    if (musicAdapter) {
+                        if (capabilitiesFor(favoriteRow).canUnfavorite)
+                            musicAdapter.setFavorite(favoriteRow, false);
+                    } else {
+                        favoritesSong.removeFavorite(favoriteRow.id, "song");
+                        mainWarn.tiped("取消收藏",0);
+                    }
                 }
             }
             onMenuClicked: (index,choice) => {
                 switch(choice) {
                 case 0:
-                    MusicApi.getMusicInfo(model.get(index).id,1,model.get(index).source);
+                    if (!musicAdapter)
+                        MusicApi.getMusicInfo(model.get(index).id,1,model.get(index).source);
                     break;
                 }
             }
             Text {
                 anchors.centerIn: parent
-                visible: favoritesSong.count === 0
+                visible: favouritePage.modelFor("favoriteSongs", favoritesSong).count === 0
                 text: "没有收藏的内容？快去收藏一些歌曲吧"
                 color: Style.themes.textColor
                 font.pixelSize: 14
@@ -136,12 +227,29 @@ Item {
             id: lists
             width: favouriteChildPage.width + 16
             height: favouriteChildPage.height
-            model: favoritesList
+            model: favouritePage.modelFor("favoriteLists", favoritesList)
             clip: true
             isList: true
             topMargin: 72
             visible: false
             selectedIndices: favouritePage.chooseIndex
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: ""
+            toolText1: musicAdapter ? "" : "\uf0c8"
+            toolText1ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canUnfavorite ? "\uf0c8" : ""
+            } : null
+            sectionId: musicAdapter ? favouritePage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(2, sectionId) } : null
+
+            onEnded: {
+                if (musicAdapter && sectionId)
+                    if (hasMore && !loadingMore)
+                        musicAdapter.loadMore(2, sectionId)
+            }
 
             onClicked: (index) => {
                 if (favouritePage.setMode === 1) {
@@ -152,24 +260,39 @@ Item {
                         favouritePage.chooseIndex = favouritePage.chooseIndex.filter(v => v !== index);
                     }
                 } else {
-                    MusicApi.playlistSong.clear();
-                    MusicApi.globalid = model.get(index).id;
-                    MusicApi.getPlaylistSongs(model.get(index).id,1,20,model.get(index).source);
-                    playListSongsWindow.songSource = model.get(index).source;
-                    playListSongsWindow.opened(model.get(index));
-                    window.exitIndex = 1;
+                    var row = model.get(index)
+                    if (musicAdapter) {
+                        if (capabilitiesFor(row).canBrowse && musicAdapter.browse(row)) {
+                            favoriteAdapterDetailWindow.opened(row)
+                            mainContent.contentIndexed(1)
+                            window.exitIndex = 1;
+                        }
+                    } else {
+                        MusicApi.playlistSong.clear();
+                        MusicApi.globalid = row.id;
+                        MusicApi.getPlaylistSongs(row.id,1,20,row.source);
+                        playListSongsWindow.songSource = row.source;
+                        playListSongsWindow.opened(row);
+                        window.exitIndex = 1;
+                    }
                 }
             }
             onToolClicked: (index,tool) => {
                 switch(tool) {
                 case 1:
-                    favoritesList.removeFavorite(model.get(index).id, "playlist");
-                    mainWarn.tiped("取消收藏",0);
+                    var listRow = model.get(index);
+                    if (musicAdapter) {
+                        if (capabilitiesFor(listRow).canUnfavorite)
+                            musicAdapter.setFavorite(listRow, false);
+                    } else {
+                        favoritesList.removeFavorite(listRow.id, "playlist");
+                        mainWarn.tiped("取消收藏",0);
+                    }
                 }
             }
             Text {
                 anchors.centerIn: parent
-                visible: favoritesList.count === 0
+                visible: favouritePage.modelFor("favoriteLists", favoritesList).count === 0
                 text: "没有收藏的内容？快去收藏一些歌单吧"
                 color: Style.themes.textColor
                 font.pixelSize: 14
@@ -249,6 +372,18 @@ Item {
                     buttonColor: "#fa4642"
                     text: "取消收藏"
                     onClicked: {
+                        if (musicAdapter) {
+                            var adapterModel = favouriteChildPage.lastIndex === 1
+                                ? favouritePage.modelFor("favoriteLists", favoritesList)
+                                : favouritePage.modelFor("favoriteSongs", favoritesSong)
+                            if (selectedCapabilities(adapterModel).canUnfavorite) {
+                                var rows = selectedRows(adapterModel)
+                                for (var selected = 0; selected < rows.length; ++selected)
+                                    musicAdapter.setFavorite(rows[selected], false)
+                                favouritePage.chooseIndex = []
+                            }
+                            return
+                        }
                         switch(favouritePage.setMode) {
                         case 1:
                             globalDialog.openSimpleDialog("取消收藏", "这将取消收藏这些歌曲",
@@ -283,6 +418,17 @@ Item {
                     radius: 20
                     text: "加入播放列表"
                     onClicked: {
+                        if (musicAdapter) {
+                            if (favouriteChildPage.lastIndex === 1)
+                                return
+                            var adapterSongs = favouritePage.modelFor("favoriteSongs", favoritesSong)
+                            if (selectedCapabilities(adapterSongs).canEnqueue) {
+                                var rows = selectedRows(adapterSongs)
+                                for (var selected = 0; selected < rows.length; ++selected)
+                                    musicAdapter.enqueue(rows[selected])
+                            }
+                            return
+                        }
                         switch(favouritePage.setMode) {
                         case 1:
                             var playlist = [];
@@ -391,6 +537,70 @@ Item {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    Item {
+        id: favoriteAdapterDetailWindow
+        objectName: "favoriteAdapterDetailWindow"
+        z: 20
+        anchors.fill: parent
+        visible: false
+        function opened(info) { visible = true }
+        Connections {
+            target: window
+            enabled: favoriteAdapterDetailWindow.visible
+            function onExit() {
+                if (window.exitIndex <= 1)
+                    favoriteAdapterDetailWindow.visible = false
+            }
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Style.themes.primaryColor
+        }
+        QListView {
+            objectName: "favoriteAdapterDetailList"
+            x: 24
+            y: 184
+            width: favoriteAdapterDetailWindow.width - 32
+            height: favoriteAdapterDetailWindow.height - 184
+            model: favouritePage.modelFor("categoryItems", favoritesSong)
+            clip: true
+            topMargin: 8
+            bottomMargin: 24
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            sectionId: musicAdapter ? favouritePage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(1, sectionId) } : null
+            toolText0ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            toolText1ForRow: musicAdapter ? function(index) {
+                return favouritePage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+            } : null
+            onClicked: (index) => {
+                if (!musicAdapter) return
+                var row = model.get(index)
+                if (favouritePage.capabilitiesFor(row).canPlay)
+                    musicAdapter.play(row)
+            }
+            onToolClicked: (index, tool) => {
+                if (!musicAdapter) return
+                var row = model.get(index)
+                if (tool === 0 && favouritePage.capabilitiesFor(row).canEnqueue)
+                    musicAdapter.enqueue(row)
+                else if (tool === 1 && favouritePage.capabilitiesFor(row).canFavorite)
+                    musicAdapter.setFavorite(row, true)
+            }
+            onEnded: {
+                if (musicAdapter && sectionId && hasMore && !loadingMore)
+                    musicAdapter.loadMore(1, sectionId)
             }
         }
     }

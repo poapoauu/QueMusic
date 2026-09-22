@@ -19,6 +19,15 @@ ListView {
     property int toolX: width - 210
     property string toolText0: "\uf095"
     property string toolText1: "\uf0c8"
+    // Per-row adapters keep a mixed list from hiding an action supported by a
+    // particular item. Returning an empty string hides that item's button.
+    property var toolText0ForRow: null
+    property var toolText1ForRow: null
+    property string sectionId: ""
+    property bool hasMore: true
+    property bool loadingMore: false
+    property var sectionError: ({})
+    property var retryAction: null
     property alias menu: menu
     property bool isEnd: false
     contentWidth: view.width - 16
@@ -30,19 +39,40 @@ ListView {
     signal toolClicked(int index,int tool)//从右往左2（菜单)，1（喜欢），0（通用）
     signal ended()
 
+    function retrySection() {
+        if (typeof view.retryAction === "function")
+            view.retryAction(view.sectionId)
+    }
+
+    function rowToolText(rowIndex, tool) {
+        if (tool === 0 && typeof view.toolText0ForRow === "function")
+            return view.toolText0ForRow(rowIndex) || ""
+        if (tool === 1 && typeof view.toolText1ForRow === "function")
+            return view.toolText1ForRow(rowIndex) || ""
+        return tool === 0 ? view.toolText0 : view.toolText1
+    }
+
     onAtYEndChanged: {
-        if (atYEnd && !MusicApi.loadState) ended();
+        if (atYEnd && view.hasMore && !view.loadingMore && !MusicApi.loadState) ended();
     }
     footer: Item {
         width: view.width
         height: 32
-        visible: view.isEnd
+        visible: view.isEnd || (view.sectionError && Object.keys(view.sectionError).length > 0)
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            text: "没有更多了~"
+            text: view.sectionError && Object.keys(view.sectionError).length > 0
+                  ? "加载失败，点击重试" : "没有更多了~"
             color: Style.themes.textColor
             font.pixelSize: Style.settings.text
+        }
+        MouseArea {
+            objectName: "sectionRetryArea"
+            anchors.fill: parent
+            enabled: view.sectionError && Object.keys(view.sectionError).length > 0
+                     && typeof view.retryAction === "function"
+            onClicked: view.retrySection()
         }
     }
     Menu {
@@ -333,22 +363,27 @@ ListView {
             onClicked: (mouse) => {
                 if (mouse.button === Qt.LeftButton) {
                     onClicked: view.clicked(index);
-                } else {
+                } else if (view.menuModel.length > 0) {
                     menu.index = index;
                     view.menu.popup();
                 }
                 forceActiveFocus();
             }
 
-            Row {
+            // Keep the original tool slots when an unsupported action is hidden.
+            Item {
                 x: view.toolX
-                spacing: 2
+                width: 112
                 y: 12
                 height: 36
                 opacity: listArea.containsMouse ? 1 : 0
+                readonly property string tool0: view.rowToolText(index, 0)
+                readonly property string tool1: view.rowToolText(index, 1)
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 SButton {
                     iconCharacter: "\uf050"
+                    visible: view.menuModel.length > 0
+                    enabled: view.menuModel.length > 0
                     width: 36
                     height: 36
                     radius: 36
@@ -361,7 +396,12 @@ ListView {
                     }
                 }
                 SButton {
-                    iconCharacter: view.toolText1
+                    x: 38
+                    objectName: "tool1Button"
+                    property int rowIndex: index
+                    iconCharacter: parent.tool1
+                    visible: parent.tool1.length > 0
+                    enabled: parent.tool1.length > 0
                     width: 36
                     height: 36
                     radius: 36
@@ -371,7 +411,12 @@ ListView {
                     onClicked: view.toolClicked(index,1)
                 }
                 SButton {
-                    iconCharacter: view.toolText0
+                    x: 76
+                    objectName: "tool0Button"
+                    property int rowIndex: index
+                    iconCharacter: parent.tool0
+                    visible: parent.tool0.length > 0
+                    enabled: parent.tool0.length > 0
                     width: 36
                     height: 36
                     radius: 36

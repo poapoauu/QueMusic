@@ -2,12 +2,13 @@
 // Copyright (c) 2025-2026 QueMusic Contributors
 //
 import QtQuick
-import QueMusic 1.0
 import 'qrc:/QueMusic/pages'
 
 // 主体内容区域
 Rectangle {
     id: mainContent
+    property var musicAdapter: null
+    property var playbackAdapter: null
     color: Style.themes.secondaryColor //Style.themes.blurOverlayColor
     readonly property int pageHeight: height - 60
 
@@ -25,12 +26,26 @@ Rectangle {
     property int pageIndex: 0
     //signal stackChange(int index)
     function contentIndexed(choice) {
-        if(choice !== mainContent.pageIndex) {
-            mainContent.pages[mainContent.pageIndex].visible = false;
-            mainContent.pages[mainContent.pageIndex].active = false;
-            mainContent.pages[choice].active = true;
-            mainContent.pageIndex = choice;
+        if (!Number.isInteger(choice)
+                || choice < 0
+                || choice >= mainContent.pages.length
+                || mainContent.pages[choice] === null)
+            return false;
+
+        if (choice === mainContent.pageIndex)
+            return true;
+
+        const previous = mainContent.pages[mainContent.pageIndex];
+        if (previous) {
+            previous.visible = false;
+            previous.active = false;
         }
+
+        const next = mainContent.pages[choice];
+        next.active = true;
+        next.visible = true;
+        mainContent.pageIndex = choice;
+        return true;
     }
     function finishedLoaderPage(choice) {
         pageAnine.stop();
@@ -62,6 +77,7 @@ Rectangle {
     // Home
     Loader {
         id: homePage
+        objectName: "homePageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -70,13 +86,17 @@ Rectangle {
         height: mainContent.pageHeight
         visible: true
         active: true
-        sourceComponent: HomePage {}
+        sourceComponent: HomePage {
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
+        }
         onLoaded: { visible = true; mainContent.finishedLoaderPage(0) }
     }
 
     // 分类
     Loader {
         id: playlistPage
+        objectName: "playlistPageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -85,13 +105,17 @@ Rectangle {
         height: mainContent.pageHeight
         visible: false
         active: false
-        sourceComponent: PlaylistPage {}
+        sourceComponent: PlaylistPage {
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
+        }
         onLoaded: { visible = true; mainContent.finishedLoaderPage(1) }
     }
 
     // 收藏
     Loader {
         id: favouritePage
+        objectName: "favouritePageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -100,7 +124,10 @@ Rectangle {
         height: mainContent.pageHeight
         visible: false
         active: false
-        sourceComponent: FavouritePage {}
+        sourceComponent: FavouritePage {
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
+        }
         onLoaded: { visible = true; mainContent.finishedLoaderPage(3) }
     }
 
@@ -108,6 +135,7 @@ Rectangle {
     // 本地文件
     Loader {
         id: filePage
+        objectName: "filePageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -116,13 +144,14 @@ Rectangle {
         height: mainContent.pageHeight
         visible: false
         active: false
-        sourceComponent: FilePage {}
+        source: "qrc:/QueMusic/pages/FilePage.qml"
         onLoaded: { visible = true; mainContent.finishedLoaderPage(4) }
     }
 
     // 下载
     Loader {
         id: downloadPage
+        objectName: "downloadPageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -131,13 +160,14 @@ Rectangle {
         height: mainContent.pageHeight
         visible: false
         active: false
-        sourceComponent: DownloadPage {}
+        source: "qrc:/QueMusic/pages/DownloadPage.qml"
         onLoaded: { visible = true; mainContent.finishedLoaderPage(5) }
     }
-    
+
     // 搜索页
     Loader {
         id: searchPage
+        objectName: "searchPageLoader"
         x: 0
         y: 60
         opacity: 1
@@ -146,7 +176,10 @@ Rectangle {
         height: mainContent.pageHeight
         visible: false
         active: false
-        sourceComponent: SearchPage {}
+        sourceComponent: SearchPage {
+            musicAdapter: mainContent.musicAdapter
+            playbackAdapter: mainContent.playbackAdapter
+        }
         onLoaded: { visible = true; mainContent.finishedLoaderPage(6) }
     }
 }

@@ -106,3 +106,23 @@ void OnlineListModel::setItems(const QVariantList &items)
     endResetModel();
     emit countChanged();
 }
+
+void OnlineListModel::setPresentationState(const QVariantMap &state)
+{
+    const QString sectionId = state.value(QStringLiteral("sectionId")).toString();
+    const bool hasMore = state.value(QStringLiteral("hasMore")).toBool();
+    const bool loadingMore = state.value(QStringLiteral("loadingMore")).toBool();
+    const QVariantMap error = state.value(QStringLiteral("error")).toMap();
+    if (m_sectionId == sectionId && m_hasMore == hasMore && m_loadingMore == loadingMore
+        && m_error == error) return;
+    m_sectionId = sectionId;
+    m_hasMore = hasMore;
+    m_loadingMore = loadingMore;
+    m_error = error;
+    emit presentationStateChanged();
+}
+
+QString OnlineListModel::sectionId() const { return m_sectionId; }
+bool OnlineListModel::hasMore() const { return m_hasMore; }
+bool OnlineListModel::loadingMore() const { return m_loadingMore; }
+QVariantMap OnlineListModel::error() const { return m_error; }

@@ -33,6 +33,9 @@ Item {
 
 
     function opened(info) {
+        // Keep the host visible while the lazy content is being instantiated.
+        // The loader still starts the original entrance animation onLoaded.
+        root.visible = true;
         root.id = info.hash || info.id;
         root.title = info.title || "";
         root.artist = info.artist || "";
@@ -41,11 +44,6 @@ Item {
         root.duration = info.duration || 0;//|| parseInt(info.duration);
         root.playcount = info.playcount || 0; //|| parseInt(info.playcount);
         loadWidget.active = true;
-        if (favoritesList.isFavorite(root.id, "playlist")) {
-            favoriteButton.iconColor = Style.themes.themeColor
-        } else {
-            favoriteButton.iconColor = Style.themes.textColor
-        }
     }
     function closed() {
         windowOpenAnime.running = false;
@@ -315,6 +313,11 @@ Item {
         active: false
         onLoaded: {
             root.visible = true
+            if (favoritesList.isFavorite(root.id, "playlist")) {
+                favoriteButton.iconColor = Style.themes.themeColor
+            } else {
+                favoriteButton.iconColor = Style.themes.textColor
+            }
             windowOpenAnime.start()
         }
     }

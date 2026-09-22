@@ -1,0 +1,84 @@
+#pragma once
+
+#include <QObject>
+#include <QHash>
+#include <QPointer>
+#include <QUuid>
+#include <QVariantList>
+#include <QVariantMap>
+
+class MusicHub;
+class OnlineListModel;
+class PlaybackCoordinator;
+
+// Presents v2 page results through the original UI's small, stable role set.
+// Full source-owned item maps remain private and are recovered only by the
+// opaque presentation key when routing an action.
+class OriginalUiMusicAdapter final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(OnlineListModel *recommendSongs READ recommendSongs CONSTANT)
+    Q_PROPERTY(OnlineListModel *categoryItems READ categoryItems CONSTANT)
+    Q_PROPERTY(OnlineListModel *favoriteSongs READ favoriteSongs CONSTANT)
+    Q_PROPERTY(OnlineListModel *favoriteLists READ favoriteLists CONSTANT)
+    Q_PROPERTY(OnlineListModel *searchSongs READ searchSongs CONSTANT)
+    Q_PROPERTY(OnlineListModel *searchLists READ searchLists CONSTANT)
+    Q_PROPERTY(OnlineListModel *searchAlbums READ searchAlbums CONSTANT)
+    Q_PROPERTY(OnlineListModel *searchLyrics READ searchLyrics CONSTANT)
+    Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
+    Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
+               WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
+public:
+    explicit OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinator *playback,
+                                   QObject *parent = nullptr);
+
+    OnlineListModel *recommendSongs() const;
+    OnlineListModel *categoryItems() const;
+    OnlineListModel *favoriteSongs() const;
+    OnlineListModel *favoriteLists() const;
+    OnlineListModel *searchSongs() const;
+    OnlineListModel *searchLists() const;
+    OnlineListModel *searchAlbums() const;
+    OnlineListModel *searchLyrics() const;
+    QVariantList sourceOptions() const;
+    QString selectedSourceInstanceId() const;
+    void setSelectedSourceInstanceId(const QString &id);
+
+    Q_INVOKABLE void activatePage(int pageKind);
+    // searchTab follows the original UI order: songs, playlists, albums, lyrics.
+    Q_INVOKABLE void search(const QString &text, int searchTab = 0);
+    // The argument is either one opaque presentation row or a list of rows.
+    // Returned values are limited to booleans and vetted reason keys.
+    Q_INVOKABLE QVariantMap capabilities(const QVariant &rows) const;
+    Q_INVOKABLE void loadMore(int pageKind, const QString &sectionId);
+    Q_INVOKABLE void retry(int pageKind, const QString &sectionId);
+    Q_INVOKABLE bool browse(const QVariantMap &presentationItem);
+    Q_INVOKABLE QUuid play(const QVariantMap &presentationItem);
+    Q_INVOKABLE QUuid enqueue(const QVariantMap &presentationItem);
+    Q_INVOKABLE QUuid setFavorite(const QVariantMap &presentationItem, bool favorite);
+
+signals:
+    void sourceOptionsChanged();
+    void selectedSourceInstanceIdChanged();
+
+private:
+    QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
+    QVariantMap capabilitiesFor(const QVariantList &rows) const;
+    QVariantMap capabilitiesForItem(const QVariantMap &fullItem) const;
+    bool permits(const QVariantMap &fullItem, const QString &capability) const;
+    QVariantMap presentationItem(const QVariantMap &fullItem, const QVariantMap &sectionState);
+    void clearPresentationState();
+    void rebuild();
+
+    QPointer<MusicHub> m_hub;
+    QPointer<PlaybackCoordinator> m_playback;
+    OnlineListModel *m_recommendSongs;
+    OnlineListModel *m_categoryItems;
+    OnlineListModel *m_favoriteSongs;
+    OnlineListModel *m_favoriteLists;
+    OnlineListModel *m_searchSongs;
+    OnlineListModel *m_searchLists;
+    OnlineListModel *m_searchAlbums;
+    OnlineListModel *m_searchLyrics;
+    QHash<quint64, QVariantMap> m_fullItems;
+    quint64 m_nextAdapterKey = 1;
+};

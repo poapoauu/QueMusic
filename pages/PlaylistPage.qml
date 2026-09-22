@@ -4,15 +4,72 @@
 import QtQuick
 import QtQuick.Effects
 import QtQuick.Controls.Basic
-import QueMusic 1.0
 import 'qrc:/QueMusic/components'
 
 Item {
     id: playlistPage
+    property var musicAdapter: null
+    property var playbackAdapter: null
     //property alias animatedWindow: animationWrapper
     property real toolsWindow: 0
     //property bool displaytop: flickable.contentY > 60 ? true : false
+    function sourceOptions() {
+        if (musicAdapter && musicAdapter.sourceOptions)
+            return musicAdapter.sourceOptions
+        return [
+            { sourceInstanceId: "", displayName: "酷狗音乐", available: true },
+            { sourceInstanceId: "", displayName: "网易云音乐", available: true },
+            { sourceInstanceId: "", displayName: "QQ音乐(x)", available: true },
+            { sourceInstanceId: "", displayName: "自定义源(x)", available: true }
+        ]
+    }
+    function sourceChoice() {
+        if (!musicAdapter)
+            return MusicApi.songSource
+        const options = sourceOptions()
+        for (let i = 0; i < options.length; ++i) {
+            if (options[i].sourceInstanceId === musicAdapter.selectedSourceInstanceId)
+                return i
+        }
+        return 0
+    }
+    function selectSource(choice) {
+        if (musicAdapter) {
+            const option = sourceOptions()[choice]
+            if (option && option.available)
+                musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
+            return
+        }
+        MusicApi.songSource = choice
+        MusicApi.newSongs.clear()
+        MusicApi.getPlaylistMenu(3)
+        MusicApi.getNewSongs(1, 1, 20)
+        MusicApi.getAllToplist()
+    }
+    function loadMoreCategory() {
+        if (musicAdapter && typeof musicAdapter.loadMore === "function") {
+            musicAdapter.loadMore(1, "")
+            return true
+        }
+        return false
+    }
+    function browseCategory(index) {
+        if (musicAdapter) {
+            const row = musicAdapter.categoryItems.get(index)
+            if (!row || !musicAdapter.browse(row))
+                return false
+            adapterDetailWindow.opened(row.title || "",
+                                       row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
+            window.exitIndex = 2
+            return true
+        }
+        return false
+    }
     Component.onCompleted: {
+        if (musicAdapter) {
+            musicAdapter.activatePage(1)
+            return
+        }
         if(!window.completedStart.playlistLoaded) {
             MusicApi.getPlaylistMenu(3);
             MusicApi.getNewSongs(1, 1, 20);
@@ -47,24 +104,25 @@ Item {
                 color: Style.themes.fontColor
             }
             QDrop {
+                objectName: "categorySourceScope"
                 x: parent.width - 120
                 y: 0
                 height: 36; width: 120
                 //radius: 18
                 anchors.right: parent.right
-                choice: MusicApi.songSource
-                textColor: MusicApi.songSource == 0 ? "#0F3975" : MusicApi.songSource == 1 ? "#750F0F" : MusicApi.songSource == 2 ? "#16750F" : "#756F0F"
-                color: MusicApi.songSource == 0 ? "#CDE8FF" : MusicApi.songSource == 1 ? "#FFCDCD" : MusicApi.songSource == 2 ? "#CDFFCD" : "#FFFFCD"
-                border.color: MusicApi.songSource == 0 ? "#4384F5" : MusicApi.songSource == 1 ? "#F54343" : MusicApi.songSource == 2 ? "#4DF543" : "#F5F543"
+                choice: playlistPage.sourceChoice()
+                textColor: playlistPage.sourceChoice() == 0 ? "#0F3975" : playlistPage.sourceChoice() == 1 ? "#750F0F" : playlistPage.sourceChoice() == 2 ? "#16750F" : "#756F0F"
+                color: playlistPage.sourceChoice() == 0 ? "#CDE8FF" : playlistPage.sourceChoice() == 1 ? "#FFCDCD" : playlistPage.sourceChoice() == 2 ? "#CDFFCD" : "#FFFFCD"
+                border.color: playlistPage.sourceChoice() == 0 ? "#4384F5" : playlistPage.sourceChoice() == 1 ? "#F54343" : playlistPage.sourceChoice() == 2 ? "#4DF543" : "#F5F543"
                 radius: 18
                 cardRadius: Style.settings.labelRadius
-                model: ["酷狗音乐","网易云音乐","QQ音乐(x)","自定义源(x)"]
+                text: {
+                    const option = playlistPage.sourceOptions()[choice]
+                    return option ? option.displayName : ""
+                }
+                model: playlistPage.sourceOptions().map((option) => option.displayName)
                 onTransformed: (choiced) => {
-                    MusicApi.songSource = choiced;
-                    MusicApi.newSongs.clear();
-                    MusicApi.getPlaylistMenu(3);
-                    MusicApi.getNewSongs(1, 1, 20);
-                    MusicApi.getAllToplist();
+                    playlistPage.selectSource(choiced)
                 }
             }
         }
@@ -84,7 +142,10 @@ Item {
                 case 0:
                     break;
                 case 1:
-                    MusicApi.getMenuInfo(MusicApi.allPlaylistMenu[0].id)
+                    if (musicAdapter)
+                        musicAdapter.activatePage(1)
+                    else
+                        MusicApi.getMenuInfo(MusicApi.allPlaylistMenu[0].id)
                     break;
                 case 2:
                     break;
@@ -115,8 +176,12 @@ Item {
                     buttonColor: "transparent"
                     hoverColor: Style.themes.hoverColor
                     onClicked: {
-                        MusicApi.recommendSongs.clear()
-                        MusicApi.getRecommendSongs(1,24)
+                        if (musicAdapter)
+                            musicAdapter.activatePage(1)
+                        else {
+                            MusicApi.recommendSongs.clear()
+                            MusicApi.getRecommendSongs(1,24)
+                        }
                     }
                 }
                 //  布局
@@ -199,10 +264,14 @@ Item {
                             hoverEnabled: true
                             anchors.fill: parent
                             onClicked: {
-                                MusicApi.newSongs.clear();
-                                MusicApi.globalid = index + 1;
-                                musicsPage.musicMenuIndex = index;
-                                MusicApi.getNewSongs(index + 1, 1, 20);
+                                if (musicAdapter) {
+                                    musicAdapter.activatePage(1)
+                                } else {
+                                    MusicApi.newSongs.clear();
+                                    MusicApi.globalid = index + 1;
+                                    musicsPage.musicMenuIndex = index;
+                                    MusicApi.getNewSongs(index + 1, 1, 20);
+                                }
                             }
                         }
                     }
@@ -210,15 +279,21 @@ Item {
             }
             QListView {
                 id: searchSong
+                objectName: "categoryList"
                 width: parent.width + 16
                 y: 104
                 height: parent.height - 104
-                model: MusicApi.newSongs
+                model: musicAdapter ? musicAdapter.categoryItems : MusicApi.newSongs
                 clip: true
                 //topMargin: 72
 
                 onEnded: {
-                    if(MusicApi.newSongs.count % 20 === 0 && MusicApi.newSongs.count !== 0) {
+                    if (musicAdapter) {
+                        if (playlistPage.loadMoreCategory())
+                            isEnd = false;
+                        else
+                            isEnd = true;
+                    } else if(MusicApi.newSongs.count % 20 === 0 && MusicApi.newSongs.count !== 0) {
                         MusicApi.getNewSongs(MusicApi.globalid, MusicApi.newSongs.count / 20 + 1, 20);
                         isEnd = false;
                     } else {
@@ -228,7 +303,9 @@ Item {
                     }
                 }
                 onClicked: (index) => {
-                    if(Options.settings.soundQuality === 0) {
+                    if (musicAdapter) {
+                        musicAdapter.play(model.get(index));
+                    } else if(Options.settings.soundQuality === 0) {
                         MusicApi.getMusicInfo(model.get(index).hash);
                     } else if(Options.settings.soundQuality === 1) {
                         MusicApi.getMusicInfo(model.get(index).hashhq);
@@ -237,6 +314,11 @@ Item {
                     }
                 }
                 onToolClicked: (index,tool) => {
+                    if (musicAdapter) {
+                        if (tool === 0)
+                            musicAdapter.enqueue(model.get(index));
+                        return;
+                    }
                     switch(tool) {
                     case 0:
                         var listIndex = -1
@@ -255,6 +337,8 @@ Item {
                     }
                 }
                 onMenuClicked: (index,choice) => {
+                    if (musicAdapter)
+                        return
                     switch(choice) {
                     case 0:
                         if(Options.settings.soundQuality === 0) {
@@ -313,10 +397,14 @@ Item {
                             hoverEnabled: true
                             anchors.fill: parent
                             onClicked: {
-                                musicMenuPage.musicMenuIndex = index;
-                                MusicApi.globaltagid = MusicApi.allPlaylistMenu[index].id;
-                                MusicApi.musicPlaylists.clear();
-                                MusicApi.getMenuInfo(MusicApi.allPlaylistMenu[index].id);
+                                if (musicAdapter) {
+                                    musicAdapter.activatePage(1)
+                                } else {
+                                    musicMenuPage.musicMenuIndex = index;
+                                    MusicApi.globaltagid = MusicApi.allPlaylistMenu[index].id;
+                                    MusicApi.musicPlaylists.clear();
+                                    MusicApi.getMenuInfo(MusicApi.allPlaylistMenu[index].id);
+                                }
                             }
                         }
                     }
@@ -325,17 +413,23 @@ Item {
 
             QListView {
                 id: musicMenuList
+                objectName: "categoryBrowseList"
                 height: parent.height - y
                 clip: true
                 y: musicMenuFlow.implicitHeight + 80
                 width: parent.width + 16
-                model: MusicApi.musicPlaylists
+                model: musicAdapter ? musicAdapter.categoryItems : MusicApi.musicPlaylists
                 property int artistX: width / 2 - 50
                 //topMargin: 72
                 bottomMargin: 24
 
                 onEnded: {
-                    if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
+                    if (musicAdapter) {
+                        if (playlistPage.loadMoreCategory())
+                            isEnd = false;
+                        else
+                            isEnd = true;
+                    } else if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
                         MusicApi.getMusicPlaylists(MusicApi.globaltagid, MusicApi.musicPlaylists.count / 20 + 1, 20);
                         isEnd = false;
                     } else {
@@ -346,15 +440,21 @@ Item {
                 }
 
                 onClicked: (index) => {
-                    MusicApi.playlistSong.clear();
-                    MusicApi.globalid = model.get(index).hash;
-                    MusicApi.getPlaylistSongs(model.get(index).hash,1,20);
-                    //var image = model.get(index).cover.replace("{size}", "256") || "qrc:/QueMusic/resources/app/musicpic.png";
-                    //var title = model.get(index).title;
-                    playListSongsWindow.opened(model.get(index));
-                    window.exitIndex = 2;
+                    if (musicAdapter) {
+                        playlistPage.browseCategory(index)
+                    } else {
+                        MusicApi.playlistSong.clear();
+                        MusicApi.globalid = model.get(index).hash;
+                        MusicApi.getPlaylistSongs(model.get(index).hash,1,20);
+                        //var image = model.get(index).cover.replace("{size}", "256") || "qrc:/QueMusic/resources/app/musicpic.png";
+                        //var title = model.get(index).title;
+                        playListSongsWindow.opened(model.get(index));
+                        window.exitIndex = 2;
+                    }
                 }
                 onToolClicked: (index,tool) => {
+                    if (musicAdapter)
+                        return
                     switch(tool) {
                     case 1:
                         if (favoritesList.isFavorite(model.get(index).hash, "playlist")) {
@@ -636,6 +736,7 @@ Item {
     // 歌单/榜单/歌手歌曲共用窗口
     PlayListWindow {
         id: playListSongsWindow
+        objectName: "playlistDetailWindow"
         mainTarget: playlistChildPage
         winIndex: 2
         property string listType: "playlist"   // playlist 歌单 / singer 歌手 / toplist 榜单
@@ -651,6 +752,8 @@ Item {
                 topMargin: 8
                 bottomMargin: 24
                 onClicked: (index) => {
+                    if (musicAdapter)
+                        return
                     if(Options.settings.soundQuality === 0) {
                         MusicApi.getMusicInfo(model.get(index).hash);
                     } else if(Options.settings.soundQuality === 1) {
@@ -660,6 +763,8 @@ Item {
                     }
                 }
                 onToolClicked: (index,tool) => {
+                    if (musicAdapter)
+                        return
                     switch(tool) {
                     case 0:
                         var listIndex = -1;
@@ -687,6 +792,7 @@ Item {
                         iconCharacter: "\uf0f8"
                         text: "更多"
                         onClicked: {
+                            if (musicAdapter) return;
                             if(MusicApi.loadState) return;
                             var id = MusicApi.globalid;
                             var page = MusicApi.playlistSong.count / 20 + 1;
@@ -708,6 +814,47 @@ Item {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    AnimatorWindow {
+        id: adapterDetailWindow
+        objectName: "adapterPlaylistDetailWindow"
+        mainTarget: playlistChildPage
+        winIndex: 2
+        haveControl: false
+        content: QListView {
+            objectName: "adapterPlaylistDetailList"
+            x: 24
+            y: 128
+            width: adapterDetailWindow.width - 32
+            height: adapterDetailWindow.height - 128
+            model: musicAdapter ? musicAdapter.categoryItems : []
+            menuModel: []
+            toolText1: ""
+            clip: true
+            topMargin: 8
+            bottomMargin: 24
+            onClicked: (index) => {
+                if (musicAdapter)
+                    musicAdapter.play(model.get(index))
+            }
+            onToolClicked: (index, tool) => {
+                if (musicAdapter && tool === 0)
+                    musicAdapter.enqueue(model.get(index))
+            }
+            onMenuClicked: (index, choice) => {
+                if (musicAdapter)
+                    return
+            }
+            onEnded: {
+                if (musicAdapter && typeof musicAdapter.loadMore === "function") {
+                    musicAdapter.loadMore(1, "")
+                    isEnd = false
+                } else {
+                    isEnd = true
                 }
             }
         }

@@ -1,0 +1,493 @@
+#include "SourceAccountStore.h"
+
+#include <QDir>
+#include <QFile>
+#include <QHash>
+#include <QSettings>
+#include <QSet>
+#include <QTemporaryDir>
+#include <QTest>
+
+namespace {
+
+class MemorySecretStore final : public ISecretStore {
+public:
+    bool write(const QString &reference, const QByteArray &secret, QString *error) override
+    {
+        if (reference.isEmpty()) {
+            if (error) {
+                *error = QStringLiteral("Secret reference is required");
+            }
+            return false;
+        }
+        m_values.insert(reference, secret);
+        return true;
+    }
+
+    std::optional<QByteArray> read(const QString &reference, QString *error) const override
+    {
+        const auto value = m_values.constFind(reference);
+        if (value == m_values.cend()) {
+            if (error) {
+                *error = QStringLiteral("Secret is unavailable");
+            }
+            return std::nullopt;
+        }
+        return *value;
+    }
+
+    bool remove(const QString &reference, QString *error) override
+    {
+        if (m_removeFailures.contains(reference)) {
+            if (error) {
+                *error = QStringLiteral("Secret removal failed");
+            }
+            return false;
+        }
+        m_values.remove(reference);
+        return true;
+    }
+
+    QByteArray value(const QString &reference) const
+    {
+        return m_values.value(reference);
+    }
+
+    bool isEmpty() const
+    {
+        return m_values.isEmpty();
+    }
+
+    int size() const
+    {
+        return m_values.size();
+    }
+
+    void failRemovalFor(const QString &reference)
+    {
+        m_removeFailures.insert(reference);
+    }
+
+private:
+    QHash<QString, QByteArray> m_values;
+    QSet<QString> m_removeFailures;
+};
+
+ResolvedSourceAccountV2 accountWithSecret()
+{
+    return {QStringLiteral("navidrome"),
+            QStringLiteral("home"),
+            QStringLiteral("Home server"),
+            {{QStringLiteral("serverUrl"), QStringLiteral("https://music.example.invalid")},
+             {QStringLiteral("username"), QStringLiteral("unit-test-user")}},
+            QByteArrayLiteral("unit-test-password")};
+}
+
+struct LegacyRawAccountFixture {
+    QString sourceId = QStringLiteral("navidrome");
+    QString accountId = QStringLiteral("home%2Foffice");
+    QString reference = QStringLiteral("legacy-percent-reference");
+    QByteArray secret = QByteArrayLiteral("legacy-percent-secret");
+
+    QString group() const
+    {
+        return QStringLiteral("sources/navidrome/home%2Foffice");
+    }
+};
+
+bool seedLegacyRawPercentEscapedAccount(const LegacyRawAccountFixture &fixture, QSettings *settings,
+                                        MemorySecretStore *secretStore)
+{
+    if (!secretStore->write(fixture.reference, fixture.secret, nullptr)) {
+        return false;
+    }
+    const QString group = fixture.group();
+    settings->setValue(group + QStringLiteral("/version"), 1);
+    settings->setValue(group + QStringLiteral("/sourceId"), fixture.sourceId);
+    settings->setValue(group + QStringLiteral("/accountId"), fixture.accountId);
+    settings->setValue(group + QStringLiteral("/displayName"), QStringLiteral("Legacy account"));
+    settings->setValue(group + QStringLiteral("/enabled"), true);
+    settings->setValue(group + QStringLiteral("/parameters/serverUrl"),
+                       QStringLiteral("https://legacy.example.invalid"));
+    settings->setValue(group + QStringLiteral("/parameters/username"),
+                       QStringLiteral("legacy-user"));
+    settings->setValue(group + QStringLiteral("/secretReference"), fixture.reference);
+    settings->sync();
+    return settings->status() == QSettings::NoError;
+}
+
+}
+
+class SourceAccountStoreTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void persistsOnlyMetadataAndReconstructsAccount();
+    void removesMetadataAndSecret();
+    void removesFreshSecretWhenMetadataWriteFails();
+    void keepsAccountRecoverableWhenMetadataRemovalFails();
+    void refusesToReconstructAccountWhenSecretIsMissing();
+    void rejectsSensitiveParameterNames();
+    void rejectsUntrustedParameterNames_data();
+    void rejectsUntrustedParameterNames();
+    void keepsSlashContainingAccountIdentitiesDistinct();
+    void readsLegacyRawPercentEscapedAccountId();
+    void enablingLegacyRawAccountDoesNotRewriteItsKeysOrSecretReference();
+    void updatesLegacyRawPercentEscapedAccountInPlace();
+    void removesLegacyRawPercentEscapedAccount();
+    void preservesPreviousAccountWhenOldSecretCleanupFails();
+    void unavailableSecretStoreNeverPersistsSecrets();
+};
+
+void SourceAccountStoreTest::persistsOnlyMetadataAndReconstructsAccount()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    const QString settingsPath = temporaryDirectory.filePath(QStringLiteral("accounts.ini"));
+    QSettings settings(settingsPath, QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const ResolvedSourceAccountV2 account = accountWithSecret();
+
+    QVERIFY(store.saveResolvedV2(account, false));
+
+    const QString reference = store.secretReference(account.sourceId, account.accountId);
+    QVERIFY(!reference.isEmpty());
+    QCOMPARE(secretStore.value(reference), QByteArrayLiteral("unit-test-password"));
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/version")).toInt(), 1);
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/sourceId")).toString(),
+             QStringLiteral("navidrome"));
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/accountId")).toString(),
+             QStringLiteral("home"));
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/displayName")).toString(),
+             QStringLiteral("Home server"));
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/enabled")).toBool(), false);
+    QCOMPARE(settings.value(
+                 QStringLiteral("sourceAccountsV2/navidrome/home/parameters/serverUrl")).toString(),
+             QStringLiteral("https://music.example.invalid"));
+    QCOMPARE(settings.value(QStringLiteral("sourceAccountsV2/navidrome/home/secretReference")).toString(),
+             reference);
+
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::ReadOnly));
+    const QByteArray rawSettings = settingsFile.readAll();
+    QVERIFY(rawSettings.contains("navidrome"));
+    QVERIFY(rawSettings.contains("Home server"));
+    QVERIFY(rawSettings.contains("music.example.invalid"));
+    QVERIFY(rawSettings.contains(reference.toUtf8()));
+    QVERIFY(!rawSettings.contains("unit-test-password"));
+
+    const std::optional<StoredSourceAccount> stored =
+        store.storedAccount(account.sourceId, account.accountId);
+    QVERIFY(stored.has_value());
+    QCOMPARE(stored->enabled, false);
+    QCOMPARE(stored->parameters.value(QStringLiteral("username")).toString(),
+             QStringLiteral("unit-test-user"));
+    QCOMPARE(store.accounts().size(), 1);
+
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(account.sourceId, account.accountId);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->sourceId, account.sourceId);
+    QCOMPARE(restored->accountId, account.accountId);
+    QCOMPARE(restored->displayName, account.displayName);
+    QCOMPARE(restored->parameters, account.parameters);
+    QCOMPARE(restored->secret, account.secret);
+}
+
+void SourceAccountStoreTest::removesMetadataAndSecret()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const ResolvedSourceAccountV2 account = accountWithSecret();
+
+    QVERIFY(store.saveResolvedV2(account));
+    const QString reference = store.secretReference(account.sourceId, account.accountId);
+
+    QVERIFY(store.remove(account.sourceId, account.accountId));
+    QVERIFY(!settings.contains(QStringLiteral("sourceAccountsV2/navidrome/home/secretReference")));
+    QVERIFY(!store.storedAccount(account.sourceId, account.accountId).has_value());
+    QCOMPARE(secretStore.value(reference), QByteArray());
+}
+
+void SourceAccountStoreTest::removesFreshSecretWhenMetadataWriteFails()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QFile blockingParent(temporaryDirectory.filePath(QStringLiteral("not-a-directory")));
+    QVERIFY(blockingParent.open(QIODevice::WriteOnly));
+    blockingParent.close();
+    const QString settingsPath = temporaryDirectory.filePath(
+        QStringLiteral("not-a-directory/accounts.ini"));
+    QSettings settings(settingsPath, QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+
+    QVERIFY(!store.saveResolvedV2(accountWithSecret()));
+    QVERIFY(secretStore.isEmpty());
+}
+
+void SourceAccountStoreTest::keepsAccountRecoverableWhenMetadataRemovalFails()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    const QString settingsPath = temporaryDirectory.filePath(QStringLiteral("accounts.ini"));
+    QSettings settings(settingsPath, QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const ResolvedSourceAccountV2 account = accountWithSecret();
+
+    QVERIFY(store.saveResolvedV2(account));
+    const QString reference = store.secretReference(account.sourceId, account.accountId);
+    QVERIFY(QFile::remove(settingsPath));
+    QVERIFY(QDir().mkdir(settingsPath));
+
+    QString error;
+    QVERIFY(!store.remove(account.sourceId, account.accountId, &error));
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(secretStore.value(reference), account.secret);
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(account.sourceId, account.accountId);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->secret, account.secret);
+}
+
+void SourceAccountStoreTest::refusesToReconstructAccountWhenSecretIsMissing()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const ResolvedSourceAccountV2 account = accountWithSecret();
+
+    QVERIFY(store.saveResolvedV2(account));
+    QVERIFY(secretStore.remove(store.secretReference(account.sourceId, account.accountId), nullptr));
+
+    QString error;
+    QVERIFY(!store.resolvedAccountV2(account.sourceId, account.accountId, &error).has_value());
+    QVERIFY(!error.isEmpty());
+}
+
+void SourceAccountStoreTest::rejectsSensitiveParameterNames()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    ResolvedSourceAccountV2 account = accountWithSecret();
+    account.parameters.insert(QStringLiteral("password"), QByteArrayLiteral("must-not-persist"));
+
+    QString error;
+    QVERIFY(!store.saveResolvedV2(account, true, &error));
+    QVERIFY(error.contains(QStringLiteral("secret"), Qt::CaseInsensitive));
+    QVERIFY(secretStore.isEmpty());
+    QVERIFY(!settings.contains(QStringLiteral("sources/navidrome/home/secretReference")));
+}
+
+void SourceAccountStoreTest::rejectsUntrustedParameterNames_data()
+{
+    QTest::addColumn<QVariantMap>("parameters");
+    QTest::newRow("auth") << QVariantMap{{QStringLiteral("auth"), QStringLiteral("opaque")}};
+    QTest::newRow("access-key")
+        << QVariantMap{{QStringLiteral("accessKey"), QStringLiteral("opaque")}};
+    QTest::newRow("nested-authorization")
+        << QVariantMap{{QStringLiteral("headers"),
+                        QVariantMap{{QStringLiteral("Authorization"), QStringLiteral("Bearer opaque")}}}};
+}
+
+void SourceAccountStoreTest::rejectsUntrustedParameterNames()
+{
+    QFETCH(QVariantMap, parameters);
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    ResolvedSourceAccountV2 account = accountWithSecret();
+    for (auto parameter = parameters.cbegin(); parameter != parameters.cend(); ++parameter) {
+        account.parameters.insert(parameter.key(), parameter.value());
+    }
+
+    QString error;
+    QVERIFY(!store.saveResolvedV2(account, true, &error));
+    QVERIFY(error.contains(QStringLiteral("metadata"), Qt::CaseInsensitive));
+    QVERIFY(secretStore.isEmpty());
+    QVERIFY(!settings.contains(QStringLiteral("sources/navidrome/home/secretReference")));
+}
+
+void SourceAccountStoreTest::keepsSlashContainingAccountIdentitiesDistinct()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    ResolvedSourceAccountV2 first = accountWithSecret();
+    first.sourceId = QStringLiteral("source/one");
+    first.accountId = QStringLiteral("two");
+    first.secret = QByteArrayLiteral("first-secret");
+    ResolvedSourceAccountV2 second = accountWithSecret();
+    second.sourceId = QStringLiteral("source");
+    second.accountId = QStringLiteral("one/two");
+    second.secret = QByteArrayLiteral("second-secret");
+
+    QVERIFY(store.saveResolvedV2(first));
+    QVERIFY(store.saveResolvedV2(second));
+
+    const std::optional<ResolvedSourceAccountV2> restoredFirst =
+        store.resolvedAccountV2(first.sourceId, first.accountId);
+    const std::optional<ResolvedSourceAccountV2> restoredSecond =
+        store.resolvedAccountV2(second.sourceId, second.accountId);
+    QVERIFY(restoredFirst.has_value());
+    QVERIFY(restoredSecond.has_value());
+    QCOMPARE(restoredFirst->secret, QByteArrayLiteral("first-secret"));
+    QCOMPARE(restoredSecond->secret, QByteArrayLiteral("second-secret"));
+    QCOMPARE(store.accounts().size(), 2);
+}
+
+void SourceAccountStoreTest::readsLegacyRawPercentEscapedAccountId()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
+    QCOMPARE(settings.status(), QSettings::NoError);
+
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(fixture.sourceId, fixture.accountId);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->secret, fixture.secret);
+    const QList<StoredSourceAccount> accounts = store.accounts();
+    QCOMPARE(accounts.size(), 1);
+    QCOMPARE(accounts.constFirst().sourceId, fixture.sourceId);
+    QCOMPARE(accounts.constFirst().accountId, fixture.accountId);
+}
+
+void SourceAccountStoreTest::enablingLegacyRawAccountDoesNotRewriteItsKeysOrSecretReference()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
+    settings.setValue(fixture.group() + QStringLiteral("/enabled"), false);
+    settings.sync();
+
+    QVERIFY(store.setEnabled(fixture.sourceId, fixture.accountId, true));
+    QCOMPARE(settings.value(fixture.group() + QStringLiteral("/enabled")).toBool(), true);
+    QCOMPARE(settings.value(fixture.group() + QStringLiteral("/secretReference")).toString(),
+             fixture.reference);
+    QVERIFY(!settings.contains(
+        QStringLiteral("sourceAccountsV2/navidrome/home%252Foffice/secretReference")));
+    QCOMPARE(store.secretReference(fixture.sourceId, fixture.accountId), fixture.reference);
+    QCOMPARE(secretStore.value(fixture.reference), fixture.secret);
+}
+
+void SourceAccountStoreTest::updatesLegacyRawPercentEscapedAccountInPlace()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
+
+    ResolvedSourceAccountV2 updated{fixture.sourceId,
+                          fixture.accountId,
+                          QStringLiteral("Updated legacy account"),
+                          {{QStringLiteral("serverUrl"), QStringLiteral("https://updated.example.invalid")},
+                           {QStringLiteral("username"), QStringLiteral("updated-user")}},
+                          QByteArrayLiteral("updated-legacy-secret")};
+    QVERIFY(store.saveResolvedV2(updated));
+
+    const QString updatedReference = store.secretReference(fixture.sourceId, fixture.accountId);
+    QVERIFY(!updatedReference.isEmpty());
+    QVERIFY(updatedReference != fixture.reference);
+    QCOMPARE(settings.value(fixture.group() + QStringLiteral("/secretReference")).toString(),
+             updatedReference);
+    QVERIFY(!settings.contains(
+        QStringLiteral("sourceAccountsV2/navidrome/home%252Foffice/secretReference")));
+    QCOMPARE(secretStore.value(fixture.reference), QByteArray());
+    QCOMPARE(secretStore.value(updatedReference), updated.secret);
+}
+
+void SourceAccountStoreTest::removesLegacyRawPercentEscapedAccount()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const LegacyRawAccountFixture fixture;
+    QVERIFY(seedLegacyRawPercentEscapedAccount(fixture, &settings, &secretStore));
+
+    QVERIFY(store.remove(fixture.sourceId, fixture.accountId));
+    settings.beginGroup(fixture.group());
+    const QStringList remainingMetadataKeys = settings.allKeys();
+    settings.endGroup();
+    QVERIFY(remainingMetadataKeys.isEmpty());
+    QVERIFY(!store.resolvedAccountV2(fixture.sourceId, fixture.accountId).has_value());
+    QCOMPARE(secretStore.value(fixture.reference), QByteArray());
+}
+
+void SourceAccountStoreTest::preservesPreviousAccountWhenOldSecretCleanupFails()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QSettings settings(temporaryDirectory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    MemorySecretStore secretStore;
+    SourceAccountStore store(&settings, &secretStore);
+    const ResolvedSourceAccountV2 original = accountWithSecret();
+    QVERIFY(store.saveResolvedV2(original));
+    const QString originalReference = store.secretReference(original.sourceId, original.accountId);
+    secretStore.failRemovalFor(originalReference);
+    ResolvedSourceAccountV2 updated = original;
+    updated.secret = QByteArrayLiteral("replacement-secret");
+
+    QString error;
+    QVERIFY(!store.saveResolvedV2(updated, true, &error));
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(store.secretReference(original.sourceId, original.accountId), originalReference);
+    QCOMPARE(secretStore.value(originalReference), original.secret);
+    const std::optional<ResolvedSourceAccountV2> restored =
+        store.resolvedAccountV2(original.sourceId, original.accountId);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->secret, original.secret);
+    QCOMPARE(secretStore.size(), 1);
+}
+
+void SourceAccountStoreTest::unavailableSecretStoreNeverPersistsSecrets()
+{
+    UnavailableSecretStore secretStore;
+    QString error;
+
+    QVERIFY(!secretStore.write(QStringLiteral("reference"), QByteArrayLiteral("unit-test-password"),
+                               &error));
+    QVERIFY(error.contains(QStringLiteral("unavailable"), Qt::CaseInsensitive));
+    QVERIFY(!secretStore.read(QStringLiteral("reference"), &error).has_value());
+    QVERIFY(!secretStore.remove(QStringLiteral("reference"), &error));
+}
+
+QTEST_MAIN(SourceAccountStoreTest)
+#include "tst_SourceAccountStore.moc"

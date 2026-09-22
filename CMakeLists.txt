@@ -41,18 +41,31 @@ unset(_quemusic_build_testing)
 add_subdirectory(meshgradient)
 
 add_library(quemusic_source_sdk STATIC
-    sdk/source/IMusicSourceArtworkSession.h
-    sdk/source/IMusicSourcePlugin.h
-    sdk/source/IMusicSourceSession.h
-    sdk/source/SourcePluginContext.h
-    sdk/source/SourceTypes.cpp
-    sdk/source/SourceTypes.h
+    sdk/source/v2/IMusicSourcePluginV2.h
+    sdk/source/v2/IMusicSourceSessionV2.h
+    sdk/source/v2/ISourceProvidersV2.h
+    sdk/source/v2/SourceV2Types.cpp
+    sdk/source/v2/SourceV2Types.h
+    sdk/source/v2/SourceSecretsV2.cpp
+    sdk/source/v2/SourceSecretsV2.h
 )
 target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
 target_include_directories(quemusic_source_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
+)
+
+add_library(quemusic_music_page_model STATIC
+    core/music/SourceScopeStore.cpp
+    core/music/SourceScopeStore.h
+    core/music/MusicPageModel.cpp
+    core/music/MusicPageModel.h
+)
+target_compile_features(quemusic_music_page_model PUBLIC cxx_std_17)
+target_link_libraries(quemusic_music_page_model PUBLIC quemusic_source_sdk Qt6::Core)
+target_include_directories(quemusic_music_page_model PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/music
 )
 
 add_library(quemusic_plugin_core STATIC
@@ -62,6 +75,9 @@ add_library(quemusic_plugin_core STATIC
     core/plugins/PluginManager.h
 )
 target_compile_features(quemusic_plugin_core PUBLIC cxx_std_17)
+target_compile_definitions(quemusic_plugin_core PRIVATE
+    QUEMUSIC_PLUGIN_BUILD_KEY="$<IF:$<CONFIG:Debug>,Debug,Release>"
+)
 target_link_libraries(quemusic_plugin_core PUBLIC
     quemusic_source_sdk
     Qt6::Core
@@ -70,27 +86,17 @@ target_include_directories(quemusic_plugin_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/plugins
 )
 
-add_library(quemusic_source_manager STATIC
-    core/source/SourceManager.cpp
-    core/source/SourceManager.h
-)
-target_compile_features(quemusic_source_manager PUBLIC cxx_std_17)
-target_link_libraries(quemusic_source_manager PUBLIC
-    quemusic_plugin_core
-    quemusic_source_sdk
-    Qt6::Network
-)
-target_include_directories(quemusic_source_manager PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/source
-)
-
 add_library(quemusic_source_startup STATIC
     core/source/SourceStartup.cpp
     core/source/SourceStartup.h
 )
 target_compile_features(quemusic_source_startup PUBLIC cxx_std_17)
 target_link_libraries(quemusic_source_startup PUBLIC
-    quemusic_source_manager
+    quemusic_plugin_core
+    quemusic_plugin_settings
+    quemusic_music_hub
+    quemusic_playback_coordinator
+    quemusic_qt_playback_controller
     Qt6::Core
     Qt6::Qml
 )
@@ -98,14 +104,133 @@ target_include_directories(quemusic_source_startup PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+add_library(quemusic_source_account_store STATIC
+    core/media/SourceAccountStore.cpp
+    core/media/SourceAccountStore.h
+    core/settings/SourceSettingsValidation.cpp
+    core/settings/SourceSettingsValidation.h
+    core/media/MacKeychainSecretStore.h
+)
+target_compile_features(quemusic_source_account_store PUBLIC cxx_std_17)
+target_link_libraries(quemusic_source_account_store PUBLIC
+    quemusic_source_sdk
+    Qt6::Core
+)
+target_include_directories(quemusic_source_account_store PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/media
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/settings
+)
+if(APPLE)
+    target_sources(quemusic_source_account_store PRIVATE
+        core/media/MacKeychainSecretStore.mm
+    )
+    target_link_libraries(quemusic_source_account_store PRIVATE "-framework Security")
+endif()
+
+add_library(quemusic_source_registry STATIC
+    core/source/SourceRegistry.cpp
+    core/source/SourceRegistry.h
+)
+target_compile_features(quemusic_source_registry PUBLIC cxx_std_17)
+target_link_libraries(quemusic_source_registry PUBLIC
+    quemusic_plugin_core
+    quemusic_source_account_store
+    quemusic_source_sdk
+    Qt6::Core
+)
+target_include_directories(quemusic_source_registry PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/source
+)
+
+add_library(quemusic_plugin_settings STATIC
+    core/settings/PluginSettingsController.h
+    core/settings/PluginSettingsController.cpp
+    core/settings/PluginSettingsOperation.h
+    core/settings/PluginSettingsOperation.cpp
+    core/settings/SettingsSchemaPresentation.h
+    core/settings/SettingsSchemaPresentation.cpp
+)
+target_link_libraries(quemusic_plugin_settings PUBLIC quemusic_source_registry)
+
+add_library(quemusic_music_repository STATIC
+    core/music/CapabilityResolver.cpp
+    core/music/CapabilityResolver.h
+    core/music/MediaActionRouter.cpp
+    core/music/MediaActionRouter.h
+    core/music/AggregateComposer.cpp
+    core/music/AggregateComposer.h
+    core/music/PageRepository.cpp
+    core/music/PageRepository.h
+    core/music/PageCache.cpp
+    core/music/PageCache.h
+    core/music/ArtworkCache.cpp
+    core/music/ArtworkCache.h
+    core/music/MediaAssetRepository.cpp
+    core/music/MediaAssetRepository.h
+)
+target_compile_features(quemusic_music_repository PUBLIC cxx_std_17)
+target_include_directories(quemusic_music_repository PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core/music)
+target_link_libraries(quemusic_music_repository PUBLIC quemusic_source_registry Qt6::Concurrent)
+
+add_library(quemusic_playback_coordinator STATIC
+    core/music/PlaybackCoordinator.cpp core/music/PlaybackCoordinator.h core/music/PlaybackSink.h)
+target_link_libraries(quemusic_playback_coordinator PUBLIC quemusic_music_repository)
+
+add_library(quemusic_qt_playback_controller STATIC
+    core/playback/QtPlaybackController.cpp
+    core/playback/QtPlaybackController.h)
+target_compile_features(quemusic_qt_playback_controller PUBLIC cxx_std_17)
+target_include_directories(quemusic_qt_playback_controller PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/playback)
+target_link_libraries(quemusic_qt_playback_controller PUBLIC
+    quemusic_playback_coordinator Qt6::Multimedia)
+
+add_library(quemusic_music_hub STATIC core/music/MusicHub.cpp core/music/MusicHub.h)
+target_compile_features(quemusic_music_hub PUBLIC cxx_std_17)
+target_link_libraries(quemusic_music_hub PUBLIC quemusic_music_repository quemusic_music_page_model)
+
+add_library(quemusic_original_ui_music_adapter STATIC
+    core/music/OriginalUiMusicAdapter.cpp
+    core/music/OriginalUiMusicAdapter.h
+    api/OnlineListModel.cpp
+    api/OnlineListModel.h
+)
+target_compile_features(quemusic_original_ui_music_adapter PUBLIC cxx_std_17)
+target_include_directories(quemusic_original_ui_music_adapter PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/api
+)
+target_link_libraries(quemusic_original_ui_music_adapter PUBLIC
+    quemusic_music_hub
+    quemusic_playback_coordinator
+)
+
+file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS "components/*.qml")
+
 if(BUILD_TESTING)
     enable_testing()
+
+    qt_add_executable(quemusic_navidrome_smoke_state_test
+        tests/tst_NavidromeSmokeState.cpp
+        tests/NavidromeSmokeState.h
+    )
+    target_include_directories(quemusic_navidrome_smoke_state_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
+    )
+    target_link_libraries(quemusic_navidrome_smoke_state_test PRIVATE
+        quemusic_source_sdk
+        Qt6::Test
+    )
+    add_test(NAME quemusic_navidrome_smoke_state_test
+        COMMAND quemusic_navidrome_smoke_state_test)
 endif()
 
 add_subdirectory(plugins/navidrome-source)
 
 qt_add_executable(quemusic_navidrome_smoke
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/NavidromeSmoke.cpp
+    plugins/navidrome-source/NavidromeApiClient.cpp
+    plugins/navidrome-source/NavidromeApiClient.h
     plugins/navidrome-source/NavidromeSourceSession.cpp
     plugins/navidrome-source/NavidromeSourceSession.h
 )
@@ -115,7 +240,6 @@ target_include_directories(quemusic_navidrome_smoke PRIVATE
 )
 target_link_libraries(quemusic_navidrome_smoke PRIVATE
     Qt6::Network
-    quemusic_source_manager
     quemusic_source_sdk
 )
 
@@ -127,7 +251,6 @@ add_library(quemusic_playback_sdk STATIC
 target_compile_features(quemusic_playback_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_playback_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_playback_sdk PUBLIC
-    quemusic_source_sdk
     Qt6::Core
 )
 target_include_directories(quemusic_playback_sdk PUBLIC
@@ -148,26 +271,52 @@ if(BUILD_TESTING)
     enable_testing()
     find_package(Qt6 REQUIRED COMPONENTS Test)
 
-    add_subdirectory(plugins/test-source)
-
-    qt_add_executable(quemusic_source_types_test
-        tests/tst_SourceTypes.cpp
+    qt_add_executable(quemusic_source_v2_types_test
+        tests/tst_SourceV2Types.cpp
     )
-    target_link_libraries(quemusic_source_types_test PRIVATE
+    target_link_libraries(quemusic_source_v2_types_test PRIVATE
         quemusic_source_sdk
         Qt6::Test
     )
-    add_test(NAME quemusic_source_types_test COMMAND quemusic_source_types_test)
+    add_test(NAME quemusic_source_v2_types_test COMMAND quemusic_source_v2_types_test)
 
-    qt_add_executable(quemusic_source_plugin_contract_test
-        tests/tst_SourcePluginContract.cpp
+    qt_add_executable(quemusic_music_page_model_test
+        tests/tst_MusicPageModel.cpp
     )
-    target_link_libraries(quemusic_source_plugin_contract_test PRIVATE
-        quemusic_source_sdk
-        Qt6::Network
+    target_link_libraries(quemusic_music_page_model_test PRIVATE
+        quemusic_music_page_model
+        Qt6::Gui
+        Qt6::Qml
         Qt6::Test
     )
-    add_test(NAME quemusic_source_plugin_contract_test COMMAND quemusic_source_plugin_contract_test)
+    add_test(NAME quemusic_music_page_model_test COMMAND quemusic_music_page_model_test)
+
+    qt_add_executable(quemusic_source_v2_contract_test
+        tests/tst_SourceV2Contract.cpp
+    )
+    target_link_libraries(quemusic_source_v2_contract_test PRIVATE
+        quemusic_source_sdk
+        Qt6::Test
+    )
+    add_test(NAME quemusic_source_v2_contract_test COMMAND quemusic_source_v2_contract_test)
+
+    qt_add_executable(quemusic_source_settings_storage_test
+        tests/tst_SourceSettingsStorage.cpp
+    )
+    target_link_libraries(quemusic_source_settings_storage_test PRIVATE
+        quemusic_source_account_store
+        Qt6::Test
+    )
+    add_test(NAME quemusic_source_settings_storage_test COMMAND quemusic_source_settings_storage_test)
+
+    qt_add_executable(quemusic_source_account_store_test
+        tests/tst_SourceAccountStore.cpp
+    )
+    target_link_libraries(quemusic_source_account_store_test PRIVATE
+        quemusic_source_account_store
+        Qt6::Test
+    )
+    add_test(NAME quemusic_source_account_store_test COMMAND quemusic_source_account_store_test)
 
     qt_add_executable(quemusic_playback_plugin_contract_test
         tests/tst_PlaybackPluginContract.cpp
@@ -178,175 +327,473 @@ if(BUILD_TESTING)
     )
     add_test(NAME quemusic_playback_plugin_contract_test COMMAND quemusic_playback_plugin_contract_test)
 
-    function(add_source_plugin_fixture target directory)
-        add_library(${target} MODULE tests/fixtures/FakeSourcePlugin.cpp)
+    function(canonicalize_plugin_architecture architecture output_variable)
+        string(TOLOWER "${architecture}" normalized_architecture)
+        if(normalized_architecture STREQUAL "x86_64"
+                OR normalized_architecture STREQUAL "amd64"
+                OR normalized_architecture STREQUAL "x64")
+            set(normalized_architecture "x86_64")
+        elseif(normalized_architecture STREQUAL "arm64"
+                OR normalized_architecture STREQUAL "aarch64")
+            set(normalized_architecture "arm64")
+        else()
+            message(FATAL_ERROR
+                "Unsupported source plugin target architecture: ${architecture}")
+        endif()
+        set(${output_variable} "${normalized_architecture}" PARENT_SCOPE)
+    endfunction()
+
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        set(QUEMUSIC_TEST_TARGET_ARCHITECTURES)
+        foreach(target_architecture IN LISTS CMAKE_OSX_ARCHITECTURES)
+            canonicalize_plugin_architecture(
+                "${target_architecture}" canonical_target_architecture)
+            list(APPEND QUEMUSIC_TEST_TARGET_ARCHITECTURES
+                "${canonical_target_architecture}")
+        endforeach()
+        list(REMOVE_DUPLICATES QUEMUSIC_TEST_TARGET_ARCHITECTURES)
+        list(LENGTH QUEMUSIC_TEST_TARGET_ARCHITECTURES target_architecture_count)
+        if(target_architecture_count EQUAL 2)
+            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "x86_64" x86_index)
+            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "arm64" arm_index)
+            if(x86_index EQUAL -1 OR arm_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Unsupported universal source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
+            endif()
+            set(QUEMUSIC_TEST_ARCHITECTURE "universal")
+        elseif(target_architecture_count EQUAL 1)
+            list(GET QUEMUSIC_TEST_TARGET_ARCHITECTURES 0 QUEMUSIC_TEST_ARCHITECTURE)
+        else()
+            message(FATAL_ERROR
+                "Unsupported source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
+        endif()
+    else()
+        canonicalize_plugin_architecture(
+            "${CMAKE_SYSTEM_PROCESSOR}" QUEMUSIC_TEST_ARCHITECTURE)
+    endif()
+    set(QUEMUSIC_TEST_BUILD_KEY "$<IF:$<CONFIG:Debug>,Debug,Release>")
+
+    function(add_v2_source_plugin_fixture target package_directory)
+        add_library(${target} MODULE
+            tests/fixtures/FakeV2SourcePlugin.cpp
+            tests/fixtures/FakeV2SourcePlugin.h
+        )
         target_compile_features(${target} PRIVATE cxx_std_17)
         target_link_libraries(${target} PRIVATE quemusic_source_sdk)
         set_target_properties(${target} PROPERTIES
-            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/${directory}"
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/${directory}"
+            LIBRARY_OUTPUT_DIRECTORY "${package_directory}"
+            RUNTIME_OUTPUT_DIRECTORY "${package_directory}"
         )
     endfunction()
 
-    add_library(quemusic_frozen_v1_source_sdk STATIC
-        tests/fixtures/frozen-v1-sdk/FrozenV1Sdk.cpp
-        tests/fixtures/frozen-v1-sdk/IMusicSourcePlugin.h
-        tests/fixtures/frozen-v1-sdk/IMusicSourceSession.h
-        tests/fixtures/frozen-v1-sdk/SourcePluginContext.h
-        tests/fixtures/frozen-v1-sdk/SourceTypes.h
-    )
-    target_compile_features(quemusic_frozen_v1_source_sdk PUBLIC cxx_std_17)
-    target_link_libraries(quemusic_frozen_v1_source_sdk PUBLIC Qt6::Core)
-    target_include_directories(quemusic_frozen_v1_source_sdk PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/frozen-v1-sdk
-    )
-    set_target_properties(quemusic_frozen_v1_source_sdk PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-    )
+    function(generate_v2_source_plugin_manifest target package_directory)
+        set(QUEMUSIC_V2_FIXTURE_LIBRARY "$<TARGET_FILE_NAME:${target}>")
+        set(configured_manifest
+            "${CMAKE_CURRENT_BINARY_DIR}/${target}-manifest.json.in")
+        configure_file(
+            tests/fixtures/v2-manifest.json.in
+            "${configured_manifest}"
+            @ONLY
+        )
+        file(GENERATE
+            OUTPUT "${package_directory}/manifest.json"
+            INPUT "${configured_manifest}"
+        )
+    endfunction()
 
-    add_library(quemusic_frozen_v1_source_fixture MODULE
-        tests/fixtures/FrozenV1SourcePlugin.cpp
-    )
-    target_compile_features(quemusic_frozen_v1_source_fixture PRIVATE cxx_std_17)
-    target_link_libraries(quemusic_frozen_v1_source_fixture PRIVATE
-        quemusic_frozen_v1_source_sdk
-    )
-    set_target_properties(quemusic_frozen_v1_source_fixture PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
-    )
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.settings-fixture")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "settings-fixture")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Settings Fixture")
+    set(QUEMUSIC_SETTINGS_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-settings-packages/$<CONFIG>")
+    set(QUEMUSIC_SETTINGS_PACKAGE_DIR "${QUEMUSIC_SETTINGS_PACKAGE_ROOT}/settings-fixture")
+    add_library(quemusic_settings_fixture MODULE
+        tests/fixtures/SettingsV2FixturePlugin.cpp tests/fixtures/SettingsV2FixturePlugin.h)
+    target_link_libraries(quemusic_settings_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_settings_fixture PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_SETTINGS_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_settings_fixture "${QUEMUSIC_SETTINGS_PACKAGE_DIR}")
+    qt_add_executable(quemusic_plugin_settings_operation_test tests/tst_PluginSettingsOperation.cpp)
+    target_link_libraries(quemusic_plugin_settings_operation_test PRIVATE quemusic_plugin_settings Qt6::Test)
+    target_compile_definitions(quemusic_plugin_settings_operation_test PRIVATE QUEMUSIC_SETTINGS_PACKAGES="${QUEMUSIC_SETTINGS_PACKAGE_ROOT}")
+    add_dependencies(quemusic_plugin_settings_operation_test quemusic_settings_fixture)
+    add_test(NAME quemusic_plugin_settings_operation_test COMMAND quemusic_plugin_settings_operation_test)
+    qt_add_executable(quemusic_plugin_settings_controller_test tests/tst_PluginSettingsController.cpp)
+    target_link_libraries(quemusic_plugin_settings_controller_test PRIVATE quemusic_plugin_settings Qt6::Test)
+    target_compile_definitions(quemusic_plugin_settings_controller_test PRIVATE
+        QUEMUSIC_SETTINGS_PACKAGES="${QUEMUSIC_SETTINGS_PACKAGE_ROOT}"
+        QUEMUSIC_NO_SETTINGS_PACKAGE="$<TARGET_FILE_DIR:quemusic_fake_v2_source_fixture>")
+    add_dependencies(quemusic_plugin_settings_controller_test quemusic_settings_fixture quemusic_fake_v2_source_fixture)
+    add_test(NAME quemusic_plugin_settings_controller_test COMMAND quemusic_plugin_settings_controller_test)
 
-    set(QUEMUSIC_FROZEN_V1_PACKAGE_DIR
-        "${CMAKE_CURRENT_BINARY_DIR}/test-source-v1-abi-packages/frozen-v1")
-    file(MAKE_DIRECTORY "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}")
-    configure_file(
-        tests/fixtures/frozen-v1-sdk/manifest.json.in
-        "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}/manifest.json"
-        @ONLY
-    )
-    add_custom_command(TARGET quemusic_frozen_v1_source_fixture POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:quemusic_frozen_v1_source_fixture>"
-            "${QUEMUSIC_FROZEN_V1_PACKAGE_DIR}/$<TARGET_FILE_NAME:quemusic_frozen_v1_source_fixture>"
-    )
+    # Task7 fixture lives at the provider boundary of the real hub orchestration.
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task7")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task7")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task7 Fixture")
+    set(QUEMUSIC_TASK7_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task7-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK7_PACKAGE_DIR "${QUEMUSIC_TASK7_PACKAGE_ROOT}/task7")
+    add_library(quemusic_hub_fixture MODULE tests/tst_MusicHub.cpp)
+    target_compile_definitions(quemusic_hub_fixture PRIVATE QUEMUSIC_HUB_FIXTURE)
+    target_link_libraries(quemusic_hub_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_hub_fixture PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK7_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_hub_fixture "${QUEMUSIC_TASK7_PACKAGE_DIR}")
+    qt_add_executable(quemusic_music_hub_test tests/tst_MusicHub.cpp)
+    target_link_libraries(quemusic_music_hub_test PRIVATE quemusic_music_hub Qt6::Test)
+    target_compile_definitions(quemusic_music_hub_test PRIVATE QUEMUSIC_TASK7_PACKAGES="${QUEMUSIC_TASK7_PACKAGE_ROOT}")
+    add_dependencies(quemusic_music_hub_test quemusic_hub_fixture)
+    add_test(NAME quemusic_music_hub_test COMMAND quemusic_music_hub_test)
+    set_tests_properties(quemusic_music_hub_test PROPERTIES TIMEOUT 30)
 
-    add_source_plugin_fixture(quemusic_duplicate_source_fixture_one duplicate)
-    target_compile_definitions(quemusic_duplicate_source_fixture_one PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.duplicate"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Duplicate Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-    )
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_original_ui_adapter_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.original-ui-adapter")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "adapter")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Original UI Adapter Fixture")
+    set(QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-original-ui-adapter-packages/$<CONFIG>")
+    set(QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_DIR
+        "${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_ROOT}/adapter")
+    add_library(quemusic_original_ui_adapter_fixture MODULE
+        tests/tst_OriginalUiMusicAdapter.cpp)
+    target_compile_definitions(quemusic_original_ui_adapter_fixture PRIVATE
+        QUEMUSIC_ORIGINAL_UI_ADAPTER_FIXTURE)
+    target_link_libraries(quemusic_original_ui_adapter_fixture PRIVATE
+        quemusic_source_sdk)
+    set_target_properties(quemusic_original_ui_adapter_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_original_ui_adapter_fixture
+        "${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_DIR}")
+    qt_add_executable(quemusic_original_ui_music_adapter_test
+        tests/tst_OriginalUiMusicAdapter.cpp)
+    target_link_libraries(quemusic_original_ui_music_adapter_test PRIVATE
+        quemusic_original_ui_music_adapter
+        Qt6::Test)
+    target_compile_definitions(quemusic_original_ui_music_adapter_test PRIVATE
+        QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGES="${QUEMUSIC_ORIGINAL_UI_ADAPTER_PACKAGE_ROOT}")
+    add_dependencies(quemusic_original_ui_music_adapter_test
+        quemusic_original_ui_adapter_fixture)
+    add_test(NAME quemusic_original_ui_music_adapter_test
+        COMMAND quemusic_original_ui_music_adapter_test)
 
-    add_source_plugin_fixture(quemusic_duplicate_source_fixture_two duplicate)
-    target_compile_definitions(quemusic_duplicate_source_fixture_two PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.duplicate"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Duplicate Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-    )
+    # Task12c isolated private playback core and dynamically loaded fixture.
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_playback_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task12c")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task12c")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task12c Fixture")
+    set(QUEMUSIC_TASK12C_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task12c-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK12C_PACKAGE_DIR "${QUEMUSIC_TASK12C_PACKAGE_ROOT}/task12c")
+    add_library(quemusic_playback_fixture MODULE tests/tst_PlaybackCoordinator.cpp)
+    target_compile_definitions(quemusic_playback_fixture PRIVATE QUEMUSIC_PLAYBACK_FIXTURE)
+    target_link_libraries(quemusic_playback_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_playback_fixture PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK12C_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_playback_fixture "${QUEMUSIC_TASK12C_PACKAGE_DIR}")
+    qt_add_executable(quemusic_playback_coordinator_test tests/tst_PlaybackCoordinator.cpp)
+    target_link_libraries(quemusic_playback_coordinator_test PRIVATE quemusic_playback_coordinator Qt6::Test)
+    target_compile_definitions(quemusic_playback_coordinator_test PRIVATE QUEMUSIC_TASK12C_PACKAGES="${QUEMUSIC_TASK12C_PACKAGE_ROOT}")
+    add_dependencies(quemusic_playback_coordinator_test quemusic_playback_fixture)
+    add_test(NAME quemusic_playback_coordinator_test COMMAND quemusic_playback_coordinator_test)
+    set_tests_properties(quemusic_playback_coordinator_test PROPERTIES TIMEOUT 30)
 
-    add_source_plugin_fixture(quemusic_invalid_valid_fixture invalid)
-    target_compile_definitions(quemusic_invalid_valid_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.valid"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Fixture Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-    )
+    qt_add_executable(quemusic_qt_playback_controller_test
+        tests/tst_QtPlaybackController.cpp)
+    target_include_directories(quemusic_qt_playback_controller_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/playback)
+    target_link_libraries(quemusic_qt_playback_controller_test PRIVATE
+        quemusic_qt_playback_controller Qt6::Test)
+    add_test(NAME quemusic_qt_playback_controller_test
+        COMMAND quemusic_qt_playback_controller_test)
+    set_tests_properties(quemusic_qt_playback_controller_test PROPERTIES TIMEOUT 30)
 
-    add_source_plugin_fixture(quemusic_empty_id_source_fixture invalid)
-    target_compile_definitions(quemusic_empty_id_source_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID=""
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Empty ID Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-    )
+    qt_add_executable(quemusic_playback_controls_adapter_qml_test
+        tests/tst_PlaybackControlsAdapterQml.cpp)
+    target_compile_features(quemusic_playback_controls_adapter_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_playback_controls_adapter_qml_test
+        "quemusic_playback_controls_adapter_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES ${QML_COMPONENTS})
+    target_link_libraries(quemusic_playback_controls_adapter_qml_test PRIVATE
+        Qt6::Qml Qt6::Test)
+    add_test(NAME quemusic_playback_controls_adapter_qml_test
+        COMMAND quemusic_playback_controls_adapter_qml_test)
+    set_tests_properties(quemusic_playback_controls_adapter_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-    add_source_plugin_fixture(quemusic_empty_sdk_source_fixture invalid)
-    target_compile_definitions(quemusic_empty_sdk_source_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.empty-sdk"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Empty SDK Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION=""
-    )
+    qt_add_executable(quemusic_legacy_queue_qml_test tests/tst_LegacyQueueQml.cpp)
+    target_compile_features(quemusic_legacy_queue_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_legacy_queue_qml_test
+        "quemusic_legacy_queue_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES components/LegacyQueueController.qml)
+    target_link_libraries(quemusic_legacy_queue_qml_test PRIVATE
+        Qt6::Gui Qt6::Qml Qt6::Test)
+    add_test(NAME quemusic_legacy_queue_qml_test COMMAND quemusic_legacy_queue_qml_test)
+    set_tests_properties(quemusic_legacy_queue_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-    add_source_plugin_fixture(quemusic_missing_name_source_fixture invalid)
-    target_compile_definitions(quemusic_missing_name_source_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.missing-name"
-        QUEMUSIC_FIXTURE_SOURCE_NAME=""
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-    )
+    qt_add_executable(quemusic_music_hub_qml_test tests/tst_MusicHubQml.cpp)
+    target_compile_features(quemusic_music_hub_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_music_hub_qml_test "quemusic_music_hub_qml_test_qml"
+        PREFIX "/QueMusic" FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js)
+    qt_add_resources(quemusic_music_hub_qml_test "quemusic_music_hub_qml_test_pages"
+        PREFIX "/QueMusic" FILES
+            pages/HomePage.qml
+            pages/PlaylistPage.qml
+            pages/FavouritePage.qml
+            pages/SearchPage.qml
+            layout/MainContent.qml
+            layout/LeftSideBar.qml)
+    target_link_libraries(quemusic_music_hub_qml_test PRIVATE
+        quemusic_music_page_model Qt6::Qml Qt6::Quick Qt6::Test)
+    add_test(NAME quemusic_music_hub_qml_test COMMAND quemusic_music_hub_qml_test)
+    set_tests_properties(quemusic_music_hub_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QML_IMPORT_PATH=${CMAKE_CURRENT_BINARY_DIR}")
 
-    add_source_plugin_fixture(quemusic_initialization_failure_fixture invalid)
-    target_compile_definitions(quemusic_initialization_failure_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.initialize-failure"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Initialization Failure Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-        QUEMUSIC_FIXTURE_INITIALIZE_FAILS
-    )
+    qt_add_executable(quemusic_original_ui_recommendation_qml_test
+        tests/tst_OriginalUiRecommendationQml.cpp)
+    target_compile_features(quemusic_original_ui_recommendation_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_original_ui_recommendation_qml_test
+        "quemusic_original_ui_recommendation_qml_test_qml"
+        PREFIX "/QueMusic" FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js)
+    qt_add_resources(quemusic_original_ui_recommendation_qml_test
+        "quemusic_original_ui_recommendation_qml_test_pages"
+        PREFIX "/QueMusic" FILES
+            pages/HomePage.qml
+            pages/PlaylistPage.qml)
+    target_link_libraries(quemusic_original_ui_recommendation_qml_test PRIVATE
+        Qt6::Qml Qt6::Quick Qt6::Test)
+    add_test(NAME quemusic_original_ui_recommendation_qml_test
+        COMMAND quemusic_original_ui_recommendation_qml_test)
+    set_tests_properties(quemusic_original_ui_recommendation_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QML_IMPORT_PATH=${CMAKE_CURRENT_BINARY_DIR}")
 
-    add_source_plugin_fixture(quemusic_not_source_fixture invalid)
-    target_compile_definitions(quemusic_not_source_fixture PRIVATE
-        QUEMUSIC_FIXTURE_NOT_SOURCE
-    )
+    qt_add_executable(quemusic_original_ui_actions_qml_test
+        tests/tst_OriginalUiActionsQml.cpp)
+    target_compile_features(quemusic_original_ui_actions_qml_test PRIVATE cxx_std_17)
+    qt_add_resources(quemusic_original_ui_actions_qml_test
+        "quemusic_original_ui_actions_qml_test_qml"
+        PREFIX "/QueMusic" FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js)
+    qt_add_resources(quemusic_original_ui_actions_qml_test
+        "quemusic_original_ui_actions_qml_test_pages"
+        PREFIX "/QueMusic" FILES
+            pages/FavouritePage.qml
+            pages/SearchPage.qml
+            pages/DownloadPage.qml)
+    target_link_libraries(quemusic_original_ui_actions_qml_test PRIVATE
+        Qt6::Qml Qt6::Quick Qt6::Test)
+    add_test(NAME quemusic_original_ui_actions_qml_test
+        COMMAND quemusic_original_ui_actions_qml_test)
+    set_tests_properties(quemusic_original_ui_actions_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QML_IMPORT_PATH=${CMAKE_CURRENT_BINARY_DIR}")
 
-    add_source_plugin_fixture(quemusic_incompatible_sdk_source_fixture incompatible)
-    target_compile_definitions(quemusic_incompatible_sdk_source_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.incompatible-sdk"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Incompatible SDK Source"
-        QUEMUSIC_FIXTURE_SDK_VERSION="2.0"
-        QUEMUSIC_FIXTURE_INITIALIZE_FAILS
-    )
+    qt_add_executable(quemusic_original_ui_playback_qml_test
+        tests/tst_OriginalUiPlaybackQml.cpp)
+    target_compile_features(quemusic_original_ui_playback_qml_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_original_ui_playback_qml_test PRIVATE
+        QUEMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    qt_add_resources(quemusic_original_ui_playback_qml_test
+        "quemusic_original_ui_playback_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES
+            components/LegacyQueueController.qml
+            components/PlaybackControlsAdapter.qml)
+    target_link_libraries(quemusic_original_ui_playback_qml_test PRIVATE
+        Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
+    add_test(NAME quemusic_original_ui_playback_qml_test
+        COMMAND quemusic_original_ui_playback_qml_test)
+    set_tests_properties(quemusic_original_ui_playback_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-    add_source_plugin_fixture(quemusic_optional_artwork_without_metadata_fixture
-                              optional-without-metadata)
-    target_compile_definitions(quemusic_optional_artwork_without_metadata_fixture PRIVATE
-        QUEMUSIC_FIXTURE_SOURCE_ID="fixture.optional-without-metadata"
-        QUEMUSIC_FIXTURE_SOURCE_NAME="Optional Artwork Without Metadata"
-        QUEMUSIC_FIXTURE_SDK_VERSION="1.0"
-        QUEMUSIC_FIXTURE_ARTWORK_INTERFACE
-    )
+    qt_add_executable(quemusic_sensitive_playback_logging_test
+        tests/tst_SensitivePlaybackLogging.cpp
+        core/logging/RuntimeLoggingPolicy.cpp
+        core/logging/RuntimeLoggingPolicy.h)
+    target_compile_features(quemusic_sensitive_playback_logging_test PRIVATE cxx_std_17)
+    target_include_directories(quemusic_sensitive_playback_logging_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/logging)
+    target_link_libraries(quemusic_sensitive_playback_logging_test PRIVATE
+        Qt6::Core Qt6::Test)
+    add_test(NAME quemusic_sensitive_playback_logging_test
+        COMMAND quemusic_sensitive_playback_logging_test)
+    set_tests_properties(quemusic_sensitive_playback_logging_test PROPERTIES TIMEOUT 30)
 
-    qt_add_executable(quemusic_source_manager_test
-        tests/tst_SourceManager.cpp
-    )
-    target_compile_features(quemusic_source_manager_test PRIVATE cxx_std_17)
-    target_compile_definitions(quemusic_source_manager_test PRIVATE
-        QUEMUSIC_TEST_PLUGIN_ROOT="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins"
-        QUEMUSIC_TEST_SOURCE_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/primary"
-        QUEMUSIC_TEST_FROZEN_V1_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-plugins/frozen-v1"
-        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
-    )
-    target_link_libraries(quemusic_source_manager_test PRIVATE
-        quemusic_source_manager
-        Qt6::Test
-    )
-    add_dependencies(quemusic_source_manager_test
-        quemusic_test_source
-        quemusic_frozen_v1_source_fixture
-        quemusic_duplicate_source_fixture_one
-        quemusic_duplicate_source_fixture_two
-        quemusic_invalid_valid_fixture
-        quemusic_empty_id_source_fixture
-        quemusic_empty_sdk_source_fixture
-        quemusic_missing_name_source_fixture
-        quemusic_initialization_failure_fixture
-        quemusic_not_source_fixture
-        quemusic_incompatible_sdk_source_fixture
-        quemusic_optional_artwork_without_metadata_fixture
-    )
-    add_test(NAME quemusic_source_manager_test COMMAND quemusic_source_manager_test)
+    qt_add_executable(quemusic_original_ui_structure_test
+        tests/tst_OriginalUiStructure.cpp)
+    target_compile_features(quemusic_original_ui_structure_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_original_ui_structure_test PRIVATE
+        QUEMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(quemusic_original_ui_structure_test PRIVATE Qt6::Test)
+    add_test(NAME quemusic_original_ui_structure_test
+        COMMAND quemusic_original_ui_structure_test)
 
-    qt_add_executable(quemusic_source_v1_abi_test
-        tests/tst_SourceV1Abi.cpp
+    # Task6 fixture shares its source with the action router contract tests.
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_action_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task6")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task6")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task6 Fixture")
+    set(QUEMUSIC_TASK6_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task6-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK6_PACKAGE_DIR "${QUEMUSIC_TASK6_PACKAGE_ROOT}/task6")
+    add_library(quemusic_action_fixture MODULE tests/tst_MediaActionRouterV2.cpp)
+    target_compile_definitions(quemusic_action_fixture PRIVATE QUEMUSIC_ACTION_FIXTURE)
+    target_link_libraries(quemusic_action_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_action_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK6_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_action_fixture "${QUEMUSIC_TASK6_PACKAGE_DIR}")
+    qt_add_executable(quemusic_capability_resolver_test tests/tst_CapabilityResolver.cpp)
+    target_link_libraries(quemusic_capability_resolver_test PRIVATE quemusic_music_repository Qt6::Test)
+    qt_add_executable(quemusic_media_action_router_v2_test tests/tst_MediaActionRouterV2.cpp)
+    target_link_libraries(quemusic_media_action_router_v2_test PRIVATE
+        quemusic_music_repository quemusic_music_page_model Qt6::Test)
+    target_compile_definitions(quemusic_media_action_router_v2_test PRIVATE
+        QUEMUSIC_TASK6_PACKAGES="${QUEMUSIC_TASK6_PACKAGE_ROOT}")
+    add_dependencies(quemusic_media_action_router_v2_test quemusic_action_fixture)
+    foreach(task6_target IN ITEMS quemusic_capability_resolver_test quemusic_media_action_router_v2_test)
+        add_test(NAME ${task6_target} COMMAND ${task6_target})
+        set_tests_properties(${task6_target} PROPERTIES TIMEOUT 30)
+    endforeach()
+
+    # Task5 fixture shares its source with the repository contract tests.
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_page_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task5")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "task5")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Task5 Fixture")
+    set(QUEMUSIC_TASK5_PACKAGE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-task5-packages/$<CONFIG>")
+    set(QUEMUSIC_TASK5_PACKAGE_DIR "${QUEMUSIC_TASK5_PACKAGE_ROOT}/task5")
+    add_library(quemusic_page_fixture MODULE tests/tst_PageRepository.cpp)
+    target_compile_definitions(quemusic_page_fixture PRIVATE QUEMUSIC_PAGE_FIXTURE)
+    target_link_libraries(quemusic_page_fixture PRIVATE quemusic_source_sdk)
+    set_target_properties(quemusic_page_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_TASK5_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(quemusic_page_fixture "${QUEMUSIC_TASK5_PACKAGE_DIR}")
+
+    foreach(task5_test IN ITEMS AggregateComposer PageRepository MusicCaches)
+        if(task5_test STREQUAL "AggregateComposer")
+            set(task5_target quemusic_aggregate_composer_test)
+        elseif(task5_test STREQUAL "PageRepository")
+            set(task5_target quemusic_page_repository_test)
+        else()
+            set(task5_target quemusic_music_caches_test)
+        endif()
+        qt_add_executable(${task5_target} tests/tst_${task5_test}.cpp)
+        target_link_libraries(${task5_target} PRIVATE
+            quemusic_music_page_model quemusic_music_repository Qt6::Test)
+        target_compile_definitions(${task5_target} PRIVATE
+            QUEMUSIC_TASK5_PACKAGES="${QUEMUSIC_TASK5_PACKAGE_ROOT}")
+        add_dependencies(${task5_target} quemusic_page_fixture)
+        add_test(NAME ${task5_target} COMMAND ${task5_target})
+        set_tests_properties(${task5_target} PROPERTIES TIMEOUT 30)
+    endforeach()
+
+    set(QUEMUSIC_V2_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-v2-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_fake_v2_source_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.fixture-v2")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "fixture-v2")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Fixture V2")
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_V2_PACKAGE_ROOT}/$<CONFIG>/fixture-v2")
+    add_v2_source_plugin_fixture(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                 "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}")
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_V2_FIXTURE_PACKAGE_DIR}")
+
+    set(QUEMUSIC_INVALID_V2_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-v2-invalid-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_fake_v2_wrong_contract_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.fixture-v2-invalid")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "fixture-v2-invalid")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Fixture V2 Invalid")
+    set(QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}/$<CONFIG>/fixture-v2-invalid")
+    add_v2_source_plugin_fixture(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                 "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}")
+    target_compile_definitions(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE
+        QUEMUSIC_FAKE_V2_OMIT_INTERFACE
     )
-    target_compile_features(quemusic_source_v1_abi_test PRIVATE cxx_std_17)
-    target_compile_definitions(quemusic_source_v1_abi_test PRIVATE
-        QUEMUSIC_TEST_FROZEN_V1_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-source-v1-abi-packages"
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_INVALID_V2_FIXTURE_PACKAGE_DIR}")
+
+    set(QUEMUSIC_REGISTRY_V2_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-registry-v2-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_source_registry_v2_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.registry-v2")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "registry-v2")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Registry V2 Fixture")
+    set(QUEMUSIC_REGISTRY_V2_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_REGISTRY_V2_PACKAGE_ROOT}/$<CONFIG>/registry-v2")
+    add_library(${QUEMUSIC_V2_FIXTURE_TARGET} MODULE
+        tests/tst_SourceRegistryV2.cpp
     )
-    target_link_libraries(quemusic_source_v1_abi_test PRIVATE
-        quemusic_source_manager
-        Qt6::Test
+    target_compile_features(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE cxx_std_17)
+    target_compile_definitions(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE
+        QUEMUSIC_SOURCE_REGISTRY_V2_FIXTURE
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_PACKAGE_ID="${QUEMUSIC_V2_FIXTURE_PACKAGE_ID}"
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_SOURCE_ID="${QUEMUSIC_V2_FIXTURE_SOURCE_ID}"
     )
-    add_dependencies(quemusic_source_v1_abi_test
-        quemusic_frozen_v1_source_fixture
+    target_link_libraries(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE quemusic_source_sdk)
+    set_target_properties(${QUEMUSIC_V2_FIXTURE_TARGET} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_FIXTURE_PACKAGE_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_FIXTURE_PACKAGE_DIR}"
     )
-    add_test(NAME quemusic_source_v1_abi_test COMMAND quemusic_source_v1_abi_test)
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_REGISTRY_V2_FIXTURE_PACKAGE_DIR}")
+
+    set(QUEMUSIC_REGISTRY_V2_SECOND_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-registry-v2-secondary-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_source_registry_v2_secondary_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID
+        "org.quemusic.source.registry-v2-secondary")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "registry-secondary")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Registry V2 Secondary Fixture")
+    set(QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_REGISTRY_V2_SECOND_PACKAGE_ROOT}/$<CONFIG>/registry-secondary")
+    add_library(${QUEMUSIC_V2_FIXTURE_TARGET} MODULE
+        tests/tst_SourceRegistryV2.cpp
+    )
+    target_compile_features(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE cxx_std_17)
+    target_compile_definitions(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE
+        QUEMUSIC_SOURCE_REGISTRY_V2_FIXTURE
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_PACKAGE_ID="${QUEMUSIC_V2_FIXTURE_PACKAGE_ID}"
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_SOURCE_ID="${QUEMUSIC_V2_FIXTURE_SOURCE_ID}"
+    )
+    target_link_libraries(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE quemusic_source_sdk)
+    set_target_properties(${QUEMUSIC_V2_FIXTURE_TARGET} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR}"
+    )
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_REGISTRY_V2_SECOND_FIXTURE_PACKAGE_DIR}")
+
+    set(QUEMUSIC_REGISTRY_V2_MISMATCH_PACKAGE_ROOT
+        "${CMAKE_CURRENT_BINARY_DIR}/test-source-registry-v2-mismatch-packages")
+    set(QUEMUSIC_V2_FIXTURE_TARGET quemusic_source_registry_v2_mismatch_fixture)
+    set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID
+        "org.quemusic.source.registry-v2-mismatch")
+    set(QUEMUSIC_V2_FIXTURE_SOURCE_ID "registry-v2-mismatch")
+    set(QUEMUSIC_V2_FIXTURE_NAME "Registry V2 Mismatch Fixture")
+    set(QUEMUSIC_REGISTRY_V2_MISMATCH_FIXTURE_PACKAGE_DIR
+        "${QUEMUSIC_REGISTRY_V2_MISMATCH_PACKAGE_ROOT}/$<CONFIG>/registry-v2-mismatch")
+    add_library(${QUEMUSIC_V2_FIXTURE_TARGET} MODULE
+        tests/tst_SourceRegistryV2.cpp
+    )
+    target_compile_features(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE cxx_std_17)
+    target_compile_definitions(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE
+        QUEMUSIC_SOURCE_REGISTRY_V2_FIXTURE
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_PACKAGE_ID="${QUEMUSIC_V2_FIXTURE_PACKAGE_ID}"
+        QUEMUSIC_SOURCE_REGISTRY_FIXTURE_SOURCE_ID="descriptor-other"
+    )
+    target_link_libraries(${QUEMUSIC_V2_FIXTURE_TARGET} PRIVATE quemusic_source_sdk)
+    set_target_properties(${QUEMUSIC_V2_FIXTURE_TARGET} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_MISMATCH_FIXTURE_PACKAGE_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${QUEMUSIC_REGISTRY_V2_MISMATCH_FIXTURE_PACKAGE_DIR}"
+    )
+    generate_v2_source_plugin_manifest(${QUEMUSIC_V2_FIXTURE_TARGET}
+                                       "${QUEMUSIC_REGISTRY_V2_MISMATCH_FIXTURE_PACKAGE_DIR}")
 
     qt_add_executable(quemusic_plugin_startup_test
         tests/tst_PluginStartup.cpp
@@ -354,6 +801,8 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_plugin_startup_test PRIVATE cxx_std_17)
     target_link_libraries(quemusic_plugin_startup_test PRIVATE
         quemusic_source_startup
+        quemusic_source_account_store
+        quemusic_source_registry
         Qt6::Qml
         Qt6::Quick
         Qt6::Test
@@ -384,14 +833,70 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/core/plugins
     )
     target_compile_definitions(quemusic_plugin_manager_test PRIVATE
-        QUEMUSIC_TEST_PLUGIN_PACKAGE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-plugin-packages"
+        QUEMUSIC_TEST_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_V2_PACKAGE_ROOT}/$<CONFIG>"
+        QUEMUSIC_TEST_INVALID_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_INVALID_V2_PACKAGE_ROOT}/$<CONFIG>"
+        QUEMUSIC_TEST_BUILD_KEY="$<IF:$<CONFIG:Debug>,Debug,Release>"
     )
     target_link_libraries(quemusic_plugin_manager_test PRIVATE
         quemusic_plugin_core
         Qt6::Test
     )
-    add_dependencies(quemusic_plugin_manager_test quemusic_test_source)
+    add_dependencies(quemusic_plugin_manager_test
+        quemusic_fake_v2_source_fixture
+        quemusic_fake_v2_wrong_contract_fixture
+    )
     add_test(NAME quemusic_plugin_manager_test COMMAND quemusic_plugin_manager_test)
+    add_test(NAME quemusic_plugin_v2_fixture_package_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dpackage_dir=$<TARGET_FILE_DIR:quemusic_fake_v2_source_fixture>"
+            "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_fake_v2_source_fixture>"
+            "-Dbuild_config=$<CONFIG>"
+            "-Dexpected_architecture=${QUEMUSIC_TEST_ARCHITECTURE}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyV2FixturePackage.cmake"
+    )
+
+    qt_add_executable(quemusic_source_registry_v2_test
+        tests/tst_SourceRegistryV2.cpp
+    )
+    target_compile_features(quemusic_source_registry_v2_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_source_registry_v2_test PRIVATE
+        QUEMUSIC_TEST_REGISTRY_V2_PLUGIN_PACKAGE_DIR="${QUEMUSIC_REGISTRY_V2_PACKAGE_ROOT}/$<CONFIG>"
+        QUEMUSIC_TEST_REGISTRY_V2_SECOND_PLUGIN_PACKAGE_DIR="${QUEMUSIC_REGISTRY_V2_SECOND_PACKAGE_ROOT}/$<CONFIG>"
+        QUEMUSIC_TEST_REGISTRY_V2_MISMATCH_PLUGIN_PACKAGE_DIR="${QUEMUSIC_REGISTRY_V2_MISMATCH_PACKAGE_ROOT}/$<CONFIG>"
+    )
+    target_link_libraries(quemusic_source_registry_v2_test PRIVATE
+        quemusic_source_registry
+        Qt6::Test
+    )
+    add_dependencies(quemusic_source_registry_v2_test
+        quemusic_source_registry_v2_fixture
+        quemusic_source_registry_v2_secondary_fixture
+        quemusic_source_registry_v2_mismatch_fixture
+    )
+    add_test(NAME quemusic_source_registry_v2_test COMMAND quemusic_source_registry_v2_test)
+
+    qt_add_executable(quemusic_plugin_settings_qml_test
+        tests/tst_PluginSettingsQml.cpp
+    )
+    target_compile_features(quemusic_plugin_settings_qml_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_plugin_settings_qml_test PRIVATE
+        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    qt_add_resources(quemusic_plugin_settings_qml_test "quemusic_plugin_settings_qml_test_qml"
+        PREFIX "/QueMusic"
+        FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js
+    )
+    target_link_libraries(quemusic_plugin_settings_qml_test PRIVATE
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::Test
+    )
+    add_test(NAME quemusic_plugin_settings_qml_test COMMAND quemusic_plugin_settings_qml_test)
+    set_tests_properties(quemusic_plugin_settings_qml_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 endif()
 
 qt_add_executable(${PROJECT_NAME}
@@ -470,9 +975,6 @@ set_source_files_properties(
     components/Options.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
-file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS "components/*.qml")
-
-
 qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
     URI QueMusic
     VERSION 1.0
@@ -490,6 +992,7 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
         pages/DownloadPage.qml
         pages/SearchPage.qml
         api/qrcode.js
+        components/PluginSettingsText.js
         ${QML_COMPONENTS}
 
     RESOURCES
@@ -540,12 +1043,12 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
         cpp/CustomFlow.h
         cpp/WindowsSmtcManager.cpp
         cpp/WindowsSmtcManager.h
+        core/logging/RuntimeLoggingPolicy.cpp
+        core/logging/RuntimeLoggingPolicy.h
         cpp/LogManager.cpp
         cpp/LogManager.h
         api/MusicApiService.cpp
         api/MusicApiService.h
-        api/OnlineListModel.cpp
-        api/OnlineListModel.h
         api/NeteaseCloudApi.cpp
         api/NeteaseCloudApi.h
         api/KugouApi.cpp
@@ -587,7 +1090,14 @@ target_link_libraries(${PROJECT_NAME}
         cryptopp::cryptopp
         quemusic_meshgradientplugin
         quemusic_source_startup
+        quemusic_source_account_store
+        quemusic_source_registry
+        quemusic_music_hub
+        quemusic_original_ui_music_adapter
+        quemusic_playback_coordinator
+        quemusic_qt_playback_controller
         z
+        quemusic_plugin_settings
     PUBLIC QWindowKit::Quick
 )
 # Windows SMTC 互操作使用 RoGetActivationFactory / RoActivateInstance，需要 runtimeobject 导入库；

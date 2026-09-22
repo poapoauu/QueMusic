@@ -3,7 +3,6 @@
 //
 import QtQuick
 import QtQuick.Window
-import QueMusic 1.0
 import QtCore
 import QtMultimedia
 import QWindowKit 1.0
@@ -16,6 +15,12 @@ import QtQuick.Controls.Basic
 
 Window {
     id: window
+    property var musicAdapter: originalUiMusic
+    property var playbackAdapter: securePlaybackControls
+    readonly property bool securePlaybackActive: playbackCoordinator
+        && playbackCoordinator.queue.length > 0
+    readonly property bool securePlaybackCurrent: securePlaybackActive
+        && playbackCoordinator.currentIndex >= 0
     width: 1140
     height: 720
     minimumWidth: 810
@@ -54,7 +59,22 @@ Window {
     property string version: "Beta-0.4.1"
     property int versionCode: 41
 
+    PlaybackControlsAdapter {
+        id: securePlaybackControls
+        controller: playbackController
+    }
+
     property string localLyricsRequestPath: ""
+
+    function openNavidromeAccountEditor() {
+        settingsView.openNavidromeAccountWhenLoaded = true;
+        settingsView.active = true;
+        if (settingsView.item) {
+            settingsView.visible = true;
+            settingsView.item.editNavidromeAccount(null);
+            settingsView.openNavidromeAccountWhenLoaded = false;
+        }
+    }
 
     Connections {
         target: MusicApi
@@ -103,6 +123,39 @@ Window {
         }
         mainMedia.source = path;
         mainMedia.play();
+    }
+
+    function copyQueueEntry(entry) {
+        return legacyQueueController.copyQueueEntry(entry);
+    }
+
+    function playQueueEntry(index) {
+        legacyQueueController.playQueueEntry(index);
+    }
+
+    function togglePlayback() {
+        if (securePlaybackActive) {
+            if (!securePlaybackCurrent)
+                return;
+            if (playbackAdapter.playing)
+                playbackAdapter.pause();
+            else
+                playbackAdapter.play();
+            return;
+        }
+        if (mainMedia.playing)
+            mainMedia.pause();
+        else
+            mainMedia.play();
+    }
+
+    function syncSecureCurrent() {
+        if (!securePlaybackCurrent)
+            return;
+        const item = playbackCoordinator.currentItem || {};
+        const artists = item.artists || [];
+        window.musicTitle = item.title || "QueMusic";
+        window.musicArtist = artists instanceof Array ? artists.join(", ") : (item.subtitle || "");
     }
 
     // 首次加载内容临时存储，防止重新加载浪费内存
@@ -157,12 +210,7 @@ Window {
         enabled: Options.settings.openShortCut
         onActivated: {
             console.log("shortcut--play")
-            if (mainMedia.playing === false) {
-                mainMedia.play();
-            }
-            else {
-                mainMedia.pause();
-            }
+            window.togglePlayback();
         }
     }
     Shortcut {
@@ -290,11 +338,15 @@ Window {
                         mainWarn.tiped("请输入文本>-<",0);
                         return;
                     }
-                    MusicApi.searchSongsResults.clear();
                     mainContent.contentIndexed(6);
                     Options.settings.searchList = Options.settings.searchList.filter(value => value !== mainSearchInput.text);
                     Options.settings.searchList.splice(0, 0, mainSearchInput.text);
-                    MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    if (window.musicAdapter)
+                        window.musicAdapter.search(mainSearchInput.text, 0);
+                    else {
+                        MusicApi.searchSongsResults.clear();
+                        MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    }
                     window.exitIndex = 1;
                     searchCard.close();
                 }
@@ -318,11 +370,15 @@ Window {
                         mainWarn.tiped("请输入文本>-<",0);
                         return;
                     }
-                    MusicApi.searchSongsResults.clear();
                     mainContent.contentIndexed(6);
                     Options.settings.searchList = Options.settings.searchList.filter(value => value !== mainSearchInput.text);
                     Options.settings.searchList.splice(0, 0, mainSearchInput.text);
-                    MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    if (window.musicAdapter)
+                        window.musicAdapter.search(mainSearchInput.text, 0);
+                    else {
+                        MusicApi.searchSongsResults.clear();
+                        MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    }
                     window.exitIndex = 1;
                     searchCard.close();
                 }
@@ -553,6 +609,12 @@ Window {
         LeftSideBar {
             z: 2
             id: sidebar
+            contentController: mainContent
+            windowObject: window
+            styleObject: Style
+            textFontFamily: textFont.name
+            iconFontFamily: iconFont.name
+            iconSource: "qrc:/QueMusic/resources/icon.ico"
             x: 0
             y: 0
             height: parent.height - 78
@@ -563,6 +625,8 @@ Window {
         MainContent {
             z: 1
             id: mainContent
+            musicAdapter: window.musicAdapter
+            playbackAdapter: window.playbackAdapter
             x: sidebar.width
             y: 0
             width: parent.width - x
@@ -728,12 +792,17 @@ Window {
         active: false
         visible: false
         z: 6
+        property bool openNavidromeAccountWhenLoaded: false
         source: "qrc:/QueMusic/SettingsView.qml"//"qrc:/QueMusic/SettingsView.qml"
         opacity: visible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 120 } }
         onLoaded: {
             visible = true;
             settingAnime.running = true;
+            if (openNavidromeAccountWhenLoaded) {
+                item.editNavidromeAccount(null);
+                openNavidromeAccountWhenLoaded = false;
+            }
         }
     }
 
@@ -854,6 +923,17 @@ Window {
         // C++ 下载/提示信号
         function onWarned(text,type) {
             mainWarn.tiped(text,type);
+        }
+    }
+
+    Connections {
+        target: playbackCoordinator
+        function onCurrentChanged() {
+            window.syncSecureCurrent();
+        }
+        function onPlaybackFailed(generation, messageKey) {
+            if (generation === playbackCoordinator.currentGeneration)
+                mainWarn.tiped(messageKey, 2);
         }
     }
 
@@ -1074,6 +1154,15 @@ Window {
     }
 
     // 播放列表
+    LegacyQueueController {
+        id: legacyQueueController
+        queueModel: playListModel
+        secureQueueModel: playbackCoordinator ? playbackCoordinator.queue : []
+        legacyPlayer: musicControlMin
+        playbackCoordinator: playbackCoordinator
+        useCoordinator: window.securePlaybackActive
+    }
+
     ListModel {
         id: playListModel
         property int playListIndex: -1
@@ -1083,13 +1172,17 @@ Window {
     SearchCard {
         id: searchCard
         onSearchIndex: (index) => {
-            MusicApi.searchSongsResults.clear();
             mainContent.contentIndexed(6);
             var name = Options.settings.searchList[index];
             mainSearchInput.text = name;
             Options.settings.searchList = Options.settings.searchList.filter(value => value !== name);
             Options.settings.searchList.splice(0, 0, name);
-            MusicApi.searchSongs(name,MusicApi.nowIndex,1,20);
+            if (window.musicAdapter)
+                window.musicAdapter.search(name, 0);
+            else {
+                MusicApi.searchSongsResults.clear();
+                MusicApi.searchSongs(name,MusicApi.nowIndex,1,20);
+            }
             window.exitIndex = 1;
             searchCard.close();
         }

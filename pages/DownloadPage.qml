@@ -12,6 +12,8 @@ Item {
     id: downloadPage
 
     property int downloadTab: 0
+    // Keep toolbar state local to this page; it must not reach into FavouritePage.
+    property int setMode: 0
 
     DownloadedMusicModel {
         id: downloadedModel
@@ -80,7 +82,7 @@ Item {
             height: 38
             text: "文件夹中显示"
             iconCharacter: "\uf0fb"
-            buttonColor: favouritePage.setMode === 1 ? Style.themes.containColor : Style.themes.fullColor
+            buttonColor: downloadPage.setMode === 1 ? Style.themes.containColor : Style.themes.fullColor
             onClicked: {
                 Qt.openUrlExternally(MusicApi.downloader.effectiveDownloadDir());
             }

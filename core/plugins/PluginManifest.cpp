@@ -15,7 +15,9 @@
 namespace {
 
 constexpr int hostPluginApiMajor = 1;
-constexpr auto sourceInterfaceId = "org.quemusic.MusicSourcePlugin/1.0";
+constexpr int sourceSdkV2Abi = 2;
+constexpr auto sourceInterfacePrefix = "org.quemusic.MusicSourcePlugin/";
+constexpr auto sourceV2InterfaceId = "org.quemusic.MusicSourcePlugin/2.0";
 
 PluginManifest invalidManifest(const QString &message, QString *error)
 {
@@ -25,20 +27,36 @@ PluginManifest invalidManifest(const QString &message, QString *error)
     return {};
 }
 
-bool hasSourceInterface(const QJsonValue &interfaces)
+QString parseSourceInterfaceId(const QJsonValue &interfaces, QString *error)
 {
     if (!interfaces.isArray()) {
-        return false;
+        *error = QStringLiteral("Manifest source plugin interfaces must be an array");
+        return {};
     }
 
+    QString recognizedInterface;
     for (const QJsonValue &interfaceValue : interfaces.toArray()) {
-        if (interfaceValue.isObject()
-            && interfaceValue.toObject().value(QStringLiteral("id")).toString()
-                   == QString::fromLatin1(sourceInterfaceId)) {
-            return true;
+        if (!interfaceValue.isObject()) {
+            continue;
         }
+        const QString id = interfaceValue.toObject().value(QStringLiteral("id")).toString();
+        if (!id.startsWith(QString::fromLatin1(sourceInterfacePrefix))) {
+            continue;
+        }
+        if (id != QString::fromLatin1(sourceV2InterfaceId)) {
+            *error = QStringLiteral("Manifest source plugin interface %1 is unsupported").arg(id);
+            return {};
+        }
+        if (!recognizedInterface.isEmpty()) {
+            *error = QStringLiteral("Manifest declares multiple source plugin interfaces");
+            return {};
+        }
+        recognizedInterface = id;
     }
-    return false;
+    if (recognizedInterface.isEmpty()) {
+        *error = QStringLiteral("Manifest is missing a supported source plugin interface");
+    }
+    return recognizedInterface;
 }
 
 bool isPackageRelativeLibraryPath(const QString &library)
@@ -69,6 +87,33 @@ bool jsonIntegerAtLeast(const QJsonValue &value, int minimum, int *result)
     return true;
 }
 
+}
+
+QString canonicalPluginArchitecture(const QString &architecture)
+{
+    const QString value = architecture.trimmed().toLower();
+    if (value == QStringLiteral("x86_64") || value == QStringLiteral("amd64")
+        || value == QStringLiteral("x64")) {
+        return QStringLiteral("x86_64");
+    }
+    if (value == QStringLiteral("arm64") || value == QStringLiteral("aarch64")) {
+        return QStringLiteral("arm64");
+    }
+    if (value == QStringLiteral("universal") || value == QStringLiteral("universal2")) {
+        return QStringLiteral("universal");
+    }
+    return {};
+}
+
+bool isPluginArchitectureCompatible(const QString &requiredArchitecture,
+                                    const QString &hostArchitecture)
+{
+    const QString required = canonicalPluginArchitecture(requiredArchitecture);
+    const QString host = canonicalPluginArchitecture(hostArchitecture);
+    if (required == QStringLiteral("universal")) {
+        return host == QStringLiteral("x86_64") || host == QStringLiteral("arm64");
+    }
+    return !required.isEmpty() && required == host;
 }
 
 PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *error)
@@ -107,6 +152,9 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     if (sourceId.isEmpty()) {
         return invalidManifest(QStringLiteral("Manifest source ID is empty"), error);
     }
+    if (sourceId.contains(QLatin1Char('/'))) {
+        return invalidManifest(QStringLiteral("Manifest source ID must not contain '/'"), error);
+    }
     if (object.value(QStringLiteral("runtime")).toString() != QStringLiteral("native-qt")) {
         return invalidManifest(QStringLiteral("Manifest runtime is not native-qt"), error);
     }
@@ -136,9 +184,14 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         return invalidManifest(QStringLiteral("Manifest plugin API minimum host minor is invalid"),
                                error);
     }
-    if (!hasSourceInterface(object.value(QStringLiteral("interfaces")))) {
-        return invalidManifest(QStringLiteral("Manifest is missing the source plugin interface"), error);
+    QString interfaceError;
+    const QString sourceInterface =
+        parseSourceInterfaceId(object.value(QStringLiteral("interfaces")), &interfaceError);
+    if (sourceInterface.isEmpty()) {
+        return invalidManifest(interfaceError, error);
     }
+
+    const int interfaceAbi = sourceSdkV2Abi;
 
     const QFileInfo packageRootInfo(QFileInfo(manifestPath).absolutePath());
     const QFileInfo libraryInfo(
@@ -150,6 +203,83 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         return invalidManifest(QStringLiteral("Manifest library escapes package directory"), error);
     }
 
+    const QJsonValue runtimeRequirementsValue =
+        object.value(QStringLiteral("runtimeRequirements"));
+    if (interfaceAbi == sourceSdkV2Abi && !runtimeRequirementsValue.isObject()) {
+        return invalidManifest(QStringLiteral("Manifest v2 runtime requirements are required"),
+                               error);
+    }
+
+    int sourceSdkAbi = sourceSdkV2Abi;
+    int requiredQtMajor = 0;
+    QString requiredArchitecture;
+    QString requiredBuildKey;
+    if (!runtimeRequirementsValue.isUndefined()) {
+        if (!runtimeRequirementsValue.isObject()) {
+            return invalidManifest(QStringLiteral("Manifest runtime requirements must be an object"),
+                                   error);
+        }
+        const QJsonObject runtimeRequirements = runtimeRequirementsValue.toObject();
+
+        const QJsonValue sourceSdkAbiValue =
+            runtimeRequirements.value(QStringLiteral("sourceSdkAbi"));
+        if (sourceSdkAbiValue.isUndefined()) {
+            return invalidManifest(QStringLiteral("Manifest v2 source SDK ABI is required"),
+                                   error);
+        } else if (!jsonIntegerAtLeast(sourceSdkAbiValue, 1, &sourceSdkAbi)) {
+            return invalidManifest(QStringLiteral("Manifest source SDK ABI is invalid"), error);
+        }
+        if (sourceSdkAbi != sourceSdkV2Abi) {
+            return invalidManifest(QStringLiteral("Manifest source SDK ABI is unsupported"), error);
+        }
+        if (sourceSdkAbi != interfaceAbi) {
+            return invalidManifest(
+                QStringLiteral("Manifest source SDK ABI does not match source plugin interface"),
+                error);
+        }
+
+        const QJsonValue qtMajor = runtimeRequirements.value(QStringLiteral("qtMajor"));
+        if (qtMajor.isUndefined()) {
+            return invalidManifest(QStringLiteral("Manifest v2 runtime requirement qtMajor is required"),
+                                   error);
+        }
+        if (!qtMajor.isUndefined() && !jsonIntegerAtLeast(qtMajor, 1, &requiredQtMajor)) {
+            return invalidManifest(QStringLiteral("Manifest required Qt major is invalid"), error);
+        }
+        const QJsonValue architecture =
+            runtimeRequirements.value(QStringLiteral("architecture"));
+        if (architecture.isUndefined()) {
+            return invalidManifest(
+                QStringLiteral("Manifest v2 runtime requirement architecture is required"), error);
+        }
+        if (!architecture.isUndefined()
+            && (!architecture.isString() || architecture.toString().isEmpty())) {
+            return invalidManifest(QStringLiteral("Manifest required architecture is invalid"),
+                                   error);
+        }
+        QJsonValue buildKey = runtimeRequirements.value(QStringLiteral("buildKey"));
+        if (buildKey.isUndefined()) {
+            return invalidManifest(QStringLiteral("Manifest v2 runtime requirement buildKey is required"),
+                                   error);
+        }
+        if (!buildKey.isUndefined()
+            && (!buildKey.isString() || buildKey.toString().isEmpty())) {
+            return invalidManifest(QStringLiteral("Manifest required build key is invalid"), error);
+        }
+        if (!architecture.isUndefined()) {
+            requiredArchitecture = canonicalPluginArchitecture(architecture.toString());
+            if (requiredArchitecture.isEmpty()) {
+                return invalidManifest(
+                    QStringLiteral("Manifest required architecture %1 is unsupported")
+                        .arg(architecture.toString()),
+                    error);
+            }
+        }
+        requiredBuildKey = buildKey.toString();
+    } else {
+        return invalidManifest(QStringLiteral("Manifest source SDK ABI is missing"), error);
+    }
+
     PluginManifest manifest;
     manifest.m_valid = true;
     manifest.m_id = id;
@@ -159,35 +289,11 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     manifest.m_category = PluginCategory::Source;
     manifest.m_libraryAbsolutePath = libraryPath;
     manifest.m_minimumHostPluginApiMinor = minimumHostMinor;
-
-    const QJsonValue runtimeRequirementsValue =
-        object.value(QStringLiteral("runtimeRequirements"));
-    if (!runtimeRequirementsValue.isUndefined()) {
-        if (!runtimeRequirementsValue.isObject()) {
-            return invalidManifest(QStringLiteral("Manifest runtime requirements must be an object"),
-                                   error);
-        }
-        const QJsonObject runtimeRequirements = runtimeRequirementsValue.toObject();
-        const QJsonValue qtMajor = runtimeRequirements.value(QStringLiteral("qtMajor"));
-        if (!qtMajor.isUndefined()
-            && !jsonIntegerAtLeast(qtMajor, 1, &manifest.m_requiredQtMajor)) {
-            return invalidManifest(QStringLiteral("Manifest required Qt major is invalid"), error);
-        }
-        const QJsonValue architecture =
-            runtimeRequirements.value(QStringLiteral("architecture"));
-        if (!architecture.isUndefined()
-            && (!architecture.isString() || architecture.toString().isEmpty())) {
-            return invalidManifest(QStringLiteral("Manifest required architecture is invalid"),
-                                   error);
-        }
-        const QJsonValue buildMode = runtimeRequirements.value(QStringLiteral("buildMode"));
-        if (!buildMode.isUndefined()
-            && (!buildMode.isString() || buildMode.toString().isEmpty())) {
-            return invalidManifest(QStringLiteral("Manifest required build mode is invalid"), error);
-        }
-        manifest.m_requiredArchitecture = architecture.toString();
-        manifest.m_requiredBuildMode = buildMode.toString();
-    }
+    manifest.m_sourceSdkAbi = sourceSdkAbi;
+    manifest.m_sourceInterfaceId = sourceInterface;
+    manifest.m_requiredQtMajor = requiredQtMajor;
+    manifest.m_requiredArchitecture = requiredArchitecture;
+    manifest.m_requiredBuildKey = requiredBuildKey;
     return manifest;
 }
 
@@ -236,12 +342,22 @@ int PluginManifest::requiredQtMajor() const
     return m_requiredQtMajor;
 }
 
+int PluginManifest::sourceSdkAbi() const
+{
+    return m_sourceSdkAbi;
+}
+
+QString PluginManifest::sourceInterfaceId() const
+{
+    return m_sourceInterfaceId;
+}
+
 QString PluginManifest::requiredArchitecture() const
 {
     return m_requiredArchitecture;
 }
 
-QString PluginManifest::requiredBuildMode() const
+QString PluginManifest::requiredBuildKey() const
 {
-    return m_requiredBuildMode;
+    return m_requiredBuildKey;
 }

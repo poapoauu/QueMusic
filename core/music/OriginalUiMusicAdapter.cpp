@@ -1,0 +1,369 @@
+#include "OriginalUiMusicAdapter.h"
+
+#include "MusicHub.h"
+#include "MusicPageModel.h"
+#include "PlaybackCoordinator.h"
+#include "OnlineListModel.h"
+
+#include <QRegularExpression>
+
+namespace {
+
+QString artistName(const QVariantMap &item)
+{
+    const QStringList artists = item.value(QStringLiteral("artists")).toStringList();
+    return artists.join(QStringLiteral(", "));
+}
+
+QString safeReasonKey(const QVariant &value)
+{
+    const QString key = value.toString();
+    static const QRegularExpression pattern(QStringLiteral("^[A-Za-z][A-Za-z0-9_.-]{0,127}$"));
+    return pattern.match(key).hasMatch() ? key : QStringLiteral("music.actionUnavailable");
+}
+
+QVariantMap unavailable(const QString &reason = QStringLiteral("music.actionUnavailable"))
+{
+    return {{QStringLiteral("enabled"), false}, {QStringLiteral("reasonKey"), reason}};
+}
+
+QVariantMap actionCapability(const QVariantMap &item, SourceActionV2 action)
+{
+    const QVariantMap actions = item.value(QStringLiteral("availableActions")).toMap();
+    const QVariantMap value = actions.value(QString::number(int(action))).toMap();
+    if (value.value(QStringLiteral("state")).toInt() != int(AvailabilityV2::Available))
+        return unavailable(safeReasonKey(value.value(QStringLiteral("reasonKey"))));
+    return {{QStringLiteral("enabled"), true}, {QStringLiteral("reasonKey"), QString{}}};
+}
+
+QVariantMap browseCapability(const QVariantMap &item)
+{
+    const QVariant entityValue = item.value(QStringLiteral("ref")).toMap()
+        .value(QStringLiteral("entityType"));
+    const int entityType = entityValue.isValid() ? entityValue.toInt() : -1;
+    const bool supported = entityType == int(MediaEntityTypeV2::Album)
+        || entityType == int(MediaEntityTypeV2::Artist)
+        || entityType == int(MediaEntityTypeV2::Playlist)
+        || entityType == int(MediaEntityTypeV2::Genre);
+    return supported ? QVariantMap{{QStringLiteral("enabled"), true},
+                                   {QStringLiteral("reasonKey"), QString{}}}
+                     : unavailable(QStringLiteral("music.browseUnsupported"));
+}
+
+QVariantMap sectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds)
+{
+    if (!model) return {};
+    for (int i = 0; i < model->rowCount(); ++i) {
+        const auto index = model->index(i);
+        if (!kinds.contains(model->section(i).kind)) continue;
+        return {{QStringLiteral("sectionId"), model->data(index, MusicPageModel::SectionIdRole)},
+                {QStringLiteral("hasMore"), model->data(index, MusicPageModel::HasMoreRole)},
+                {QStringLiteral("loadingMore"), model->data(index, MusicPageModel::LoadingMoreRole)},
+                {QStringLiteral("error"), model->data(index, MusicPageModel::ErrorRole)}};
+    }
+    return {};
+}
+
+} // namespace
+
+OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinator *playback,
+                                               QObject *parent)
+    : QObject(parent), m_hub(hub), m_playback(playback),
+      m_recommendSongs(new OnlineListModel(this)), m_categoryItems(new OnlineListModel(this)),
+      m_favoriteSongs(new OnlineListModel(this)), m_favoriteLists(new OnlineListModel(this)),
+      m_searchSongs(new OnlineListModel(this)), m_searchLists(new OnlineListModel(this)),
+      m_searchAlbums(new OnlineListModel(this)), m_searchLyrics(new OnlineListModel(this))
+{
+    if (!m_hub) return;
+    const auto observe = [this](MusicPageModel *model) {
+        connect(model, &QAbstractItemModel::modelReset, this, &OriginalUiMusicAdapter::rebuild);
+        connect(model, &QAbstractItemModel::rowsInserted, this, [this] { rebuild(); });
+        connect(model, &QAbstractItemModel::rowsRemoved, this, [this] { rebuild(); });
+        connect(model, &QAbstractItemModel::dataChanged, this, [this] { rebuild(); });
+    };
+    observe(m_hub->recommendation());
+    observe(m_hub->category());
+    observe(m_hub->favorites());
+    observe(m_hub->searchResults());
+    connect(m_hub, &MusicHub::sourceOptionsChanged, this, &OriginalUiMusicAdapter::sourceOptionsChanged);
+    connect(m_hub, &MusicHub::selectedSourceInstanceIdChanged,
+            this, &OriginalUiMusicAdapter::selectedSourceInstanceIdChanged);
+    connect(m_hub, &QObject::destroyed, this, [this] {
+        m_hub = nullptr;
+        clearPresentationState();
+        emit sourceOptionsChanged();
+        emit selectedSourceInstanceIdChanged();
+    });
+    rebuild();
+}
+
+OnlineListModel *OriginalUiMusicAdapter::recommendSongs() const { return m_recommendSongs; }
+OnlineListModel *OriginalUiMusicAdapter::categoryItems() const { return m_categoryItems; }
+OnlineListModel *OriginalUiMusicAdapter::favoriteSongs() const { return m_favoriteSongs; }
+OnlineListModel *OriginalUiMusicAdapter::favoriteLists() const { return m_favoriteLists; }
+OnlineListModel *OriginalUiMusicAdapter::searchSongs() const { return m_searchSongs; }
+OnlineListModel *OriginalUiMusicAdapter::searchLists() const { return m_searchLists; }
+OnlineListModel *OriginalUiMusicAdapter::searchAlbums() const { return m_searchAlbums; }
+OnlineListModel *OriginalUiMusicAdapter::searchLyrics() const { return m_searchLyrics; }
+QVariantList OriginalUiMusicAdapter::sourceOptions() const { return m_hub ? m_hub->sourceOptions() : QVariantList{}; }
+QString OriginalUiMusicAdapter::selectedSourceInstanceId() const
+{
+    return m_hub ? m_hub->selectedSourceInstanceId() : QString{};
+}
+void OriginalUiMusicAdapter::setSelectedSourceInstanceId(const QString &id)
+{
+    if (m_hub) m_hub->setSelectedSourceInstanceId(id);
+}
+
+void OriginalUiMusicAdapter::activatePage(int pageKind)
+{
+    if (m_hub) m_hub->activatePage(pageKind);
+}
+
+void OriginalUiMusicAdapter::search(const QString &text, int searchTab)
+{
+    if (m_hub) m_hub->search(text, searchTab);
+}
+
+QVariantMap OriginalUiMusicAdapter::capabilities(const QVariant &rows) const
+{
+    QVariantList values;
+    if (rows.metaType().id() == QMetaType::QVariantMap)
+        values.append(rows);
+    else if (rows.metaType().id() == QMetaType::QVariantList)
+        values = rows.toList();
+    return capabilitiesFor(values);
+}
+
+void OriginalUiMusicAdapter::loadMore(int pageKind, const QString &sectionId)
+{
+    if (m_hub) m_hub->loadMore(pageKind, sectionId);
+}
+
+void OriginalUiMusicAdapter::retry(int pageKind, const QString &sectionId)
+{
+    if (m_hub) m_hub->retrySection(pageKind, sectionId);
+}
+
+QVariantMap OriginalUiMusicAdapter::resolvePresentationItem(const QVariantMap &row) const
+{
+    bool ok = false;
+    const quint64 key = row.value(QStringLiteral("_adapterKey")).toULongLong(&ok);
+    return ok ? m_fullItems.value(key) : QVariantMap{};
+}
+
+bool OriginalUiMusicAdapter::browse(const QVariantMap &row)
+{
+    const QVariantMap item = resolvePresentationItem(row);
+    return m_hub && !item.isEmpty() && permits(item, QStringLiteral("canBrowse"))
+        && m_hub->browse(item);
+}
+
+QUuid OriginalUiMusicAdapter::play(const QVariantMap &row)
+{
+    const QVariantMap item = resolvePresentationItem(row);
+    return m_playback && !item.isEmpty() && permits(item, QStringLiteral("canPlay"))
+        ? m_playback->play(item) : QUuid{};
+}
+
+QUuid OriginalUiMusicAdapter::enqueue(const QVariantMap &row)
+{
+    const QVariantMap item = resolvePresentationItem(row);
+    return m_playback && !item.isEmpty() && permits(item, QStringLiteral("canEnqueue"))
+        ? m_playback->enqueue(item) : QUuid{};
+}
+
+QUuid OriginalUiMusicAdapter::setFavorite(const QVariantMap &row, bool favorite)
+{
+    const QVariantMap item = resolvePresentationItem(row);
+    return m_hub && m_hub->actions() && !item.isEmpty()
+        && permits(item, favorite ? QStringLiteral("canFavorite") : QStringLiteral("canUnfavorite"))
+        ? m_hub->actions()->setFavorite(item, favorite) : QUuid{};
+}
+
+QVariantMap OriginalUiMusicAdapter::capabilitiesForItem(const QVariantMap &item) const
+{
+    const auto browse = browseCapability(item);
+    const auto play = actionCapability(item, SourceActionV2::Play);
+    const auto favorite = actionCapability(item, SourceActionV2::Favorite);
+    const auto unfavorite = actionCapability(item, SourceActionV2::Unfavorite);
+    return {{QStringLiteral("canBrowse"), browse.value(QStringLiteral("enabled"))},
+            {QStringLiteral("browseReasonKey"), browse.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canPlay"), play.value(QStringLiteral("enabled"))},
+            {QStringLiteral("playReasonKey"), play.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canEnqueue"), play.value(QStringLiteral("enabled"))},
+            {QStringLiteral("enqueueReasonKey"), play.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canFavorite"), favorite.value(QStringLiteral("enabled"))},
+            {QStringLiteral("favoriteReasonKey"), favorite.value(QStringLiteral("reasonKey"))},
+            {QStringLiteral("canUnfavorite"), unfavorite.value(QStringLiteral("enabled"))},
+            {QStringLiteral("unfavoriteReasonKey"), unfavorite.value(QStringLiteral("reasonKey"))}};
+}
+
+QVariantMap OriginalUiMusicAdapter::capabilitiesFor(const QVariantList &rows) const
+{
+    const QStringList names{QStringLiteral("Browse"), QStringLiteral("Play"),
+                            QStringLiteral("Enqueue"), QStringLiteral("Favorite"),
+                            QStringLiteral("Unfavorite")};
+    QVariantMap result;
+    for (const QString &name : names) {
+        result.insert(QStringLiteral("can") + name, false);
+        result.insert(name.left(1).toLower() + name.mid(1) + QStringLiteral("ReasonKey"),
+                      QStringLiteral("music.actionInvalidItem"));
+    }
+    if (rows.isEmpty()) return result;
+
+    bool first = true;
+    for (const QVariant &value : rows) {
+        if (value.metaType().id() != QMetaType::QVariantMap) return result;
+        const QVariantMap item = resolvePresentationItem(value.toMap());
+        if (item.isEmpty()) return result;
+        const QVariantMap itemCapabilities = capabilitiesForItem(item);
+        for (const QString &name : names) {
+            const QString enabled = QStringLiteral("can") + name;
+            const QString reason = name.left(1).toLower() + name.mid(1) + QStringLiteral("ReasonKey");
+            if (first) {
+                result.insert(enabled, itemCapabilities.value(enabled));
+                result.insert(reason, itemCapabilities.value(reason));
+            } else if (!itemCapabilities.value(enabled).toBool()) {
+                result.insert(enabled, false);
+                result.insert(reason, itemCapabilities.value(reason));
+            }
+        }
+        first = false;
+    }
+    return result;
+}
+
+bool OriginalUiMusicAdapter::permits(const QVariantMap &item, const QString &capability) const
+{
+    return capabilitiesForItem(item).value(capability).toBool();
+}
+
+QVariantMap OriginalUiMusicAdapter::presentationItem(const QVariantMap &full,
+                                                      const QVariantMap &sectionState)
+{
+    const QVariantMap ref = full.value(QStringLiteral("ref")).toMap();
+    const quint64 key = m_nextAdapterKey++;
+    m_fullItems.insert(key, full);
+    return {{QStringLiteral("title"), full.value(QStringLiteral("title")).toString()},
+            {QStringLiteral("artist"), artistName(full)},
+            {QStringLiteral("album"), full.value(QStringLiteral("album")).toString()},
+            {QStringLiteral("cover"), full.value(QStringLiteral("artworkId")).toString()},
+            {QStringLiteral("duration"), full.value(QStringLiteral("durationMs"))},
+            {QStringLiteral("source"), ref.value(QStringLiteral("sourcePluginId")).toString()},
+            {QStringLiteral("entityType"), ref.value(QStringLiteral("entityType"))},
+            {QStringLiteral("subtitle"), full.value(QStringLiteral("subtitle")).toString()},
+            {QStringLiteral("sectionId"), sectionState.value(QStringLiteral("sectionId"))},
+            {QStringLiteral("hasMore"), sectionState.value(QStringLiteral("hasMore"))},
+            {QStringLiteral("loadingMore"), sectionState.value(QStringLiteral("loadingMore"))},
+            {QStringLiteral("error"), sectionState.value(QStringLiteral("error"))},
+            {QStringLiteral("_adapterKey"), QVariant::fromValue<qulonglong>(key)}};
+}
+
+void OriginalUiMusicAdapter::clearPresentationState()
+{
+    m_fullItems.clear();
+    m_recommendSongs->setItems({});
+    m_categoryItems->setItems({});
+    m_favoriteSongs->setItems({});
+    m_favoriteLists->setItems({});
+    m_searchSongs->setItems({});
+    m_searchLists->setItems({});
+    m_searchAlbums->setItems({});
+    m_searchLyrics->setItems({});
+    for (OnlineListModel *model : {m_recommendSongs, m_categoryItems, m_favoriteSongs,
+                                   m_favoriteLists, m_searchSongs, m_searchLists,
+                                   m_searchAlbums, m_searchLyrics})
+        model->setPresentationState({});
+}
+
+void OriginalUiMusicAdapter::rebuild()
+{
+    QVariantList recommendations;
+    QVariantList category;
+    QVariantList favoriteSongs;
+    QVariantList favoriteLists;
+    QVariantList searchSongs;
+    QVariantList searchLists;
+    QVariantList searchAlbums;
+    QVariantList searchLyrics;
+    m_fullItems.clear();
+
+    const auto append = [this](MusicPageModel *model, QVariantList *target,
+                               QVariantList *tracks = nullptr, QVariantList *playlists = nullptr) {
+        for (int section = 0; section < model->rowCount(); ++section) {
+            const auto items = model->data(model->index(section), MusicPageModel::ItemsRole).toList();
+            const auto sectionIndex = model->index(section);
+            const QVariantMap sectionState{
+                {QStringLiteral("sectionId"), model->data(sectionIndex, MusicPageModel::SectionIdRole)},
+                {QStringLiteral("hasMore"), model->data(sectionIndex, MusicPageModel::HasMoreRole)},
+                {QStringLiteral("loadingMore"), model->data(sectionIndex, MusicPageModel::LoadingMoreRole)},
+                {QStringLiteral("error"), model->data(sectionIndex, MusicPageModel::ErrorRole)}};
+            for (int index = 0; index < items.size(); ++index) {
+                const QVariantMap full = model->itemAt(section, index);
+                const int entityType = full.value(QStringLiteral("ref")).toMap()
+                    .value(QStringLiteral("entityType")).toInt();
+                if (tracks || playlists) {
+                    if (entityType == int(MediaEntityTypeV2::Track)) tracks->append(presentationItem(full, sectionState));
+                    else if (entityType == int(MediaEntityTypeV2::Playlist)) playlists->append(presentationItem(full, sectionState));
+                } else target->append(presentationItem(full, sectionState));
+            }
+        }
+    };
+
+    if (m_hub) {
+        append(m_hub->recommendation(), &recommendations);
+        append(m_hub->category(), &category);
+        append(m_hub->favorites(), nullptr, &favoriteSongs, &favoriteLists);
+        for (int section = 0; section < m_hub->searchResults()->rowCount(); ++section) {
+            auto *model = m_hub->searchResults();
+            const auto sectionIndex = model->index(section);
+            const QVariantMap sectionState{
+                {QStringLiteral("sectionId"), model->data(sectionIndex, MusicPageModel::SectionIdRole)},
+                {QStringLiteral("hasMore"), model->data(sectionIndex, MusicPageModel::HasMoreRole)},
+                {QStringLiteral("loadingMore"), model->data(sectionIndex, MusicPageModel::LoadingMoreRole)},
+                {QStringLiteral("error"), model->data(sectionIndex, MusicPageModel::ErrorRole)}};
+            const auto items = model->data(sectionIndex, MusicPageModel::ItemsRole).toList();
+            for (int index = 0; index < items.size(); ++index) {
+                const QVariantMap full = model->itemAt(section, index);
+                switch (full.value(QStringLiteral("ref")).toMap()
+                            .value(QStringLiteral("entityType")).toInt()) {
+                case int(MediaEntityTypeV2::Track):
+                    searchSongs.append(presentationItem(full, sectionState));
+                    searchLyrics.append(presentationItem(full, sectionState));
+                    break;
+                case int(MediaEntityTypeV2::Playlist):
+                    searchLists.append(presentationItem(full, sectionState));
+                    break;
+                case int(MediaEntityTypeV2::Album):
+                    searchAlbums.append(presentationItem(full, sectionState));
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+    m_recommendSongs->setItems(recommendations);
+    m_categoryItems->setItems(category);
+    m_favoriteSongs->setItems(favoriteSongs);
+    m_favoriteLists->setItems(favoriteLists);
+    m_searchSongs->setItems(searchSongs);
+    m_searchLists->setItems(searchLists);
+    m_searchAlbums->setItems(searchAlbums);
+    m_searchLyrics->setItems(searchLyrics);
+    if (m_hub) {
+        m_recommendSongs->setPresentationState(sectionState(m_hub->recommendation(), {
+            PageSectionKindV2::RecentlyPlayed, PageSectionKindV2::FrequentlyPlayed,
+            PageSectionKindV2::HighestRated, PageSectionKindV2::Newest, PageSectionKindV2::Random}));
+        m_categoryItems->setPresentationState(sectionState(m_hub->category(), {
+            PageSectionKindV2::Genres, PageSectionKindV2::Artists,
+            PageSectionKindV2::Albums, PageSectionKindV2::Tracks}));
+        m_favoriteSongs->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::FavoriteTracks}));
+        m_favoriteLists->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::Playlists}));
+        m_searchSongs->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
+        m_searchLists->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Playlists}));
+        m_searchAlbums->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Albums}));
+        m_searchLyrics->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
+    }
+}

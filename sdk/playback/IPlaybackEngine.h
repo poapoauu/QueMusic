@@ -1,7 +1,6 @@
 #pragma once
 
 #include "PlaybackTypes.h"
-#include "SourceTypes.h"
 
 #include <QObject>
 
@@ -10,7 +9,7 @@ public:
     using QObject::QObject;
     ~IPlaybackEngine() override = default;
 
-    virtual void open(const StreamDescriptor &source) = 0;
+    virtual void open(const PlaybackStreamDescriptor &source) = 0;
     virtual void play() = 0;
     virtual void pause() = 0;
     virtual void stop() = 0;

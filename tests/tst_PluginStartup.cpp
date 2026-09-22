@@ -1,13 +1,21 @@
-#include "SourceManager.h"
 #include "SourceStartup.h"
 #include "PluginManager.h"
+#include "SourceAccountStore.h"
+#include "SourceRegistry.h"
+#include "MusicHub.h"
+#include "PlaybackCoordinator.h"
+#include "PluginSettingsController.h"
+#include "SourceScopeStore.h"
+#include "QtPlaybackController.h"
+#include "v2/IMusicSourcePluginV2.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
-#include <QSignalSpy>
 #include <QStandardPaths>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QTest>
 
 class PluginStartupTest : public QObject {
@@ -16,8 +24,6 @@ class PluginStartupTest : public QObject {
 private slots:
     void startupAddsApplicationAndUserPluginDirectories();
     void startupBoundaryKeepsEngineUsableWithoutRawQmlExposure();
-    void startupLoadsBuiltNavidromePlugin();
-    void sourceManagerCreatesNavidromeSessionAndDispatchesArtwork();
 };
 
 void PluginStartupTest::startupAddsApplicationAndUserPluginDirectories()
@@ -40,12 +46,28 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
     QCoreApplication::setOrganizationName(QStringLiteral("BroNekoX"));
     QCoreApplication::setApplicationName(QStringLiteral("QueMusic"));
 
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("accounts.ini")),
+                       QSettings::IniFormat);
+    UnavailableSecretStore secrets;
+    SourceAccountStore accounts(&settings, &secrets);
+    auto plugins = createAndLoadPluginManager(*QCoreApplication::instance());
+    QVERIFY(plugins);
+    const QString navidromePackage = QStringLiteral("org.quemusic.source.navidrome");
+    QCOMPARE(plugins->plugin(navidromePackage).state, PluginState::Loaded);
+    QVERIFY(qobject_cast<IMusicSourcePluginV2 *>(
+        plugins->pluginInstance(navidromePackage)));
+    SourceRegistry registry(plugins.get(), &accounts);
+    SourceScopeStore scope(&settings);
+    QtPlaybackController playbackController;
+    PlaybackCoordinator playback(&registry, &playbackController);
+    playbackController.setCoordinator(&playback);
+    MusicHub hub(&registry, &scope, &settings);
+    PluginSettingsController pluginSettings(plugins.get(), &registry, &accounts);
     QQmlApplicationEngine engine;
-    SourceManager *manager =
-        initializeSourceStartupBoundary(*QCoreApplication::instance(), engine);
-    QVERIFY(manager != nullptr);
-    QVERIFY(manager->pluginManager() != nullptr);
-    QCOMPARE(manager->parent(), QCoreApplication::instance());
+    installSourceRuntimeContext(engine, plugins.get(), &hub, &playback,
+                                &playbackController, &pluginSettings);
     const QStringList searchPaths = defaultSourcePluginSearchPaths(*QCoreApplication::instance());
     QCOMPARE(searchPaths.size(), 2);
 
@@ -54,51 +76,21 @@ void PluginStartupTest::startupBoundaryKeepsEngineUsableWithoutRawQmlExposure()
     QCOMPARE(engine.rootContext()->contextProperty(QStringLiteral("startupSentinel")).toString(),
              QStringLiteral("still-usable"));
     QCOMPARE(engine.rootContext()
-                 ->contextProperty(QStringLiteral("pluginManager"))
+             ->contextProperty(QStringLiteral("pluginManager"))
                  .value<QObject *>(),
-             manager->pluginManager());
+             plugins.get());
+    QVERIFY(engine.rootContext()->contextProperty(QStringLiteral("musicHub"))
+                .value<QObject *>());
+    QVERIFY(engine.rootContext()->contextProperty(QStringLiteral("playbackCoordinator"))
+                .value<QObject *>());
+    QCOMPARE(engine.rootContext()->contextProperty(QStringLiteral("playbackController"))
+                 .value<QObject *>(), static_cast<QObject *>(&playbackController));
+    QVERIFY(engine.rootContext()->contextProperty(QStringLiteral("pluginSettings"))
+                .value<QObject *>());
+    QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("mediaBridge")).isValid());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("sourceManager")).isValid());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("sourceSession")).isValid());
     QVERIFY(!engine.rootContext()->contextProperty(QStringLiteral("musicSourcePlugin")).isValid());
-}
-
-void PluginStartupTest::startupLoadsBuiltNavidromePlugin()
-{
-    PluginManager plugins;
-    SourceManager manager(&plugins);
-    const QString pluginDirectory =
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("../plugins"));
-    manager.addSearchPath(pluginDirectory);
-
-    QVERIFY(manager.loadAll() >= 1);
-    QVERIFY(manager.sourceIds().contains(QStringLiteral("navidrome")));
-}
-
-void PluginStartupTest::sourceManagerCreatesNavidromeSessionAndDispatchesArtwork()
-{
-    PluginManager plugins;
-    SourceManager manager(&plugins);
-    manager.addSearchPath(QDir(QCoreApplication::applicationDirPath())
-                              .filePath(QStringLiteral("../plugins")));
-    QCOMPARE(manager.loadAll(), 1);
-    const SourceAccount account{
-        QStringLiteral("navidrome"),
-        QStringLiteral("admin"),
-        QStringLiteral("Navidrome Admin"),
-        {{QStringLiteral("serverUrl"), QStringLiteral("http://example.invalid:8533")},
-         {QStringLiteral("username"), QStringLiteral("admin")}},
-        QByteArrayLiteral("test-password")};
-    IMusicSourceSession *session = manager.createSession(QStringLiteral("navidrome"), account, &manager);
-    QVERIFY(session != nullptr);
-    QSignalSpy succeeded(session, &IMusicSourceSession::requestSucceeded);
-
-    const QUuid requestId = manager.requestArtwork(
-        QStringLiteral("navidrome"), session,
-        {QStringLiteral("navidrome"), QStringLiteral("cover-1")});
-
-    QVERIFY(succeeded.wait(1000));
-    QCOMPARE(succeeded.constFirst().at(0).toUuid(), requestId);
-    QCOMPARE(succeeded.constFirst().at(1).toString(), QStringLiteral("fetchArtwork"));
 }
 
 QTEST_MAIN(PluginStartupTest)

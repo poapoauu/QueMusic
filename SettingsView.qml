@@ -17,6 +17,7 @@ Item {
     property bool kugouShowLogin: false
     property string neteaseLoginStatus: "等待登录…"
     property string kugouLoginStatus: "等待登录…"
+    property var sourceAccounts: mediaBridge ? mediaBridge.accountController : null
 
     // 登录成功自动收起面板
     Connections {
@@ -743,6 +744,106 @@ Item {
                                     mainWarn.tiped("目前无法使用", 0);
                                 }
                             }
+                        }
+                    }
+                }
+
+                QHead { text: "音乐源" }
+
+                Rectangle {
+                    width: settingStack.standWidth
+                    color: Style.themes.primaryColor
+                    radius: Style.settings.cubeRadius
+                    implicitHeight: sourceAccountColumn.implicitHeight + 24
+                    Column {
+                        id: sourceAccountColumn
+                        x: 16
+                        y: 12
+                        width: parent.width - 32
+                        spacing: 10
+                        Text {
+                            width: parent.width
+                            text: "Navidrome 账户的密码或令牌仅交给系统安全存储；这里不会显示或保存凭据。"
+                            wrapMode: Text.WordWrap
+                            color: Style.themes.textColor
+                            font.pixelSize: Style.settings.text
+                        }
+                        Text {
+                            width: parent.width
+                            text: "已加载来源"
+                            color: Style.themes.fontColor
+                            font.pixelSize: Style.settings.textmain
+                        }
+                        Repeater {
+                            model: sourceAccounts ? sourceAccounts.availableSources : []
+                            delegate: Text {
+                                required property var modelData
+                                width: parent.width
+                                text: modelData.name + " · " + modelData.id + " · v" + modelData.version
+                                color: Style.themes.textColor
+                                font.pixelSize: Style.settings.textTip
+                            }
+                        }
+                        Text {
+                            visible: sourceAccounts && sourceAccounts.availableSources.length === 0
+                            text: "尚未加载可用来源。"
+                            color: Style.themes.textColor
+                            font.pixelSize: Style.settings.textTip
+                        }
+                        Repeater {
+                            model: sourceAccounts ? sourceAccounts.accounts : []
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: sourceAccountColumn.width
+                                height: 54
+                                radius: Style.settings.labelRadius
+                                color: Style.themes.hoverColor
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.margins: 10
+                                    spacing: 10
+                                    Column {
+                                        width: parent.width - 210
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        Text {
+                                            width: parent.width
+                                            text: modelData.displayName + " · " + modelData.sourceId
+                                                + (modelData.enabled ? "" : "（已禁用）")
+                                            color: Style.themes.fontColor
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            width: parent.width
+                                            text: modelData.serverUrl + " · " + modelData.username
+                                            color: Style.themes.textColor
+                                            font.pixelSize: Style.settings.textTip
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    Switch {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        checked: modelData.enabled
+                                        onToggled: sourceAccounts.setAccountEnabled(modelData.accountId, checked)
+                                    }
+                                    Button {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "移除"
+                                        onClicked: sourceAccounts.removeAccount(modelData.accountId)
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            visible: sourceAccounts && sourceAccounts.accounts.length === 0
+                            text: "还没有已配置的音乐源。"
+                            color: Style.themes.textColor
+                        }
+                        Text {
+                            visible: sourceAccounts && sourceAccounts.lastError.length > 0
+                            text: sourceAccounts ? sourceAccounts.lastError : ""
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            color: "#d85a5a"
                         }
                     }
                 }
@@ -1762,201 +1863,16 @@ Item {
         }
 
         // 插件设置
-        Item {
+        PluginSettingsPanel {
             id: modset
             width: settingStack.width
             height: settingStack.height - 60
+            y: 60
             visible: false
-
-            Text {
-                x: 24 + settingStack.containX
-                y: 24
-                width: settingStack.standWidth
-                height: 36
-                color: Style.themes.fontColor
-                verticalAlignment: Text.AlignVCenter
-                text: "插件"
-                font.pixelSize: Style.settings.pageTitle
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: -0.3
-            }
-
-            QBlurTapBar {
-                x: 24 + settingStack.containX
-                y: 70
-                z: 5
-                model: ["外观类","功能类","音源"]
-                tabWidth: 100
-                width: 304
-                rectXy: Qt.rect(0, 10, width, 40)
-                blurSource: downloadChildPage
-                onTabChange: (index) => {
-                    downloadChildPage.stack(index)
-                }
-            }
-
-            Rectangle {
-                x: 24 + settingStack.containX
-                y: 124
-                width: settingStack.standWidth
-                height: warnModText.implicitHeight + 48
-                color: Style.themes.containColor
-                radius: Style.settings.cubeRadius
-                border.color: Style.themes.sideColor
-                border.width: 1
-                Text {
-                    x: 24
-                    y: 24
-                    font.family: iconFont.name
-                    height: warnModText.implicitHeight
-                    text: "\uf11a"
-                    color: Style.themes.themeColor
-                    font.pixelSize: Style.settings.texticon
-                }
-                Text {
-                    id: warnModText
-                    x: 48
-                    y: 24
-                    width: parent.width - 64
-                    text: "原生插件可从应用或用户插件目录发现。音源插件在没有活动会话时可热加载、卸载和重载。"
-                    wrapMode: Text.Wrap
-                    color: Style.themes.textColor
-                    font.bold: false
-                    font.pixelSize: Style.settings.textmain
-                }
-            }
-
-            QPages {
-                x: 24
-                y: 60
-                width: parent.width - 48
-                height: parent.height - 60
-                id: downloadChildPage
-                pageList: [uiMod,toolMod,musicMod]
-                Item {
-                    id: uiMod
-                    visible: true
-                    width: downloadChildPage.width
-                    height: downloadChildPage.height
-                    Text {
-                        anchors.fill: parent
-                        text: "外观类"
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: Text.AlignHCenter
-                        color: Style.themes.textColor
-                        font.pixelSize: 14
-                    }
-                }
-                Item {
-                    id: toolMod
-                    visible: false
-                    width: downloadChildPage.width
-                    height: downloadChildPage.height
-                    Text {
-                        anchors.fill: parent
-                        text: "功能类"
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: Text.AlignHCenter
-                        color: Style.themes.textColor
-                        font.pixelSize: 14
-                    }
-                }
-                Item {
-                    id: musicMod
-                    visible: false
-                    width: downloadChildPage.width
-                    height: downloadChildPage.height
-                    clip: true
-
-                    Column {
-                        anchors.fill: parent
-                        spacing: 12
-
-                        Row {
-                            spacing: 10
-                            Button {
-                                text: "发现插件"
-                                onClicked: pluginManager.discoverPlugins()
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "仅加载本地已安装且与当前 Qt 环境兼容的原生插件"
-                                color: Style.themes.textColor
-                                font.pixelSize: Style.settings.textmain
-                            }
-                        }
-
-                        Text {
-                            visible: pluginManager.plugins.length === 0
-                            width: parent.width
-                            text: "未发现音源插件"
-                            color: Style.themes.textColor
-                            horizontalAlignment: Text.AlignHCenter
-                            font.pixelSize: Style.settings.textmain
-                        }
-
-                        Repeater {
-                            model: pluginManager.plugins
-
-                            delegate: Rectangle {
-                                required property var modelData
-                                width: musicMod.width
-                                height: 82
-                                radius: Style.settings.cubeRadius
-                                color: Style.themes.containColor
-                                border.color: Style.themes.sideColor
-                                border.width: 1
-
-                                Column {
-                                    x: 16
-                                    y: 12
-                                    width: parent.width - 32
-                                    spacing: 4
-                                    Text {
-                                        text: modelData.name + " · " + modelData.version
-                                        color: Style.themes.fontColor
-                                        font.pixelSize: Style.settings.textmain
-                                    }
-                                    Text {
-                                        text: "状态：" + modelData.state
-                                              + (modelData.activeLeases > 0
-                                                 ? "（使用中：" + modelData.activeLeases + "）" : "")
-                                              + (modelData.error ? " · " + modelData.error : "")
-                                        color: Style.themes.textColor
-                                        font.pixelSize: 12
-                                        elide: Text.ElideRight
-                                        width: parent.width
-                                    }
-                                }
-
-                                Row {
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: 14
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 8
-                                    Button {
-                                        text: "加载"
-                                        visible: modelData.loadable
-                                        onClicked: pluginManager.loadPlugin(modelData.id)
-                                    }
-                                    Button {
-                                        text: modelData.state === "failed" ? "重试卸载" : "卸载"
-                                        visible: modelData.state === "loaded"
-                                                 || modelData.unloadable
-                                        enabled: modelData.unloadable
-                                        onClicked: pluginManager.unloadPlugin(modelData.id)
-                                    }
-                                    Button {
-                                        text: "重载"
-                                        enabled: modelData.reloadable
-                                        onClicked: pluginManager.reloadPlugin(modelData.id)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            containX: settingStack.containX
+            standWidth: settingStack.standWidth
+            controller: typeof pluginSettings !== "undefined"
+                        ? pluginSettings : null
         }
 
         // 关于页面

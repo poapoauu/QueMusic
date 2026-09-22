@@ -135,16 +135,29 @@ Expected: all statements are backed by commands run in this plan; unknown values
 - Consumes: clean isolated source tree from Task 1
 - Produces: reproducible build artifacts and measured toolchain/configuration evidence
 
+- [ ] **Step 0: Initialize pinned Git submodules in the isolated worktree**
+
+Run:
+
+```bash
+git submodule update --init --recursive
+git submodule status --recursive
+```
+
+Expected: every required submodule is checked out at the commit pinned by the superproject; no status line begins with `-` or `+`.
+
 - [ ] **Step 1: Configure from an empty build directory**
 
 Run:
 
 ```bash
 /Users/liqiang/Qt/Tools/CMake/CMake.app/Contents/bin/cmake \
+  --fresh \
   -S . \
   -B build-phase0-clean \
   -G "Unix Makefiles" \
   -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON \
   -DCMAKE_PREFIX_PATH=/Users/liqiang/Qt/6.11.1/macos
 ```
 

@@ -15,6 +15,10 @@ class OnlineListModel : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    Q_PROPERTY(QString sectionId READ sectionId NOTIFY presentationStateChanged)
+    Q_PROPERTY(bool hasMore READ hasMore NOTIFY presentationStateChanged)
+    Q_PROPERTY(bool loadingMore READ loadingMore NOTIFY presentationStateChanged)
+    Q_PROPERTY(QVariantMap error READ error NOTIFY presentationStateChanged)
 
 public:
     explicit OnlineListModel(QObject *parent = nullptr);
@@ -31,9 +35,15 @@ public:
 
     // 批量替换（清空 + 填充）
     void setItems(const QVariantList &items);
+    void setPresentationState(const QVariantMap &state);
+    QString sectionId() const;
+    bool hasMore() const;
+    bool loadingMore() const;
+    QVariantMap error() const;
 
 signals:
     void countChanged();
+    void presentationStateChanged();
 
 private:
     void collectRoles(const QVariantMap &map); // 为新字段分配 role
@@ -42,6 +52,10 @@ private:
     QHash<int, QByteArray> m_roleNames; // role id → 字段名
     QHash<QByteArray, int> m_roleIndex; // 字段名 → role id
     int m_nextRole = Qt::UserRole + 1;
+    QString m_sectionId;
+    bool m_hasMore = false;
+    bool m_loadingMore = false;
+    QVariantMap m_error;
 };
 
 #endif // ONLINELISTMODEL_H

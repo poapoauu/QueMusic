@@ -23,7 +23,11 @@ Rectangle {
             Options.playSettings.cycleIndex = cycleIndex
     }
 
-    readonly property string mediaTime: (Math.floor(mainMedia.position / 60000)) + ":" + (Math.floor(mainMedia.position / 1000) % 60)
+    readonly property bool securePlaybackActive: window.securePlaybackCurrent
+    readonly property real currentPosition: securePlaybackActive ? playbackAdapter.position : mainMedia.position
+    readonly property real currentDuration: securePlaybackActive ? playbackAdapter.duration : mainMedia.duration
+    readonly property real currentPlaybackRate: securePlaybackActive ? playbackAdapter.playbackRate : mainMedia.playbackRate
+    readonly property string mediaTime: (Math.floor(currentPosition / 60000)) + ":" + (Math.floor(currentPosition / 1000) % 60)
     function formatTime(ms) {
         var seconds = Math.floor(ms / 1000);
         var minutes = Math.floor(ms / 60000);
@@ -32,6 +36,8 @@ Rectangle {
     Connections {
         target: playListModel
         function onPlayListIndexChanged() {
+            if (musicControlMin.securePlaybackActive)
+                return;
             if(favoritesSong.isFavorite(playListModel.get(playListModel.playListIndex).path, "song")) {
                 likeButton.iconColor = Style.themes.themeColor;
             } else {
@@ -73,7 +79,7 @@ Rectangle {
     //控制条
     Item {
         id: sliderControl
-        visible: mainMedia.onMedia
+        visible: musicControlMin.securePlaybackActive || mainMedia.onMedia
         x: 0
         y: -10
         z: 6
@@ -102,15 +108,18 @@ Rectangle {
             anchors.fill: parent
             width: musicControlMin.width
             from: 0
-            to: mainMedia.duration > 0 ? mainMedia.duration : 1 // 避免除零错误
-            value: pressed ? null : mainMedia.position
+            to: musicControlMin.currentDuration > 0 ? musicControlMin.currentDuration : 1 // 避免除零错误
+            value: pressed ? null : musicControlMin.currentPosition
             live: true
             padding: 0
 
 
             // 关键：用户拖动时，跳转播放位置
             onMoved: {
-                mainMedia.position = value
+                if (musicControlMin.securePlaybackActive)
+                    playbackAdapter.seek(value)
+                else
+                    mainMedia.position = value
             }
 
             // 可选：在滑块手柄上显示预览时间
@@ -262,6 +271,8 @@ Rectangle {
             iconColor: Style.themes.textColor
             shadowEnabled: false
             onClicked: {
+                if (musicControlMin.securePlaybackActive)
+                    return;
                 if(playListModel.get(playListModel.playListIndex).source !== -1) {
                     console.log("收藏的hash/id:",playListModel.get(playListModel.playListIndex).path);
                     if (favoritesSong.isFavorite(playListModel.get(playListModel.playListIndex).path, "song")) {
@@ -293,6 +304,8 @@ Rectangle {
             iconColor: Style.themes.textColor
             shadowEnabled: false
             onClicked: {
+                if(musicControlMin.securePlaybackActive)
+                    return;
                 if(playListModel.get(playListModel.playListIndex).path) {
                     if(Options.settings.soundQuality === 0) {
                         MusicApi.getMusicInfo(playListModel.get(playListModel.playListIndex).path,1);
@@ -357,7 +370,7 @@ Rectangle {
             }
         }
         SButton {
-            iconCharacter: mainMedia.playing ? "\uf02f" : "\uf00e"
+            iconCharacter: (musicControlMin.securePlaybackActive ? playbackAdapter.playing : mainMedia.playing) ? "\uf02f" : "\uf00e"
             width: 46
             height: 46
             radius: 46
@@ -367,16 +380,11 @@ Rectangle {
             iconSize: Style.settings.texticonH
             shadowEnabled: false
             onClicked: {
-                if (mainMedia.playing === false) {
-                    mainMedia.play();
-                }
-                else {
-                    mainMedia.pause();
-                }
+                window.togglePlayback();
             }
             QTip {
                 visible: parent.hovered
-                text: mainMedia.playing ? "暂停" : "播放"
+                text: (musicControlMin.securePlaybackActive ? playbackAdapter.playing : mainMedia.playing) ? "暂停" : "播放"
             }
         }
         SButton {
@@ -433,7 +441,7 @@ Rectangle {
         Label {
             height: 40
             width: 80
-            text: musicControlMin.mediaTime + "/" + musicControlMin.formatTime(mainMedia.duration)
+            text: musicControlMin.mediaTime + "/" + musicControlMin.formatTime(musicControlMin.currentDuration)
             font.bold: false
             font.pixelSize: 14
             verticalAlignment: Text.AlignVCenter
@@ -553,9 +561,16 @@ Rectangle {
 
     // 上一首
     function lastMedia() {
-        if(playListModel.playListIndex > 0) {
+        if (window.securePlaybackActive && !window.securePlaybackCurrent)
+            return;
+        const index = musicControlMin.securePlaybackActive ? playbackCoordinator.currentIndex : playListModel.playListIndex;
+        if(index > 0) {
+            if (musicControlMin.securePlaybackActive) {
+                playbackCoordinator.playQueueEntry(index - 1);
+                return;
+            }
             playListModel.playListIndex -= 1;
-            musicControlMin.refreshMusicPlay();
+            window.playQueueEntry(playListModel.playListIndex);
             if(windowsSmtc.available)
                 windowsSmtc.setControlsEnabled(true, true,
                     playListModel.playListIndex < playListModel.count - 1,
@@ -564,12 +579,21 @@ Rectangle {
     }
     // 下一首
     function enterMedia() {
+        if (window.securePlaybackActive && !window.securePlaybackCurrent)
+            return;
+        if (musicControlMin.securePlaybackActive) {
+            const queueSize = playbackCoordinator.queue.length;
+            const index = playbackCoordinator.currentIndex;
+            if (queueSize > 0)
+                playbackCoordinator.playQueueEntry(index < queueSize - 1 ? index + 1 : 0);
+            return;
+        }
         if(playListModel.playListIndex < playListModel.count - 1) {
             playListModel.playListIndex += 1;
         } else {
             playListModel.playListIndex = 0;
         }
-        musicControlMin.refreshMusicPlay();
+        window.playQueueEntry(playListModel.playListIndex);
         if(windowsSmtc.available)
             windowsSmtc.setControlsEnabled(true, true,
                 playListModel.playListIndex < playListModel.count - 1,
@@ -577,8 +601,16 @@ Rectangle {
     }
     // 随机播放音乐
     function randomMedia() {
+        if (window.securePlaybackActive && !window.securePlaybackCurrent)
+            return;
+        if (musicControlMin.securePlaybackActive) {
+            const queueSize = playbackCoordinator.queue.length;
+            if (queueSize > 0)
+                playbackCoordinator.playQueueEntry(Math.floor(Math.random() * queueSize));
+            return;
+        }
         playListModel.playListIndex = Math.floor( Math.random() * playListModel.count );
-        musicControlMin.refreshMusicPlay();
+        window.playQueueEntry(playListModel.playListIndex);
         if(windowsSmtc.available)
             windowsSmtc.setControlsEnabled(true, true,
                 playListModel.playListIndex < playListModel.count - 1,
@@ -595,6 +627,10 @@ Rectangle {
 
     // 刷新音乐播放数据
     function refreshMusicPlay() {
+        window.playQueueEntry(playListModel.playListIndex);
+    }
+
+    function refreshLegacyMusicPlay() {
         var source = playListModel.get(playListModel.playListIndex).source;
         if(source == -1) {
             var sourcePath = playListModel.get(playListModel.playListIndex).path;
@@ -654,6 +690,8 @@ Rectangle {
     PlayList {
         id: playList
         model: playListModel
+        secureMode: window.securePlaybackActive
+        secureModel: playbackCoordinator ? playbackCoordinator.queue : []
     }
 
     QOptionDialog {
@@ -674,7 +712,10 @@ Rectangle {
                     choice: musicControlMin.playerRateIndex
                     model: ["0.5x","0.75x","1x-默认","1.25x","1.5x","2x","自定义"]
                     onTransformed: (choiced) => {
-                        mainMedia.playbackRate = [0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced];
+                        if (musicControlMin.securePlaybackActive)
+                            playbackAdapter.setPlaybackRate([0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced]);
+                        else
+                            mainMedia.playbackRate = [0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced];
                         musicControlMin.playerRateIndex = choiced;
                     }
                 }
@@ -693,10 +734,13 @@ Rectangle {
                     stepSize: 0.1
                     leftText: true
                     valueText: value.toFixed(1)
-                    value: mainMedia.playbackRate
+                    value: musicControlMin.currentPlaybackRate
                     onMoved: {
                         if(musicControlMin.playerRateIndex === 6) {
-                            mainMedia.playbackRate = value;
+                            if (musicControlMin.securePlaybackActive)
+                                playbackAdapter.setPlaybackRate(value);
+                            else
+                                mainMedia.playbackRate = value;
                         }
                     }
                 }

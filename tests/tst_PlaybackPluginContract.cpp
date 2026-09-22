@@ -10,7 +10,7 @@ class FakePlaybackEngine final : public IPlaybackEngine {
 public:
     using IPlaybackEngine::IPlaybackEngine;
 
-    void open(const StreamDescriptor &source) override { openedSource = source; }
+    void open(const PlaybackStreamDescriptor &source) override { openedSource = source; }
     void play() override { }
     void pause() override { }
     void stop() override { }
@@ -18,7 +18,7 @@ public:
     void setVolume(double) override { }
     PlaybackCapabilities capabilities() const override { return PlaybackCapability::Audio; }
 
-    StreamDescriptor openedSource;
+    PlaybackStreamDescriptor openedSource;
 };
 
 class FakePlaybackPlugin final : public QObject, public IPlaybackPlugin {
@@ -120,12 +120,12 @@ void PlaybackPluginContractTest::forwardsStreamDescriptorWithoutSourceDependency
 {
     PlaybackEngineManager manager;
     FakePlaybackPlugin plugin;
-    const StreamDescriptor source{
+    const PlaybackStreamDescriptor source{
         {QStringLiteral("nas"), QStringLiteral("track-42")},
         QUrl(QStringLiteral("https://nas.example.test/stream/track-42")),
         {{QStringLiteral("Authorization"), QStringLiteral("Bearer test-token")}},
         QStringLiteral("audio/flac"),
-        {},
+        QDateTime::currentDateTimeUtc().addSecs(300),
         false,
         true,
     };
@@ -141,6 +141,10 @@ void PlaybackPluginContractTest::forwardsStreamDescriptorWithoutSourceDependency
     QCOMPARE(engine->openedSource.url, source.url);
     QCOMPARE(engine->openedSource.headers, source.headers);
     QCOMPARE(engine->openedSource.mimeType, source.mimeType);
+    QVERIFY(engine->openedSource.expiresAt.isValid());
+    QCOMPARE(engine->openedSource.expiresAt.timeSpec(), Qt::UTC);
+    QVERIFY(engine->openedSource.expiresAt > QDateTime::currentDateTimeUtc());
+    QCOMPARE(engine->openedSource.expiresAt, source.expiresAt);
     QCOMPARE(engine->openedSource.video, source.video);
     QCOMPARE(engine->openedSource.seekable, source.seekable);
 }

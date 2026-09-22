@@ -13,13 +13,32 @@ export QUEMUSIC_NAVIDROME_PASSWORD
 /private/var/folders/.../quemusic-navidrome-build/bin/quemusic_navidrome_smoke
 ```
 
-The executable requires all three variables. It performs `ping`, a small
-search, root browse, stream resolution, artwork resolution, and lyric lookup
-in sequence when the search returns a playable track. Its output contains only
-the operation, outcome, error kind, and elapsed time; it does not print
-configuration values, requests, headers, tokens, salts, or response bodies.
+The executable requires all three variables. It performs the v2 open/ping and
+capability negotiation, loads a recommendation page, resolves a stream for a
+returned test track, then creates, renames, and deletes a temporary playlist.
+The smoke account therefore needs playlist write permission.
+
+Favorite mutation is disabled by default because it changes a real library.
+Enable it only for a track explicitly designated for destructive smoke tests:
+
+```bash
+export QUEMUSIC_NAVIDROME_ENABLE_FAVORITE_ROUNDTRIP=1
+export QUEMUSIC_NAVIDROME_FAVORITE_TRACK_ID='provider-native-test-track-id'
+```
+
+When enabled, the executable reads the designated track's current favorite state,
+toggles it, and restores that original state. On failure or timeout it makes one
+best-effort cleanup pass with a separate short timeout: any known temporary
+playlist is deleted and any attempted favorite mutation is restored. Cleanup
+failures are reported without credentials and are not retried recursively.
+After an interrupted process or failed cleanup, inspect and remove any playlist
+named `QueMusic smoke ...` and verify the designated track's favorite state.
+
+Output contains only operation, outcome, numeric error kind, and elapsed time.
+It never prints configuration values, requests, headers, authenticated URLs,
+tokens, salts, passwords, secret references, or response bodies.
 
 An exit code of `0` means the complete sequence succeeded. `64` means required
-environment is missing. A nonzero result after a successful search can mean the
-library has no playable matching track, artwork, or lyrics; the printed error
-kind identifies the protocol result without exposing server data.
+environment is missing, including the designated track when favorite mutation
+is enabled. Other nonzero results identify the failed v2 stage without exposing
+server data. This command is intentionally not part of CTest.

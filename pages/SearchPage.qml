@@ -2,13 +2,93 @@
 // Copyright (c) 2026 QueMusic Contributors
 //
 import QtQuick
-import QueMusic 1.0
 import 'qrc:/QueMusic/components'
 
 Item {
     id: searchPage
+    property var musicAdapter: null
+    property var playbackAdapter: null
 
     property int searchTab: 0
+
+    function sourceOptions() {
+        if (musicAdapter && musicAdapter.sourceOptions)
+            return musicAdapter.sourceOptions
+        return [
+            { sourceInstanceId: "", displayName: "酷狗音乐", available: true },
+            { sourceInstanceId: "", displayName: "网易云音乐", available: true },
+            { sourceInstanceId: "", displayName: "QQ音乐(x)", available: true },
+            { sourceInstanceId: "", displayName: "自定义源(x)", available: true }
+        ]
+    }
+
+    function sourceChoice() {
+        if (!musicAdapter)
+            return MusicApi.songSource
+        var options = sourceOptions()
+        for (var i = 0; i < options.length; ++i) {
+            if (options[i].sourceInstanceId === musicAdapter.selectedSourceInstanceId)
+                return i
+        }
+        return 0
+    }
+
+    function selectSource(choice) {
+        if (musicAdapter) {
+            var option = sourceOptions()[choice]
+            if (option && option.available)
+                musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
+            return
+        }
+        MusicApi.songSource = choice
+        MusicApi.searchSongsResults.clear()
+        MusicApi.searchSongs(mainSearchInput.text, MusicApi.nowIndex, 1, 20)
+    }
+
+    function capabilitiesFor(row) {
+        return musicAdapter && row && typeof musicAdapter.capabilities === "function"
+                ? musicAdapter.capabilities(row) : ({})
+    }
+
+    function modelFor(name, fallback) {
+        const candidate = musicAdapter ? musicAdapter[name] : null
+        return candidate || fallback
+    }
+
+    function modelCapabilities(model) {
+        if (!musicAdapter || !model || typeof musicAdapter.capabilities !== "function") return ({})
+        var rows = []
+        for (var i = 0; i < model.count; ++i)
+            rows.push(model.get(i))
+        return musicAdapter.capabilities(rows)
+    }
+
+    function sectionFor(model) {
+        if (!model) return ""
+        if (model.count > 0)
+            return model.get(model.count - 1).sectionId || ""
+        return model.sectionId || ""
+    }
+
+    function currentModel() {
+        if (!musicAdapter) return null
+        switch (searchTab) {
+        case 1: return modelFor("searchLists", MusicApi.searchSongsResults)
+        case 2: return modelFor("searchAlbums", MusicApi.searchSongsResults)
+        case 3: return modelFor("searchLyrics", MusicApi.searchSongsResults)
+        default: return modelFor("searchSongs", MusicApi.searchSongsResults)
+        }
+    }
+
+    function retryCurrentSection() {
+        if (musicAdapter)
+            musicAdapter.retry(3, sectionFor(currentModel()))
+    }
+
+    Component.onCompleted: {
+        if (musicAdapter)
+            musicAdapter.activatePage(3)
+    }
 
 
     QPages {
@@ -43,28 +123,34 @@ Item {
                 }
             }
             QDrop {
+                id: searchSourceScope
+                objectName: "searchSourceScope"
                 x: parent.width - 96
                 y: 0
                 height: 36; width: 120
                 //radius: 18
                 anchors.right: parent.right
-                choice: MusicApi.songSource
-                textColor: MusicApi.songSource == 0 ? "#0F3975" : MusicApi.songSource == 1 ? "#750F0F" : MusicApi.songSource == 2 ? "#16750F" : "#756F0F"
-                color: MusicApi.songSource == 0 ? "#CDE8FF" : MusicApi.songSource == 1 ? "#FFCDCD" : MusicApi.songSource == 2 ? "#CDFFCD" : "#FFFFCD"
-                border.color: MusicApi.songSource == 0 ? "#4384F5" : MusicApi.songSource == 1 ? "#F54343" : MusicApi.songSource == 2 ? "#4DF543" : "#F5F543"
+                choice: searchPage.sourceChoice()
+                textColor: searchPage.sourceChoice() == 0 ? "#0F3975" : searchPage.sourceChoice() == 1 ? "#750F0F" : searchPage.sourceChoice() == 2 ? "#16750F" : "#756F0F"
+                color: searchPage.sourceChoice() == 0 ? "#CDE8FF" : searchPage.sourceChoice() == 1 ? "#FFCDCD" : searchPage.sourceChoice() == 2 ? "#CDFFCD" : "#FFFFCD"
+                border.color: searchPage.sourceChoice() == 0 ? "#4384F5" : searchPage.sourceChoice() == 1 ? "#F54343" : searchPage.sourceChoice() == 2 ? "#4DF543" : "#F5F543"
                 radius: 18
                 cardRadius: Style.settings.labelRadius
-                model: ["酷狗音乐","网易云音乐","QQ音乐(x)","自定义源(x)"]
+                text: {
+                    var option = searchPage.sourceOptions()[choice]
+                    return option ? option.displayName : ""
+                }
+                model: searchPage.sourceOptions().map(function(option) { return option.displayName })
+                visible: true
                 onTransformed: (choiced) => {
-                    MusicApi.songSource = choiced;
-                    MusicApi.searchSongsResults.clear();
-                    MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
+                    searchPage.selectSource(choiced)
                     window.exitIndex = 1;
                 }
             }
         }
 
         QBlurTapBar {
+            objectName: "searchTabs"
             x: 0
             y: 12
             z: 5
@@ -74,6 +160,13 @@ Item {
             rectXy: Qt.rect(0, 12, width, 40)
             blurSource: searchChildPage.pageList[searchChildPage.lastIndex]
             onTabChange: (index) => {
+                if (musicAdapter) {
+                    searchChildPage.stack(index)
+                    searchPage.searchTab = index
+                    MusicApi.nowIndex = index
+                    musicAdapter.search(mainSearchInput.text, index)
+                    return
+                }
                 MusicApi.searchSongsResults.clear()
                 searchChildPage.stack(index)
                 MusicApi.nowIndex = index
@@ -83,13 +176,34 @@ Item {
 
         QListView {
             id: searchSong
+            objectName: "searchSongsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchSongs", MusicApi.searchSongsResults)
             clip: true
             topMargin: 72
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: musicAdapter ? "" : "\uf095"
+            toolText1: musicAdapter ? "" : "\uf0c8"
+            toolText0ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            toolText1ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+            } : null
+            sectionId: musicAdapter ? searchPage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(3, sectionId) } : null
 
             onEnded: {
+                if (musicAdapter) {
+                    if (sectionId)
+                        if (hasMore && !loadingMore)
+                            musicAdapter.loadMore(3, sectionId)
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,0,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -101,6 +215,12 @@ Item {
             }
 
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canPlay)
+                        musicAdapter.play(adapterRow)
+                    return
+                }
                 if(Options.settings.soundQuality === 0) {
                     MusicApi.getMusicInfo(model.get(index).hash);
                 } else if(Options.settings.soundQuality === 1) {
@@ -110,6 +230,14 @@ Item {
                 }
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 0 && capabilitiesFor(adapterRow).canEnqueue)
+                        musicAdapter.enqueue(adapterRow)
+                    else if (tool === 1 && capabilitiesFor(adapterRow).canFavorite)
+                        musicAdapter.setFavorite(adapterRow, true)
+                    return
+                }
                 switch(tool) {
                 case 0:
                     var listIndex = -1;
@@ -137,6 +265,8 @@ Item {
                 }
             }
             onMenuClicked: (index,choice) => {
+                if (musicAdapter)
+                    return
                 switch(choice) {
                 case 0:
                     if(Options.settings.soundQuality === 0) {
@@ -152,16 +282,34 @@ Item {
         }
         QListView {
             id: searchLists
+            objectName: "searchListsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchLists", MusicApi.searchSongsResults)
             clip: true
             visible: false
             topMargin: 72
             bottomMargin: 24
             isList: true
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: ""
+            toolText1: musicAdapter ? "" : "\uf0c8"
+            toolText1ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+            } : null
+            sectionId: musicAdapter ? searchPage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(3, sectionId) } : null
 
             onEnded: {
+                if (musicAdapter) {
+                    if (sectionId)
+                        if (hasMore && !loadingMore)
+                            musicAdapter.loadMore(3, sectionId)
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,1,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -173,6 +321,15 @@ Item {
             }
 
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canBrowse && musicAdapter.browse(adapterRow)) {
+                        searchAdapterDetailWindow.opened(adapterRow)
+                        mainContent.contentIndexed(1)
+                        window.exitIndex = 1
+                    }
+                    return
+                }
                 MusicApi.playlistSong.clear();
                 MusicApi.globalid = model.get(index).hash;
                 MusicApi.getPlaylistSongs(model.get(index).hash,1,20);
@@ -182,6 +339,12 @@ Item {
                 window.exitIndex = 2;
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 1 && capabilitiesFor(adapterRow).canFavorite)
+                        musicAdapter.setFavorite(adapterRow, true)
+                    return
+                }
                 switch(tool) {
                 case 1:
                     if (favoritesList.isFavorite(model.get(index).hash, "playlist")) {
@@ -197,16 +360,34 @@ Item {
         }
         QListView {
             id: searchAlbum
+            objectName: "searchAlbumsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchAlbums", MusicApi.searchSongsResults)
             clip: true
             visible: false
             topMargin: 72
             bottomMargin: 24
             isList: true
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: musicAdapter ? "" : "\uf095"
+            toolText0ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            sectionId: musicAdapter ? searchPage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(3, sectionId) } : null
+            toolText1: ""
 
             onEnded: {
+                if (musicAdapter) {
+                    if (sectionId)
+                        if (hasMore && !loadingMore)
+                            musicAdapter.loadMore(3, sectionId)
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,2,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -217,9 +398,24 @@ Item {
                 }
             }
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canBrowse && musicAdapter.browse(adapterRow)) {
+                        searchAdapterDetailWindow.opened(adapterRow)
+                        mainContent.contentIndexed(1)
+                        window.exitIndex = 1
+                    }
+                    return
+                }
                 MusicApi.getMusicInfo(model.get(index).hash);
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 0 && capabilitiesFor(adapterRow).canEnqueue)
+                        musicAdapter.enqueue(adapterRow)
+                    return
+                }
                 switch(tool) {
                 case 0:
                     var listIndex = -1;
@@ -240,15 +436,36 @@ Item {
         }
         QListView {
             id: searchLyrics
+            objectName: "searchLyricsList"
             width: searchChildPage.width + 16
             height: searchChildPage.height
-            model: MusicApi.searchSongsResults
+            model: searchPage.modelFor("searchLyrics", MusicApi.searchSongsResults)
             clip: true
             visible: false
             topMargin: 72
             bottomMargin: 24
+            menuModel: musicAdapter ? [] : ["下载到本地","分享","歌曲信息"]
+            toolText0: musicAdapter ? "" : "\uf095"
+            toolText1: musicAdapter ? "" : "\uf0c8"
+            toolText0ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            toolText1ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+            } : null
+            sectionId: musicAdapter ? searchPage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(3, sectionId) } : null
 
             onEnded: {
+                if (musicAdapter) {
+                    if (sectionId)
+                        if (hasMore && !loadingMore)
+                            musicAdapter.loadMore(3, sectionId)
+                    return
+                }
                 if(MusicApi.searchSongsResults.count % 20 === 0 && MusicApi.searchSongsResults.count !== 0) {
                     MusicApi.searchSongs(mainSearchInput.text,3,MusicApi.searchSongsResults.count / 20 + 1,20);
                     isEnd = false;
@@ -259,6 +476,12 @@ Item {
                 }
             }
             onClicked: (index) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (capabilitiesFor(adapterRow).canPlay)
+                        musicAdapter.play(adapterRow)
+                    return
+                }
                 if(Options.settings.soundQuality === 0) {
                     MusicApi.getMusicInfo(model.get(index).hash);
                 } else if(Options.settings.soundQuality === 1) {
@@ -268,6 +491,14 @@ Item {
                 }
             }
             onToolClicked: (index,tool) => {
+                if (musicAdapter) {
+                    var adapterRow = model.get(index)
+                    if (tool === 0 && capabilitiesFor(adapterRow).canEnqueue)
+                        musicAdapter.enqueue(adapterRow)
+                    else if (tool === 1 && capabilitiesFor(adapterRow).canFavorite)
+                        musicAdapter.setFavorite(adapterRow, true)
+                    return
+                }
                 switch(tool) {
                 case 0:
                     var listIndex = -1;
@@ -295,6 +526,8 @@ Item {
                 }
             }
             onMenuClicked: (index,choice) => {
+                if (musicAdapter)
+                    return
                 switch(choice) {
                 case 0:
                     if(Options.settings.soundQuality === 0) {
@@ -366,6 +599,70 @@ Item {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    Item {
+        id: searchAdapterDetailWindow
+        objectName: "searchAdapterDetailWindow"
+        z: 20
+        anchors.fill: parent
+        visible: false
+        function opened(info) { visible = true }
+        Connections {
+            target: window
+            enabled: searchAdapterDetailWindow.visible
+            function onExit() {
+                if (window.exitIndex <= 1)
+                    searchAdapterDetailWindow.visible = false
+            }
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Style.themes.primaryColor
+        }
+        QListView {
+            objectName: "searchAdapterDetailList"
+            x: 24
+            y: 184
+            width: searchAdapterDetailWindow.width - 32
+            height: searchAdapterDetailWindow.height - 184
+            model: searchPage.modelFor("categoryItems", MusicApi.searchSongsResults)
+            clip: true
+            topMargin: 8
+            bottomMargin: 24
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            sectionId: musicAdapter ? searchPage.sectionFor(model) : ""
+            hasMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : true
+            loadingMore: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
+            sectionError: musicAdapter ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
+            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(1, sectionId) } : null
+            toolText0ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
+            toolText1ForRow: musicAdapter ? function(index) {
+                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+            } : null
+            onClicked: (index) => {
+                if (!musicAdapter) return
+                var row = model.get(index)
+                if (searchPage.capabilitiesFor(row).canPlay)
+                    musicAdapter.play(row)
+            }
+            onToolClicked: (index, tool) => {
+                if (!musicAdapter) return
+                var row = model.get(index)
+                if (tool === 0 && searchPage.capabilitiesFor(row).canEnqueue)
+                    musicAdapter.enqueue(row)
+                else if (tool === 1 && searchPage.capabilitiesFor(row).canFavorite)
+                    musicAdapter.setFavorite(row, true)
+            }
+            onEnded: {
+                if (musicAdapter && sectionId && hasMore && !loadingMore)
+                    musicAdapter.loadMore(1, sectionId)
             }
         }
     }

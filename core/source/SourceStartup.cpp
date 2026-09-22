@@ -1,7 +1,10 @@
 #include "SourceStartup.h"
 
-#include "SourceManager.h"
 #include "PluginManager.h"
+#include "MusicHub.h"
+#include "PlaybackCoordinator.h"
+#include "PluginSettingsController.h"
+#include "QtPlaybackController.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -28,32 +31,36 @@ QStringList defaultSourcePluginSearchPaths(const QCoreApplication &application)
     };
 }
 
-SourceManager *createAndLoadSourceManager(const QCoreApplication &application, QObject *parent)
+std::unique_ptr<PluginManager> createAndLoadPluginManager(
+    const QCoreApplication &application, QObject *parent)
 {
-    auto *plugins = new PluginManager(parent);
-    auto *manager = new SourceManager(plugins, parent);
-    const QStringList searchPaths = defaultSourcePluginSearchPaths(application);
-
-    for (const QString &searchPath : searchPaths) {
-        manager->addSearchPath(searchPath);
+    auto plugins = std::make_unique<PluginManager>(parent);
+    for (const QString &searchPath : defaultSourcePluginSearchPaths(application))
+        plugins->addSearchPath(searchPath);
+    QObject::connect(plugins.get(), &PluginManager::pluginLoadFailed, plugins.get(),
+                     [](const QString &packageId, const QString &error) {
+        qWarning().noquote() << QStringLiteral("Plugin load failed: %1 (%2)")
+                                    .arg(packageId, error);
+    });
+    plugins->discover();
+    for (const QVariant &entry : plugins->plugins()) {
+        const QString packageId = entry.toMap().value(QStringLiteral("id")).toString();
+        if (!packageId.isEmpty()) plugins->load(packageId);
     }
-
-    QObject::connect(manager, &SourceManager::sourceLoadFailed, manager,
-                     [](const QString &pluginPath, const QString &error) {
-                         qWarning().noquote()
-                             << QStringLiteral("SourceManager plugin load failed: %1 (%2)")
-                                    .arg(pluginPath, error);
-                     });
-    manager->loadAll();
-    return manager;
+    return plugins;
 }
 
-SourceManager *initializeSourceStartupBoundary(const QCoreApplication &application,
-                                              QQmlApplicationEngine &engine)
+void installSourceRuntimeContext(QQmlApplicationEngine &engine,
+                                 PluginManager *plugins, MusicHub *musicHub,
+                                 PlaybackCoordinator *playbackCoordinator,
+                                 QtPlaybackController *playbackController,
+                                 PluginSettingsController *pluginSettings)
 {
-    SourceManager *manager =
-        createAndLoadSourceManager(application, const_cast<QCoreApplication *>(&application));
-    engine.rootContext()->setContextProperty(QStringLiteral("pluginManager"),
-                                             manager->pluginManager());
-    return manager;
+    engine.rootContext()->setContextProperty(QStringLiteral("pluginManager"), plugins);
+    engine.rootContext()->setContextProperty(QStringLiteral("musicHub"), musicHub);
+    engine.rootContext()->setContextProperty(QStringLiteral("playbackCoordinator"),
+                                             playbackCoordinator);
+    engine.rootContext()->setContextProperty(QStringLiteral("playbackController"),
+                                             playbackController);
+    engine.rootContext()->setContextProperty(QStringLiteral("pluginSettings"), pluginSettings);
 }

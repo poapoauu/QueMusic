@@ -32,6 +32,7 @@ struct PluginSpec {
     PluginCategory category = PluginCategory::Unknown;
     PluginState state = PluginState::Discovered;
     QString error;
+    QString busyReason;
     QString path;
     int activeLeases = 0;
 };
@@ -41,6 +42,9 @@ public:
     PluginLease() = default;
 
     bool isValid() const;
+    // R7 quarantine remains available after the manager facade has disappeared.
+    // Normal healthy leases never call this and release their package normally.
+    void pinLoadedPackage() const;
 
 private:
     struct State;
@@ -68,6 +72,9 @@ public:
     PluginOperationResult unload(const QString &packageId);
     PluginOperationResult reload(const QString &packageId);
     PluginLease acquire(const QString &packageId);
+    // An externally destroyed borrowed session has no observable unwind boundary.
+    // Keep its loaded package alive and unavailable until process exit.
+    void pinLoadedPackage(const QString &packageId);
 
     PluginSpec plugin(const QString &packageId) const;
     QVariantList plugins() const;
@@ -94,4 +101,7 @@ private:
 
     QStringList m_searchPaths;
     std::vector<std::unique_ptr<Entry>> m_entries;
+    // QObject's QPointer is cleared after the derived destructor. Invalidate
+    // lease callbacks earlier, before releasing any loaders or plugin roots.
+    std::shared_ptr<bool> m_callable = std::make_shared<bool>(true);
 };

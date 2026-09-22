@@ -7,6 +7,13 @@ enum class PluginCategory {
     Source,
 };
 
+// Native source packages use x86_64, arm64, or universal in manifests.
+// A universal package contains both supported slices and is loadable by an
+// x86_64 or arm64 process; a single-architecture package must match exactly.
+QString canonicalPluginArchitecture(const QString &architecture);
+bool isPluginArchitectureCompatible(const QString &requiredArchitecture,
+                                    const QString &hostArchitecture);
+
 class PluginManifest {
 public:
     static PluginManifest fromFile(const QString &manifestPath, QString *error = nullptr);
@@ -19,9 +26,11 @@ public:
     PluginCategory category() const;
     QString libraryAbsolutePath() const;
     int minimumHostPluginApiMinor() const;
+    int sourceSdkAbi() const;
+    QString sourceInterfaceId() const;
     int requiredQtMajor() const;
     QString requiredArchitecture() const;
-    QString requiredBuildMode() const;
+    QString requiredBuildKey() const;
 
 private:
     bool m_valid = false;
@@ -32,7 +41,9 @@ private:
     PluginCategory m_category = PluginCategory::Unknown;
     QString m_libraryAbsolutePath;
     int m_minimumHostPluginApiMinor = 0;
+    int m_sourceSdkAbi = 0;
+    QString m_sourceInterfaceId;
     int m_requiredQtMajor = 0;
     QString m_requiredArchitecture;
-    QString m_requiredBuildMode;
+    QString m_requiredBuildKey;
 };

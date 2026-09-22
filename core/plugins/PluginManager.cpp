@@ -1,7 +1,7 @@
 #include "PluginManager.h"
 
 #include "PluginManifest.h"
-#include "IMusicSourcePlugin.h"
+#include "v2/IMusicSourcePluginV2.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -12,10 +12,25 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 
 namespace {
 
 constexpr int hostPluginApiMinor = 0;
+
+auto &pinnedPackages()
+{
+    // Intentionally never destroyed, including during static teardown: a pin
+    // owns the loader/root until the OS reclaims the process. Keying by the
+    // library coalesces violations and also protects replacement managers.
+    static auto *packages = new std::map<QString, std::shared_ptr<QPluginLoader>>;
+    return *packages;
+}
+
+QString restartRequiredReason()
+{
+    return QStringLiteral("source.external-destruction.restart-required");
+}
 
 QString pluginStateName(PluginState state)
 {
@@ -43,19 +58,23 @@ QString pluginCategoryName(PluginCategory category)
     return QStringLiteral("unknown");
 }
 
-QString hostBuildMode()
+QString hostBuildKey()
 {
-#ifdef QT_NO_DEBUG
-    return QStringLiteral("Release");
-#else
-    return QStringLiteral("Debug");
-#endif
+    return QStringLiteral(QUEMUSIC_PLUGIN_BUILD_KEY);
+}
+
+QString hostPluginArchitecture()
+{
+    return canonicalPluginArchitecture(QSysInfo::buildCpuArchitecture());
 }
 
 }
 
 struct PluginLease::State {
+    std::shared_ptr<QPluginLoader> loader;
+    QString libraryPath;
     std::function<void()> release;
+    std::function<void()> notifyPin;
 
     ~State()
     {
@@ -68,8 +87,14 @@ struct PluginLease::State {
 struct PluginManager::Entry {
     PluginManifest manifest;
     PluginSpec spec;
-    std::unique_ptr<QPluginLoader> loader;
+    std::shared_ptr<QPluginLoader> loader;
     QObject *instance = nullptr;
+    QString libraryPath;
+
+    bool isPinned() const
+    {
+        return pinnedPackages().find(libraryPath) != pinnedPackages().end();
+    }
 };
 
 PluginLease::PluginLease(std::shared_ptr<State> state)
@@ -82,6 +107,17 @@ bool PluginLease::isValid() const
     return m_state != nullptr;
 }
 
+void PluginLease::pinLoadedPackage() const
+{
+    // Notifications can delete the caller and release its lease reentrantly.
+    const auto state = m_state;
+    if (state && state->loader
+        && pinnedPackages().emplace(state->libraryPath, state->loader).second
+        && state->notifyPin) {
+        state->notifyPin();
+    }
+}
+
 PluginManager::PluginManager(QObject *parent)
     : QObject(parent)
 {
@@ -90,11 +126,9 @@ PluginManager::PluginManager(QObject *parent)
 
 PluginManager::~PluginManager()
 {
-    for (const auto &entry : m_entries) {
-        if (entry->loader != nullptr && entry->loader->isLoaded()) {
-            entry->loader->unload();
-        }
-    }
+    *m_callable = false;
+    // Entries and callable leases share the loader. Its final healthy owner
+    // unloads it; R7 alone transfers an additional process-lifetime reference.
 }
 
 void PluginManager::addSearchPath(const QString &path)
@@ -141,6 +175,11 @@ int PluginManager::discover()
 
             auto entry = std::make_unique<Entry>();
             entry->manifest = manifest;
+            const QFileInfo library(manifest.libraryAbsolutePath());
+            entry->libraryPath = library.canonicalFilePath();
+            if (entry->libraryPath.isEmpty()) {
+                entry->libraryPath = library.absoluteFilePath();
+            }
             entry->spec = {
                 manifest.id(),
                 manifest.sourceId(),
@@ -148,6 +187,7 @@ int PluginManager::discover()
                 manifest.version(),
                 manifest.category(),
                 PluginState::Discovered,
+                {},
                 {},
                 QFileInfo(manifestPath).absolutePath(),
                 0,
@@ -164,7 +204,7 @@ int PluginManager::discover()
 bool PluginManager::load(const QString &packageId)
 {
     Entry *entry = findEntry(packageId);
-    if (entry == nullptr) {
+    if (entry == nullptr || entry->isPinned()) {
         return false;
     }
     if (entry->loader != nullptr) {
@@ -181,9 +221,22 @@ bool PluginManager::load(const QString &packageId)
         return false;
     }
 
-    auto loader = std::make_unique<QPluginLoader>();
+    auto loader = std::shared_ptr<QPluginLoader>(new QPluginLoader, [](QPluginLoader *loader) {
+        if (loader->isLoaded()) loader->unload();
+        delete loader;
+    });
     loader->setLoadHints({});
     loader->setFileName(entry->manifest.libraryAbsolutePath());
+    if (entry->manifest.category() == PluginCategory::Source) {
+        const QString metadataIid =
+            loader->metaData().value(QStringLiteral("IID")).toString();
+        if (metadataIid != entry->manifest.sourceInterfaceId()) {
+            fail(*entry,
+                 QStringLiteral("Package plugin metadata IID %1 does not match manifest interface %2")
+                     .arg(metadataIid, entry->manifest.sourceInterfaceId()));
+            return false;
+        }
+    }
     if (!loader->load()) {
         fail(*entry, loader->errorString());
         return false;
@@ -193,17 +246,20 @@ bool PluginManager::load(const QString &packageId)
         fail(*entry, loader->errorString());
         return false;
     }
-    if (entry->manifest.category() == PluginCategory::Source
-        && qobject_cast<IMusicSourcePlugin *>(instance) == nullptr) {
-        loader->unload();
-        fail(*entry, QStringLiteral("Package does not implement IMusicSourcePlugin"));
-        return false;
+    if (entry->manifest.category() == PluginCategory::Source) {
+        const int sourceSdkAbi = entry->manifest.sourceSdkAbi();
+        if (sourceSdkAbi == 2 && qobject_cast<IMusicSourcePluginV2 *>(instance) == nullptr) {
+            loader->unload();
+            fail(*entry, QStringLiteral("Package does not implement IMusicSourcePluginV2"));
+            return false;
+        }
     }
 
     entry->loader = std::move(loader);
     entry->instance = instance;
     entry->spec.state = PluginState::Loaded;
     entry->spec.error.clear();
+    entry->spec.busyReason.clear();
     emit pluginChanged(packageId);
     return entry->spec.state == PluginState::Loaded && entry->loader != nullptr;
 }
@@ -211,7 +267,8 @@ bool PluginManager::load(const QString &packageId)
 bool PluginManager::failLoadedPlugin(const QString &packageId, const QString &error)
 {
     Entry *entry = findEntry(packageId);
-    if (entry == nullptr || entry->loader == nullptr || entry->spec.activeLeases != 0) {
+    if (entry == nullptr || entry->isPinned() || entry->loader == nullptr
+        || entry->spec.activeLeases != 0) {
         return false;
     }
     if (!entry->loader->unload()) {
@@ -231,7 +288,12 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
     if (entry == nullptr) {
         return PluginOperationResult::NotFound;
     }
+    if (entry->isPinned()) {
+        return PluginOperationResult::Busy;
+    }
     if (entry->spec.activeLeases != 0) {
+        entry->spec.busyReason = QStringLiteral("source.sessions.active");
+        emit pluginChanged(packageId);
         return PluginOperationResult::Busy;
     }
     if (entry->loader == nullptr) {
@@ -242,6 +304,7 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
         entry->instance = nullptr;
         entry->spec.state = PluginState::Unloaded;
         entry->spec.error.clear();
+        entry->spec.busyReason.clear();
         emit pluginChanged(packageId);
         return PluginOperationResult::Success;
     }
@@ -254,6 +317,7 @@ PluginOperationResult PluginManager::unload(const QString &packageId)
     entry->instance = nullptr;
     entry->spec.state = PluginState::Unloaded;
     entry->spec.error.clear();
+    entry->spec.busyReason.clear();
     emit pluginChanged(packageId);
     return PluginOperationResult::Success;
 }
@@ -270,26 +334,53 @@ PluginOperationResult PluginManager::reload(const QString &packageId)
 PluginLease PluginManager::acquire(const QString &packageId)
 {
     Entry *entry = findEntry(packageId);
-    if (entry == nullptr || entry->spec.state != PluginState::Loaded) {
+    if (entry == nullptr || entry->isPinned() || entry->spec.state != PluginState::Loaded) {
         return {};
     }
 
     ++entry->spec.activeLeases;
-    emit pluginChanged(packageId);
     const QPointer<PluginManager> manager(this);
+    const std::weak_ptr<bool> callable = m_callable;
     auto state = std::make_shared<PluginLease::State>();
-    state->release = [manager, packageId] {
-        if (manager != nullptr) {
+    state->loader = entry->loader;
+    state->libraryPath = entry->libraryPath;
+    state->release = [manager, callable, packageId] {
+        const auto live = callable.lock();
+        if (live && *live && manager != nullptr) {
             manager->releaseLease(packageId);
         }
     };
+    state->notifyPin = [manager, callable, packageId] {
+        const auto live = callable.lock();
+        if (live && *live && manager != nullptr) emit manager->pluginChanged(packageId);
+    };
+    emit pluginChanged(packageId);
+    // An existing session can be externally deleted by an acquisition observer.
+    if (manager == nullptr || entry->isPinned()) {
+        return {};
+    }
     return PluginLease(std::move(state));
+}
+
+void PluginManager::pinLoadedPackage(const QString &packageId)
+{
+    Entry *entry = findEntry(packageId);
+    if (entry == nullptr || entry->isPinned() || entry->loader == nullptr) {
+        return;
+    }
+    // Transfer ownership before emitting anything that could destroy this manager.
+    pinnedPackages().emplace(entry->libraryPath, std::move(entry->loader));
+    emit pluginChanged(packageId);
 }
 
 PluginSpec PluginManager::plugin(const QString &packageId) const
 {
     const Entry *entry = findEntry(packageId);
-    return entry == nullptr ? PluginSpec{} : entry->spec;
+    PluginSpec spec = entry == nullptr ? PluginSpec{} : entry->spec;
+    if (entry != nullptr && entry->isPinned()) {
+        spec.busyReason = restartRequiredReason();
+    }
+    return spec;
 }
 
 QVariantList PluginManager::plugins() const
@@ -297,6 +388,7 @@ QVariantList PluginManager::plugins() const
     QVariantList result;
     for (const auto &entry : m_entries) {
         const PluginSpec &spec = entry->spec;
+        const bool pinned = entry->isPinned();
         result.append(QVariantMap{
             {QStringLiteral("id"), spec.id},
             {QStringLiteral("sourceId"), spec.sourceId},
@@ -305,11 +397,13 @@ QVariantList PluginManager::plugins() const
             {QStringLiteral("category"), pluginCategoryName(spec.category)},
             {QStringLiteral("state"), pluginStateName(spec.state)},
             {QStringLiteral("error"), spec.error},
+            {QStringLiteral("busyReason"), pinned ? restartRequiredReason() : spec.busyReason},
             {QStringLiteral("path"), spec.path},
             {QStringLiteral("activeLeases"), spec.activeLeases},
-            {QStringLiteral("loadable"), entry->loader == nullptr},
-            {QStringLiteral("unloadable"), entry->loader != nullptr && spec.activeLeases == 0},
-            {QStringLiteral("reloadable"), spec.state == PluginState::Loaded
+            {QStringLiteral("loadable"), !pinned && entry->loader == nullptr},
+            {QStringLiteral("unloadable"), !pinned && entry->loader != nullptr
+                 && spec.activeLeases == 0},
+            {QStringLiteral("reloadable"), !pinned && spec.state == PluginState::Loaded
                  && spec.activeLeases == 0},
         });
     }
@@ -362,6 +456,7 @@ const PluginManager::Entry *PluginManager::findEntry(const QString &packageId) c
 
 bool PluginManager::supportsRuntime(const PluginManifest &manifest, QString *error) const
 {
+    const QString hostArchitecture = hostPluginArchitecture();
     if (manifest.minimumHostPluginApiMinor() > hostPluginApiMinor) {
         *error = QStringLiteral("Package requires a newer host plugin API");
         return false;
@@ -371,15 +466,16 @@ bool PluginManager::supportsRuntime(const PluginManifest &manifest, QString *err
         return false;
     }
     if (!manifest.requiredArchitecture().isEmpty()
-        && manifest.requiredArchitecture() != QSysInfo::currentCpuArchitecture()) {
-        *error = QStringLiteral("Package requires architecture %1")
-                     .arg(manifest.requiredArchitecture());
+        && !isPluginArchitectureCompatible(manifest.requiredArchitecture(),
+                                           hostArchitecture)) {
+        *error = QStringLiteral("Package requires architecture %1; host is %2")
+                     .arg(manifest.requiredArchitecture(), hostArchitecture);
         return false;
     }
-    if (!manifest.requiredBuildMode().isEmpty()
-        && manifest.requiredBuildMode() != hostBuildMode()) {
-        *error = QStringLiteral("Package requires build mode %1")
-                     .arg(manifest.requiredBuildMode());
+    if (!manifest.requiredBuildKey().isEmpty()
+        && manifest.requiredBuildKey() != hostBuildKey()) {
+        *error = QStringLiteral("Package requires build key %1")
+                     .arg(manifest.requiredBuildKey());
         return false;
     }
     return true;
@@ -389,6 +485,7 @@ void PluginManager::fail(Entry &entry, const QString &error)
 {
     entry.spec.state = PluginState::Failed;
     entry.spec.error = error;
+    entry.spec.busyReason.clear();
     emit pluginLoadFailed(entry.spec.id, error);
     emit pluginChanged(entry.spec.id);
 }
@@ -401,5 +498,8 @@ void PluginManager::releaseLease(const QString &packageId)
     }
 
     --entry->spec.activeLeases;
+    if (entry->spec.activeLeases == 0) {
+        entry->spec.busyReason.clear();
+    }
     emit pluginChanged(packageId);
 }

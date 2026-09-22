@@ -1,0 +1,25 @@
+{
+  "id": "@QUEMUSIC_V2_FIXTURE_PACKAGE_ID@",
+  "sourceId": "@QUEMUSIC_V2_FIXTURE_SOURCE_ID@",
+  "name": "@QUEMUSIC_V2_FIXTURE_NAME@",
+  "version": "2.0.0",
+  "category": "source",
+  "runtime": "native-qt",
+  "library": "@QUEMUSIC_V2_FIXTURE_LIBRARY@",
+  "pluginApi": {
+    "major": 1,
+    "minHostMinor": 0
+  },
+  "interfaces": [
+    {
+      "id": "org.quemusic.MusicSourcePlugin/2.0",
+      "version": "2.0"
+    }
+  ],
+  "runtimeRequirements": {
+    "sourceSdkAbi": 2,
+    "qtMajor": @Qt6Core_VERSION_MAJOR@,
+    "architecture": "@QUEMUSIC_TEST_ARCHITECTURE@",
+    "buildKey": "@QUEMUSIC_TEST_BUILD_KEY@"
+  }
+}
