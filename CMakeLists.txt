@@ -16,6 +16,8 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 
 add_subdirectory(cmake)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Network Multimedia Concurrent Sql ShaderTools)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 # TagLib is vendored so local metadata parsing works consistently on all
 # supported platforms without requiring a system package.
@@ -53,20 +55,23 @@ target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
 target_include_directories(quemusic_source_sdk PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk/source>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source>
 )
 
 add_library(quemusic_plugin_ui_sdk INTERFACE)
 target_compile_features(quemusic_plugin_ui_sdk INTERFACE cxx_std_17)
 target_link_libraries(quemusic_plugin_ui_sdk INTERFACE Qt6::Core)
 target_include_directories(quemusic_plugin_ui_sdk INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/quemusic>)
 
 qt_add_library(quemusic_plugin_ui STATIC)
 qt_add_qml_module(quemusic_plugin_ui
     URI QueMusic.PluginUI
     VERSION 1.0
     RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/QueMusic/PluginUI"
     SOURCES
         plugin-ui/PluginUiContext.cpp plugin-ui/PluginUiContext.h
         plugin-ui/PluginTheme.cpp plugin-ui/PluginTheme.h
@@ -102,7 +107,51 @@ qt_add_qml_module(quemusic_plugin_ui
 target_link_libraries(quemusic_plugin_ui PUBLIC
     quemusic_plugin_ui_sdk Qt6::Core Qt6::Qml Qt6::Quick)
 target_include_directories(quemusic_plugin_ui PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/plugin-ui)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/plugin-ui>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/quemusic/runtime>)
+
+set_target_properties(quemusic_source_sdk PROPERTIES EXPORT_NAME source_sdk)
+set_target_properties(quemusic_plugin_ui_sdk PROPERTIES EXPORT_NAME plugin_ui_sdk)
+set_target_properties(quemusic_plugin_ui PROPERTIES EXPORT_NAME plugin_ui)
+set_target_properties(quemusic_plugin_uiplugin PROPERTIES EXPORT_NAME plugin_ui_qml_plugin)
+install(TARGETS quemusic_source_sdk quemusic_plugin_ui_sdk
+        quemusic_plugin_ui quemusic_plugin_uiplugin
+        quemusic_plugin_ui_resources_1 quemusic_plugin_ui_resources_2
+        quemusic_plugin_uiplugin_init
+    EXPORT QueMusicPluginSdkTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PluginSdk
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PluginSdk
+    OBJECTS DESTINATION ${CMAKE_INSTALL_LIBDIR}/quemusic/objects
+    COMPONENT PluginSdk)
+install(DIRECTORY sdk/source/v2/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/v2
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY sdk/plugin-ui/v1/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/plugin-ui/v1
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.h")
+install(FILES plugin-ui/PluginTheme.h plugin-ui/PluginUiContext.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/runtime
+    COMPONENT PluginSdk)
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/QueMusic/PluginUI/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/quemusic/qml/QueMusic/PluginUI"
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.qml" PATTERN "qmldir" PATTERN "*.qmltypes")
+configure_package_config_file(cmake/QueMusicPluginSdkConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/QueMusicPluginSdkConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/QueMusicPluginSdk")
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/QueMusicPluginSdkConfigVersion.cmake"
+    VERSION 1.0.0 COMPATIBILITY SameMajorVersion)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/QueMusicPluginSdkConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/QueMusicPluginSdkConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/QueMusicPluginSdk"
+    COMPONENT PluginSdk)
+install(EXPORT QueMusicPluginSdkTargets NAMESPACE QueMusic::
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/QueMusicPluginSdk"
+    COMPONENT PluginSdk)
 
 add_library(quemusic_music_page_model STATIC
     core/music/SourceScopeStore.cpp
@@ -257,6 +306,36 @@ file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_
 
 if(BUILD_TESTING)
     enable_testing()
+
+    foreach(lint_case allowed private-import parent-import remote-import unknown-import)
+        add_test(NAME quemusic_plugin_ui_import_${lint_case}_test
+            COMMAND ${CMAKE_COMMAND}
+                "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugin-ui-lint"
+                "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugin-ui-lint/${lint_case}.qml"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidatePluginQmlImports.cmake")
+        if(NOT lint_case STREQUAL "allowed")
+            set_tests_properties(quemusic_plugin_ui_import_${lint_case}_test
+                PROPERTIES WILL_FAIL TRUE)
+        endif()
+    endforeach()
+    add_test(NAME quemusic_plugin_ui_import_public_module_test
+        COMMAND ${CMAKE_COMMAND}
+            "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}/plugin-ui/qml"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidatePluginQmlImports.cmake")
+    qt_add_executable(quemusic_plugin_ui_external_loader
+        tests/tst_PluginUiExternal.cpp)
+    target_link_libraries(quemusic_plugin_ui_external_loader PRIVATE
+        quemusic_plugin_core quemusic_plugin_ui quemusic_plugin_uiplugin
+        Qt6::Core Qt6::Qml Qt6::Quick)
+    add_test(NAME quemusic_plugin_ui_external_test
+        COMMAND ${CMAKE_COMMAND}
+            "-DPROJECT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DPROJECT_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DQT6_DIR=${Qt6_DIR}"
+            "-DHOST_ARCHITECTURE=${CMAKE_SYSTEM_PROCESSOR}"
+            "-DHOST_BUILD_KEY=$<IF:$<CONFIG:Debug>,Debug,Release>"
+            "-DLOADER=$<TARGET_FILE:quemusic_plugin_ui_external_loader>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyPluginUiExternalFixture.cmake")
 
     qt_add_executable(quemusic_plugin_ui_theme_test tests/tst_PluginUiTheme.cpp)
     target_sources(quemusic_plugin_ui_theme_test PRIVATE

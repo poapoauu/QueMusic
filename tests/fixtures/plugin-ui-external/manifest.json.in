@@ -1,0 +1,19 @@
+{
+  "id": "org.quemusic.source.external-ui-fixture",
+  "sourceId": "external-ui-fixture",
+  "name": "External UI fixture",
+  "version": "1.0.0",
+  "category": "source",
+  "runtime": "native-qt",
+  "library": "@EXTERNAL_LIBRARY@",
+  "pluginApi": {"major": 1, "minHostMinor": 0},
+  "interfaces": [{"id": "org.quemusic.MusicSourcePlugin/2.0", "version": "2.0"}],
+  "runtimeRequirements": {
+    "sourceSdkAbi": 2,
+    "qtMajor": @Qt6Core_VERSION_MAJOR@,
+    "architecture": "@HOST_ARCHITECTURE@",
+    "buildKey": "@HOST_BUILD_KEY@"
+  },
+  "pluginUiApi": "1.0",
+  "ui": {"management": "qml/ManagementPage.qml"}
+}
