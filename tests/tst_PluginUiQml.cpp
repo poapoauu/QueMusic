@@ -13,6 +13,8 @@ private slots:
     void themeIsReadOnly();
     void generalKitTypesInstantiate();
     void generalControlsBehavior();
+    void managementKitTypesInstantiate();
+    void managementKitBehavior();
 };
 
 void PluginUiQmlTest::importsStandaloneModule()
@@ -137,6 +139,81 @@ void PluginUiQmlTest::generalControlsBehavior()
     QVERIFY(child("label")->property("font").value<QFont>().pixelSize() > originalFontSize);
     tokens.scaleFactor = 1.0;
     PluginTheme::instance()->apply(tokens);
+}
+
+void PluginUiQmlTest::managementKitTypesInstantiate()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    const QStringList types{QStringLiteral("PluginStatus"),
+                            QStringLiteral("PluginBadge"),
+                            QStringLiteral("PluginBusyIndicator"),
+                            QStringLiteral("PluginErrorState"),
+                            QStringLiteral("PluginEmptyState"),
+                            QStringLiteral("PluginAccountCard"),
+                            QStringLiteral("PluginServerCard"),
+                            QStringLiteral("PluginQrCode"),
+                            QStringLiteral("PluginQrLogin")};
+    for (const QString &type : types) {
+        QQmlComponent component(&engine);
+        component.setData(QStringLiteral("import QtQuick\nimport QueMusic.PluginUI 1.0\n%1 {}")
+                              .arg(type).toUtf8(), QUrl());
+        QVERIFY2(component.isReady(), qPrintable(type + QStringLiteral(": ")
+                                                + component.errorString()));
+        QScopedPointer<QObject> object(component.create());
+        QVERIFY2(object, qPrintable(type + QStringLiteral(": ")
+                                   + component.errorString()));
+    }
+}
+
+void PluginUiQmlTest::managementKitBehavior()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QueMusic.PluginUI 1.0
+        Item {
+            PluginStatus { objectName: "status"; status: "error"; text: "Offline" }
+            PluginBadge { objectName: "badge"; text: "" }
+            PluginBusyIndicator { objectName: "busy"; running: false }
+            PluginErrorState { objectName: "error"; actionVisible: true }
+            PluginEmptyState { objectName: "empty"; actionVisible: true }
+            PluginAccountCard { objectName: "account" }
+            PluginServerCard { objectName: "server" }
+            PluginQrCode { objectName: "qr"; source: "https://example.com/qr.png" }
+            PluginQrLogin { objectName: "login"; qrSource: "" }
+        }
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> form(component.create());
+    QVERIFY2(form, qPrintable(component.errorString()));
+    auto child = [&form](const char *name) { return form->findChild<QObject *>(name); };
+    QCOMPARE(child("status")->property("statusColor").value<QColor>(),
+             PluginTheme::instance()->danger());
+    QCOMPARE(child("badge")->property("implicitWidth").toReal(), 0.0);
+    QVERIFY(!child("busy")->property("animating").toBool());
+    QCOMPARE(child("server")->property("status").toString(), QStringLiteral("warning"));
+    QVERIFY(child("qr")->property("error").toBool());
+    QVERIFY(child("login"));
+
+    QSignalSpy retry(child("error"), SIGNAL(retryRequested()));
+    QVERIFY(QMetaObject::invokeMethod(child("error")->findChild<QObject *>("pluginErrorAction"),
+                                      "click"));
+    QCOMPARE(retry.count(), 1);
+    QSignalSpy emptyAction(child("empty"), SIGNAL(actionRequested()));
+    QVERIFY(QMetaObject::invokeMethod(child("empty")->findChild<QObject *>("pluginEmptyAction"),
+                                      "click"));
+    QCOMPARE(emptyAction.count(), 1);
+    QSignalSpy refresh(child("login"), SIGNAL(refreshRequested()));
+    QSignalSpy cancel(child("login"), SIGNAL(cancelRequested()));
+    QVERIFY(QMetaObject::invokeMethod(child("login")->findChild<QObject *>("pluginQrRefresh"),
+                                      "click"));
+    QVERIFY(QMetaObject::invokeMethod(child("login")->findChild<QObject *>("pluginQrCancel"),
+                                      "click"));
+    QCOMPARE(refresh.count(), 1);
+    QCOMPARE(cancel.count(), 1);
 }
 
 QTEST_MAIN(PluginUiQmlTest)
