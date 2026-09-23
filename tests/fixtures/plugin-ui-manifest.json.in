@@ -1,0 +1,17 @@
+{
+  "id": "@QUEMUSIC_UI_FIXTURE_PACKAGE_ID@",
+  "sourceId": "@QUEMUSIC_UI_FIXTURE_SOURCE_ID@",
+  "name": "Plugin UI fixture",
+  "version": "1.0.0",
+  "category": "source",
+  "runtime": "native-qt",
+  "library": "@QUEMUSIC_UI_FIXTURE_LIBRARY@",
+  "pluginApi": {"major": 1, "minHostMinor": 0},
+  "interfaces": [{"id": "org.quemusic.MusicSourcePlugin/2.0", "version": "2.0"}],
+  "runtimeRequirements": {
+    "sourceSdkAbi": 2,
+    "qtMajor": @Qt6Core_VERSION_MAJOR@,
+    "architecture": "@QUEMUSIC_TEST_ARCHITECTURE@",
+    "buildKey": "@QUEMUSIC_TEST_BUILD_KEY@"
+  }@QUEMUSIC_UI_FIXTURE_MANAGEMENT_JSON@
+}

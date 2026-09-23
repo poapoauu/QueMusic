@@ -1,6 +1,7 @@
 #include "PluginManager.h"
 
 #include "PluginManifest.h"
+#include "plugin-ui/v1/ISourceManagementUiProvider.h"
 #include "v2/IMusicSourcePluginV2.h"
 
 #include <QDir>
@@ -251,6 +252,31 @@ bool PluginManager::load(const QString &packageId)
         if (sourceSdkAbi == 2 && qobject_cast<IMusicSourcePluginV2 *>(instance) == nullptr) {
             loader->unload();
             fail(*entry, QStringLiteral("Package does not implement IMusicSourcePluginV2"));
+            return false;
+        }
+    }
+
+    auto *uiProvider = qobject_cast<ISourceManagementUiProvider *>(instance);
+    if (entry->manifest.hasManagementUi() && uiProvider == nullptr) {
+        loader->unload();
+        fail(*entry, QStringLiteral("Package declares management UI but does not implement ISourceManagementUiProvider"));
+        return false;
+    }
+    if (!entry->manifest.hasManagementUi() && uiProvider != nullptr) {
+        loader->unload();
+        fail(*entry, QStringLiteral("Package implements ISourceManagementUiProvider without manifest declaration"));
+        return false;
+    }
+    if (uiProvider != nullptr) {
+        const ManagementUiDescriptor ui = uiProvider->managementUi();
+        const QString path = ui.componentUrl.toString();
+        if (ui.uiApiVersion != entry->manifest.pluginUiApiVersion()
+            || ui.componentUrl.isEmpty() || !ui.componentUrl.isRelative()
+            || ui.componentUrl.hasQuery() || ui.componentUrl.hasFragment()
+            || path != entry->manifest.managementUiRelativePath()
+            || (!ui.supportsCreate && !ui.supportsEdit)) {
+            loader->unload();
+            fail(*entry, QStringLiteral("Package management UI provider does not match manifest"));
             return false;
         }
     }

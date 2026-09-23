@@ -216,6 +216,52 @@ file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_
 if(BUILD_TESTING)
     enable_testing()
 
+    function(canonicalize_plugin_architecture architecture output_variable)
+        string(TOLOWER "${architecture}" normalized_architecture)
+        if(normalized_architecture STREQUAL "x86_64"
+                OR normalized_architecture STREQUAL "amd64"
+                OR normalized_architecture STREQUAL "x64")
+            set(normalized_architecture "x86_64")
+        elseif(normalized_architecture STREQUAL "arm64"
+                OR normalized_architecture STREQUAL "aarch64")
+            set(normalized_architecture "arm64")
+        else()
+            message(FATAL_ERROR
+                "Unsupported source plugin target architecture: ${architecture}")
+        endif()
+        set(${output_variable} "${normalized_architecture}" PARENT_SCOPE)
+    endfunction()
+
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        set(QUEMUSIC_TEST_TARGET_ARCHITECTURES)
+        foreach(target_architecture IN LISTS CMAKE_OSX_ARCHITECTURES)
+            canonicalize_plugin_architecture(
+                "${target_architecture}" canonical_target_architecture)
+            list(APPEND QUEMUSIC_TEST_TARGET_ARCHITECTURES
+                "${canonical_target_architecture}")
+        endforeach()
+        list(REMOVE_DUPLICATES QUEMUSIC_TEST_TARGET_ARCHITECTURES)
+        list(LENGTH QUEMUSIC_TEST_TARGET_ARCHITECTURES target_architecture_count)
+        if(target_architecture_count EQUAL 2)
+            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "x86_64" x86_index)
+            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "arm64" arm_index)
+            if(x86_index EQUAL -1 OR arm_index EQUAL -1)
+                message(FATAL_ERROR
+                    "Unsupported universal source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
+            endif()
+            set(QUEMUSIC_TEST_ARCHITECTURE "universal")
+        elseif(target_architecture_count EQUAL 1)
+            list(GET QUEMUSIC_TEST_TARGET_ARCHITECTURES 0 QUEMUSIC_TEST_ARCHITECTURE)
+        else()
+            message(FATAL_ERROR
+                "Unsupported source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
+        endif()
+    else()
+        canonicalize_plugin_architecture(
+            "${CMAKE_SYSTEM_PROCESSOR}" QUEMUSIC_TEST_ARCHITECTURE)
+    endif()
+    set(QUEMUSIC_TEST_BUILD_KEY "$<IF:$<CONFIG:Debug>,Debug,Release>")
+
     qt_add_executable(quemusic_plugin_ui_contract_test tests/tst_PluginUiContract.cpp)
     target_link_libraries(quemusic_plugin_ui_contract_test PRIVATE
         quemusic_plugin_ui_sdk quemusic_source_sdk Qt6::Test)
@@ -227,6 +273,68 @@ if(BUILD_TESTING)
         quemusic_plugin_core Qt6::Test)
     add_test(NAME quemusic_plugin_ui_manifest_test
         COMMAND quemusic_plugin_ui_manifest_test)
+
+    set(QUEMUSIC_UI_FIXTURE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-plugin-ui-packages/$<CONFIG>")
+    function(add_plugin_ui_fixture variant)
+        set(target "quemusic_ui_fixture_${variant}")
+        set(package_dir "${QUEMUSIC_UI_FIXTURE_ROOT}/${variant}")
+        set(QUEMUSIC_UI_FIXTURE_PACKAGE_ID "org.quemusic.source.ui-${variant}")
+        set(QUEMUSIC_UI_FIXTURE_SOURCE_ID "ui-${variant}")
+        set(QUEMUSIC_UI_FIXTURE_LIBRARY "$<TARGET_FILE_NAME:${target}>")
+        set(QUEMUSIC_UI_FIXTURE_MANAGEMENT_JSON
+            ",\n  \"pluginUiApi\": \"1.0\",\n  \"ui\": {\"management\": \"qml/ManagementPage.qml\"}")
+        if(variant STREQUAL "undeclared")
+            set(QUEMUSIC_UI_FIXTURE_MANAGEMENT_JSON "")
+        endif()
+        add_library(${target} MODULE
+            tests/fixtures/PluginUiFixturePlugin.cpp
+            tests/fixtures/PluginUiFixturePlugin.h)
+        target_link_libraries(${target} PRIVATE
+            quemusic_source_sdk quemusic_plugin_ui_sdk)
+        target_compile_definitions(${target} PRIVATE
+            QUEMUSIC_UI_FIXTURE_PACKAGE_ID="${QUEMUSIC_UI_FIXTURE_PACKAGE_ID}"
+            QUEMUSIC_UI_FIXTURE_SOURCE_ID="${QUEMUSIC_UI_FIXTURE_SOURCE_ID}")
+        if(variant STREQUAL "provider_missing")
+            target_compile_definitions(${target} PRIVATE QUEMUSIC_UI_FIXTURE_NO_PROVIDER)
+        elseif(variant STREQUAL "wrong_version")
+            target_compile_definitions(${target} PRIVATE QUEMUSIC_UI_FIXTURE_WRONG_VERSION)
+        elseif(variant STREQUAL "wrong_path")
+            target_compile_definitions(${target} PRIVATE QUEMUSIC_UI_FIXTURE_WRONG_PATH)
+        elseif(variant STREQUAL "no_mode")
+            target_compile_definitions(${target} PRIVATE QUEMUSIC_UI_FIXTURE_NO_MODE)
+        elseif(variant STREQUAL "null_backend")
+            target_compile_definitions(${target} PRIVATE QUEMUSIC_UI_FIXTURE_NULL_BACKEND)
+        endif()
+        set_target_properties(${target} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${package_dir}")
+        configure_file(tests/fixtures/plugin-ui-manifest.json.in
+            "${CMAKE_CURRENT_BINARY_DIR}/${target}-manifest.json.in" @ONLY)
+        file(GENERATE OUTPUT "${package_dir}/manifest.json"
+            INPUT "${CMAKE_CURRENT_BINARY_DIR}/${target}-manifest.json.in")
+        file(GENERATE OUTPUT "${package_dir}/qml/ManagementPage.qml"
+            INPUT "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugin-ui/ManagementPage.qml")
+    endfunction()
+    foreach(ui_variant valid provider_missing undeclared wrong_version wrong_path no_mode null_backend)
+        add_plugin_ui_fixture(${ui_variant})
+    endforeach()
+
+    qt_add_executable(quemusic_plugin_ui_provider_test tests/tst_PluginUiProvider.cpp)
+    target_link_libraries(quemusic_plugin_ui_provider_test PRIVATE
+        quemusic_plugin_core Qt6::Test)
+    target_compile_definitions(quemusic_plugin_ui_provider_test PRIVATE
+        QUEMUSIC_UI_FIXTURE_ROOT="${QUEMUSIC_UI_FIXTURE_ROOT}")
+    foreach(ui_variant valid provider_missing undeclared wrong_version wrong_path no_mode null_backend)
+        add_dependencies(quemusic_plugin_ui_provider_test "quemusic_ui_fixture_${ui_variant}")
+    endforeach()
+    add_test(NAME quemusic_plugin_ui_provider_test COMMAND quemusic_plugin_ui_provider_test)
+
+    qt_add_executable(quemusic_plugin_ui_unload_test tests/tst_PluginUiUnload.cpp)
+    target_link_libraries(quemusic_plugin_ui_unload_test PRIVATE
+        quemusic_plugin_core Qt6::Test)
+    target_compile_definitions(quemusic_plugin_ui_unload_test PRIVATE
+        QUEMUSIC_UI_FIXTURE_ROOT="${QUEMUSIC_UI_FIXTURE_ROOT}")
+    add_dependencies(quemusic_plugin_ui_unload_test
+        quemusic_ui_fixture_valid quemusic_ui_fixture_provider_missing)
+    add_test(NAME quemusic_plugin_ui_unload_test COMMAND quemusic_plugin_ui_unload_test)
 
     qt_add_executable(quemusic_navidrome_smoke_state_test
         tests/tst_NavidromeSmokeState.cpp
@@ -345,52 +453,6 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_playback_plugin_contract_test COMMAND quemusic_playback_plugin_contract_test)
-
-    function(canonicalize_plugin_architecture architecture output_variable)
-        string(TOLOWER "${architecture}" normalized_architecture)
-        if(normalized_architecture STREQUAL "x86_64"
-                OR normalized_architecture STREQUAL "amd64"
-                OR normalized_architecture STREQUAL "x64")
-            set(normalized_architecture "x86_64")
-        elseif(normalized_architecture STREQUAL "arm64"
-                OR normalized_architecture STREQUAL "aarch64")
-            set(normalized_architecture "arm64")
-        else()
-            message(FATAL_ERROR
-                "Unsupported source plugin target architecture: ${architecture}")
-        endif()
-        set(${output_variable} "${normalized_architecture}" PARENT_SCOPE)
-    endfunction()
-
-    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
-        set(QUEMUSIC_TEST_TARGET_ARCHITECTURES)
-        foreach(target_architecture IN LISTS CMAKE_OSX_ARCHITECTURES)
-            canonicalize_plugin_architecture(
-                "${target_architecture}" canonical_target_architecture)
-            list(APPEND QUEMUSIC_TEST_TARGET_ARCHITECTURES
-                "${canonical_target_architecture}")
-        endforeach()
-        list(REMOVE_DUPLICATES QUEMUSIC_TEST_TARGET_ARCHITECTURES)
-        list(LENGTH QUEMUSIC_TEST_TARGET_ARCHITECTURES target_architecture_count)
-        if(target_architecture_count EQUAL 2)
-            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "x86_64" x86_index)
-            list(FIND QUEMUSIC_TEST_TARGET_ARCHITECTURES "arm64" arm_index)
-            if(x86_index EQUAL -1 OR arm_index EQUAL -1)
-                message(FATAL_ERROR
-                    "Unsupported universal source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
-            endif()
-            set(QUEMUSIC_TEST_ARCHITECTURE "universal")
-        elseif(target_architecture_count EQUAL 1)
-            list(GET QUEMUSIC_TEST_TARGET_ARCHITECTURES 0 QUEMUSIC_TEST_ARCHITECTURE)
-        else()
-            message(FATAL_ERROR
-                "Unsupported source plugin architecture set: ${CMAKE_OSX_ARCHITECTURES}")
-        endif()
-    else()
-        canonicalize_plugin_architecture(
-            "${CMAKE_SYSTEM_PROCESSOR}" QUEMUSIC_TEST_ARCHITECTURE)
-    endif()
-    set(QUEMUSIC_TEST_BUILD_KEY "$<IF:$<CONFIG:Debug>,Debug,Release>")
 
     function(add_v2_source_plugin_fixture target package_directory)
         add_library(${target} MODULE
