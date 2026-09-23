@@ -66,6 +66,41 @@ target_include_directories(quemusic_plugin_ui_sdk INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/quemusic>)
 
+set(QUEMUSIC_PLUGIN_UI_QML_FILES
+    plugin-ui/qml/PluginPage.qml
+    plugin-ui/qml/PluginScrollPage.qml
+    plugin-ui/qml/PluginSection.qml
+    plugin-ui/qml/PluginGroup.qml
+    plugin-ui/qml/PluginLabel.qml
+    plugin-ui/qml/PluginDescription.qml
+    plugin-ui/qml/PluginSeparator.qml
+    plugin-ui/qml/PluginButton.qml
+    plugin-ui/qml/PluginPrimaryButton.qml
+    plugin-ui/qml/PluginDangerButton.qml
+    plugin-ui/qml/PluginIconButton.qml
+    plugin-ui/qml/PluginTextField.qml
+    plugin-ui/qml/PluginPasswordField.qml
+    plugin-ui/qml/PluginNumberField.qml
+    plugin-ui/qml/PluginUrlField.qml
+    plugin-ui/qml/PluginDirectoryField.qml
+    plugin-ui/qml/PluginSwitch.qml
+    plugin-ui/qml/PluginCheckBox.qml
+    plugin-ui/qml/PluginComboBox.qml
+    plugin-ui/qml/PluginStatus.qml
+    plugin-ui/qml/PluginBadge.qml
+    plugin-ui/qml/PluginBusyIndicator.qml
+    plugin-ui/qml/PluginErrorState.qml
+    plugin-ui/qml/PluginEmptyState.qml
+    plugin-ui/qml/PluginAccountCard.qml
+    plugin-ui/qml/PluginServerCard.qml
+    plugin-ui/qml/PluginQrCode.qml
+    plugin-ui/qml/PluginQrLogin.qml)
+foreach(plugin_ui_qml_file IN LISTS QUEMUSIC_PLUGIN_UI_QML_FILES)
+    get_filename_component(plugin_ui_qml_name "${plugin_ui_qml_file}" NAME)
+    set_source_files_properties("${plugin_ui_qml_file}" PROPERTIES
+        QT_RESOURCE_ALIAS "${plugin_ui_qml_name}")
+endforeach()
+
 qt_add_library(quemusic_plugin_ui SHARED)
 qt_add_qml_module(quemusic_plugin_ui
     URI QueMusic.PluginUI
@@ -75,35 +110,7 @@ qt_add_qml_module(quemusic_plugin_ui
     SOURCES
         plugin-ui/PluginUiContext.cpp plugin-ui/PluginUiContext.h
         plugin-ui/PluginTheme.cpp plugin-ui/PluginTheme.h
-    QML_FILES
-        plugin-ui/qml/PluginPage.qml
-        plugin-ui/qml/PluginScrollPage.qml
-        plugin-ui/qml/PluginSection.qml
-        plugin-ui/qml/PluginGroup.qml
-        plugin-ui/qml/PluginLabel.qml
-        plugin-ui/qml/PluginDescription.qml
-        plugin-ui/qml/PluginSeparator.qml
-        plugin-ui/qml/PluginButton.qml
-        plugin-ui/qml/PluginPrimaryButton.qml
-        plugin-ui/qml/PluginDangerButton.qml
-        plugin-ui/qml/PluginIconButton.qml
-        plugin-ui/qml/PluginTextField.qml
-        plugin-ui/qml/PluginPasswordField.qml
-        plugin-ui/qml/PluginNumberField.qml
-        plugin-ui/qml/PluginUrlField.qml
-        plugin-ui/qml/PluginDirectoryField.qml
-        plugin-ui/qml/PluginSwitch.qml
-        plugin-ui/qml/PluginCheckBox.qml
-        plugin-ui/qml/PluginComboBox.qml
-        plugin-ui/qml/PluginStatus.qml
-        plugin-ui/qml/PluginBadge.qml
-        plugin-ui/qml/PluginBusyIndicator.qml
-        plugin-ui/qml/PluginErrorState.qml
-        plugin-ui/qml/PluginEmptyState.qml
-        plugin-ui/qml/PluginAccountCard.qml
-        plugin-ui/qml/PluginServerCard.qml
-        plugin-ui/qml/PluginQrCode.qml
-        plugin-ui/qml/PluginQrLogin.qml)
+    QML_FILES ${QUEMUSIC_PLUGIN_UI_QML_FILES})
 target_link_libraries(quemusic_plugin_ui PUBLIC
     quemusic_plugin_ui_sdk Qt6::Core Qt6::Qml Qt6::Quick)
 target_include_directories(quemusic_plugin_ui PUBLIC
