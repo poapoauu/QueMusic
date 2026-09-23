@@ -51,7 +51,6 @@ class PluginTheme final : public QObject {
     THEME_PROPERTY(bool, reducedMotion)
 #undef THEME_PROPERTY
 public:
-    explicit PluginTheme(QObject *parent = nullptr);
     static PluginTheme *instance();
     static PluginTheme *create(QQmlEngine *, QJSEngine *);
 
@@ -86,5 +85,6 @@ signals:
     void themeChanged();
 
 private:
+    explicit PluginTheme(QObject *parent = nullptr);
     PluginThemeTokens m_tokens;
 };

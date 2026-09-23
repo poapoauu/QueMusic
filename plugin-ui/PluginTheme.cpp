@@ -2,9 +2,14 @@
 
 #include <QQmlEngine>
 #include <QJSEngine>
+#include <QFontDatabase>
 
 PluginTheme::PluginTheme(QObject *parent) : QObject(parent)
 {
+    const QFont systemFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    m_tokens.fontCaption = systemFont;
+    m_tokens.fontBody = systemFont;
+    m_tokens.fontTitle = systemFont;
     m_tokens.fontCaption.setPixelSize(11);
     m_tokens.fontBody.setPixelSize(13);
     m_tokens.fontTitle.setPixelSize(17);

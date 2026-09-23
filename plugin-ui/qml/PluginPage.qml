@@ -20,7 +20,8 @@ Rectangle {
         Text {
             text: root.title
             color: PluginTheme.textPrimary
-            font: PluginTheme.fontTitle
+            font: Qt.font({ family: PluginTheme.fontTitle.family,
+                            pixelSize: PluginTheme.fontTitle.pixelSize * PluginTheme.scaleFactor })
             visible: text.length > 0
             Layout.fillWidth: true
         }

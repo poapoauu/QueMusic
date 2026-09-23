@@ -71,7 +71,25 @@ qt_add_qml_module(quemusic_plugin_ui
         plugin-ui/PluginUiContext.cpp plugin-ui/PluginUiContext.h
         plugin-ui/PluginTheme.cpp plugin-ui/PluginTheme.h
     QML_FILES
-        plugin-ui/qml/PluginPage.qml)
+        plugin-ui/qml/PluginPage.qml
+        plugin-ui/qml/PluginScrollPage.qml
+        plugin-ui/qml/PluginSection.qml
+        plugin-ui/qml/PluginGroup.qml
+        plugin-ui/qml/PluginLabel.qml
+        plugin-ui/qml/PluginDescription.qml
+        plugin-ui/qml/PluginSeparator.qml
+        plugin-ui/qml/PluginButton.qml
+        plugin-ui/qml/PluginPrimaryButton.qml
+        plugin-ui/qml/PluginDangerButton.qml
+        plugin-ui/qml/PluginIconButton.qml
+        plugin-ui/qml/PluginTextField.qml
+        plugin-ui/qml/PluginPasswordField.qml
+        plugin-ui/qml/PluginNumberField.qml
+        plugin-ui/qml/PluginUrlField.qml
+        plugin-ui/qml/PluginDirectoryField.qml
+        plugin-ui/qml/PluginSwitch.qml
+        plugin-ui/qml/PluginCheckBox.qml
+        plugin-ui/qml/PluginComboBox.qml)
 target_link_libraries(quemusic_plugin_ui PUBLIC
     quemusic_plugin_ui_sdk Qt6::Core Qt6::Qml Qt6::Quick)
 target_include_directories(quemusic_plugin_ui PUBLIC
