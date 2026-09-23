@@ -31,6 +31,9 @@ public:
     int requiredQtMajor() const;
     QString requiredArchitecture() const;
     QString requiredBuildKey() const;
+    bool hasManagementUi() const;
+    QString pluginUiApiVersion() const;
+    QString managementUiRelativePath() const;
 
 private:
     bool m_valid = false;
@@ -46,4 +49,7 @@ private:
     int m_requiredQtMajor = 0;
     QString m_requiredArchitecture;
     QString m_requiredBuildKey;
+    bool m_hasManagementUi = false;
+    QString m_pluginUiApiVersion;
+    QString m_managementUiRelativePath;
 };

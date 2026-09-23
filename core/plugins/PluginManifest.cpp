@@ -1,4 +1,5 @@
 #include "PluginManifest.h"
+#include "plugin-ui/v1/PluginUiTypes.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -203,6 +204,65 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
         return invalidManifest(QStringLiteral("Manifest library escapes package directory"), error);
     }
 
+    bool hasManagementUi = false;
+    QString pluginUiApiVersion;
+    QString managementUiRelativePath;
+    const QJsonValue uiApiValue = object.value(QStringLiteral("pluginUiApi"));
+    const QJsonValue uiValue = object.value(QStringLiteral("ui"));
+    if (!uiApiValue.isUndefined() || !uiValue.isUndefined()) {
+        if (uiApiValue.isUndefined()) {
+            return invalidManifest(QStringLiteral("Manifest management UI requires pluginUiApi"),
+                                   error);
+        }
+        if (!uiApiValue.isString()) {
+            return invalidManifest(QStringLiteral("Manifest plugin UI API must be a string"),
+                                   error);
+        }
+        if (uiApiValue.toString() != QString::fromLatin1(QUEMUSIC_PLUGIN_UI_API_V1)) {
+            return invalidManifest(QStringLiteral("Manifest plugin UI API is unsupported"), error);
+        }
+        if (uiValue.isUndefined()) {
+            return invalidManifest(QStringLiteral("Manifest plugin UI management path is required"),
+                                   error);
+        }
+        if (!uiValue.isObject()) {
+            return invalidManifest(QStringLiteral("Manifest UI must be an object"), error);
+        }
+        const QJsonValue pathValue = uiValue.toObject().value(QStringLiteral("management"));
+        if (pathValue.isUndefined()) {
+            return invalidManifest(QStringLiteral("Manifest plugin UI management path is required"),
+                                   error);
+        }
+        if (!pathValue.isString() || pathValue.toString().isEmpty()) {
+            return invalidManifest(QStringLiteral("Manifest plugin UI management path is invalid"),
+                                   error);
+        }
+        const QString path = pathValue.toString();
+        const QString decoded = QUrl::fromPercentEncoding(path.toUtf8());
+        if (QFileInfo(decoded).isAbsolute() || !QUrl(path).scheme().isEmpty()
+            || decoded.contains(QLatin1Char('\\'))) {
+            return invalidManifest(
+                QStringLiteral("Manifest plugin UI management path must be package-relative"),
+                error);
+        }
+        const QStringList parts = decoded.split(QLatin1Char('/'), Qt::KeepEmptyParts);
+        if (parts.contains(QString()) || parts.contains(QStringLiteral("."))
+            || parts.contains(QStringLiteral(".."))) {
+            return invalidManifest(
+                QStringLiteral("Manifest plugin UI management path escapes package directory"),
+                error);
+        }
+        const QFileInfo pageInfo(QDir(packageRoot).filePath(decoded));
+        const QString pagePath = pageInfo.canonicalFilePath();
+        if (!pageInfo.isFile() || !pagePath.startsWith(packageRoot + QDir::separator())) {
+            return invalidManifest(
+                QStringLiteral("Manifest plugin UI management file does not exist"), error);
+        }
+        hasManagementUi = true;
+        pluginUiApiVersion = uiApiValue.toString();
+        managementUiRelativePath = decoded;
+    }
+
     const QJsonValue runtimeRequirementsValue =
         object.value(QStringLiteral("runtimeRequirements"));
     if (interfaceAbi == sourceSdkV2Abi && !runtimeRequirementsValue.isObject()) {
@@ -294,6 +354,9 @@ PluginManifest PluginManifest::fromFile(const QString &manifestPath, QString *er
     manifest.m_requiredQtMajor = requiredQtMajor;
     manifest.m_requiredArchitecture = requiredArchitecture;
     manifest.m_requiredBuildKey = requiredBuildKey;
+    manifest.m_hasManagementUi = hasManagementUi;
+    manifest.m_pluginUiApiVersion = pluginUiApiVersion;
+    manifest.m_managementUiRelativePath = managementUiRelativePath;
     return manifest;
 }
 
@@ -360,4 +423,19 @@ QString PluginManifest::requiredArchitecture() const
 QString PluginManifest::requiredBuildKey() const
 {
     return m_requiredBuildKey;
+}
+
+bool PluginManifest::hasManagementUi() const
+{
+    return m_hasManagementUi;
+}
+
+QString PluginManifest::pluginUiApiVersion() const
+{
+    return m_pluginUiApiVersion;
+}
+
+QString PluginManifest::managementUiRelativePath() const
+{
+    return m_managementUiRelativePath;
 }

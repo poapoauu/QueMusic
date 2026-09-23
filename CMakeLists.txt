@@ -86,6 +86,7 @@ target_compile_definitions(quemusic_plugin_core PRIVATE
 )
 target_link_libraries(quemusic_plugin_core PUBLIC
     quemusic_source_sdk
+    quemusic_plugin_ui_sdk
     Qt6::Core
 )
 target_include_directories(quemusic_plugin_core PUBLIC
@@ -220,6 +221,12 @@ if(BUILD_TESTING)
         quemusic_plugin_ui_sdk quemusic_source_sdk Qt6::Test)
     add_test(NAME quemusic_plugin_ui_contract_test
         COMMAND quemusic_plugin_ui_contract_test)
+
+    qt_add_executable(quemusic_plugin_ui_manifest_test tests/tst_PluginUiManifest.cpp)
+    target_link_libraries(quemusic_plugin_ui_manifest_test PRIVATE
+        quemusic_plugin_core Qt6::Test)
+    add_test(NAME quemusic_plugin_ui_manifest_test
+        COMMAND quemusic_plugin_ui_manifest_test)
 
     qt_add_executable(quemusic_navidrome_smoke_state_test
         tests/tst_NavidromeSmokeState.cpp
@@ -832,6 +839,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/core/plugins
     )
     target_link_libraries(quemusic_plugin_manifest_test PRIVATE
+        quemusic_plugin_ui_sdk
         Qt6::Core
         Qt6::Test
     )
