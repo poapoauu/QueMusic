@@ -19,3 +19,6 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/package/manifest.json"
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/package/qml")
 configure_file(ManagementPage.qml
     "${CMAKE_CURRENT_BINARY_DIR}/package/qml/ManagementPage.qml" COPYONLY)
+
+add_executable(external_qml_probe ExternalQmlProbe.cpp)
+target_link_libraries(external_qml_probe PRIVATE Qt6::Qml Qt6::Quick)

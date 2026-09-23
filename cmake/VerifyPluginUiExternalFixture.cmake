@@ -11,6 +11,9 @@ set(stage "${PROJECT_BUILD_DIR}/plugin-ui-external-stage")
 set(fixture_source "${PROJECT_SOURCE_DIR}/tests/fixtures/plugin-ui-external")
 set(fixture_build "${PROJECT_BUILD_DIR}/plugin-ui-external-build")
 
+# Avoid stale archives from an earlier packaging layout masking install errors.
+file(REMOVE_RECURSE "${stage}")
+
 function(run_checked description)
     execute_process(COMMAND ${ARGN}
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
@@ -34,6 +37,8 @@ run_checked("External build" "${CMAKE_COMMAND}" --build "${fixture_build}"
 run_checked("External QML import lint" "${CMAKE_COMMAND}"
     "-DROOT=${fixture_source}" "-DINPUT=${fixture_source}/ManagementPage.qml"
     -P "${PROJECT_SOURCE_DIR}/cmake/ValidatePluginQmlImports.cmake")
+run_checked("Installed QML module probe" "${CMAKE_COMMAND}" -E env
+    "QT_QPA_PLATFORM=offscreen" "${fixture_build}/external_qml_probe" "${stage}")
 run_checked("External plugin and QML load" "${CMAKE_COMMAND}" -E env
     "QT_QPA_PLATFORM=offscreen" "${LOADER}" "${fixture_build}" "${stage}")
 

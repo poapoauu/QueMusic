@@ -67,6 +67,10 @@ void PluginUiThemeTest::contextIsReadOnlyAndInvalidates()
     QVERIFY(context.isValid());
     QCOMPARE(context.pluginPackageId(), QStringLiteral("package"));
     QCOMPARE(context.backend(), &backend);
+    const QMetaProperty modeProperty = context.metaObject()->property(
+        context.metaObject()->indexOfProperty("mode"));
+    QCOMPARE(modeProperty.metaType().name(), "PluginUiMode");
+    QCOMPARE(modeProperty.read(&context).value<PluginUiMode>(), PluginUiMode::Edit);
     QVERIFY(context.metaObject()->property(context.metaObject()->indexOfProperty("backend"))
                 .isWritable() == false);
     context.invalidate();

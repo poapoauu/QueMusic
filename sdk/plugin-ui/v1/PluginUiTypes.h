@@ -2,10 +2,12 @@
 
 #include <QString>
 #include <QUrl>
+#include <QMetaType>
 
 #define QUEMUSIC_PLUGIN_UI_API_V1 "1.0"
 
 enum class PluginUiMode { Create, Edit };
+Q_DECLARE_METATYPE(PluginUiMode)
 
 struct PluginUiContextData {
     QString pluginPackageId;

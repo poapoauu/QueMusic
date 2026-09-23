@@ -66,7 +66,7 @@ target_include_directories(quemusic_plugin_ui_sdk INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/quemusic>)
 
-qt_add_library(quemusic_plugin_ui STATIC)
+qt_add_library(quemusic_plugin_ui SHARED)
 qt_add_qml_module(quemusic_plugin_ui
     URI QueMusic.PluginUI
     VERSION 1.0
@@ -113,16 +113,24 @@ target_include_directories(quemusic_plugin_ui PUBLIC
 set_target_properties(quemusic_source_sdk PROPERTIES EXPORT_NAME source_sdk)
 set_target_properties(quemusic_plugin_ui_sdk PROPERTIES EXPORT_NAME plugin_ui_sdk)
 set_target_properties(quemusic_plugin_ui PROPERTIES EXPORT_NAME plugin_ui)
-set_target_properties(quemusic_plugin_uiplugin PROPERTIES EXPORT_NAME plugin_ui_qml_plugin)
 install(TARGETS quemusic_source_sdk quemusic_plugin_ui_sdk
-        quemusic_plugin_ui quemusic_plugin_uiplugin
-        quemusic_plugin_ui_resources_1 quemusic_plugin_ui_resources_2
-        quemusic_plugin_uiplugin_init
+        quemusic_plugin_ui
     EXPORT QueMusicPluginSdkTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PluginSdk
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PluginSdk
-    OBJECTS DESTINATION ${CMAKE_INSTALL_LIBDIR}/quemusic/objects
     COMPONENT PluginSdk)
+install(TARGETS quemusic_plugin_uiplugin
+    LIBRARY DESTINATION "${CMAKE_INSTALL_DATADIR}/quemusic/qml/QueMusic/PluginUI"
+        COMPONENT PluginSdk
+    RUNTIME DESTINATION "${CMAKE_INSTALL_DATADIR}/quemusic/qml/QueMusic/PluginUI"
+        COMPONENT PluginSdk)
+if(APPLE)
+    set_target_properties(quemusic_plugin_uiplugin PROPERTIES
+        INSTALL_RPATH "@loader_path/../../../../../${CMAKE_INSTALL_LIBDIR}")
+elseif(UNIX)
+    set_target_properties(quemusic_plugin_uiplugin PROPERTIES
+        INSTALL_RPATH "\$ORIGIN/../../../../../${CMAKE_INSTALL_LIBDIR}")
+endif()
 install(DIRECTORY sdk/source/v2/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/v2
     COMPONENT PluginSdk
@@ -325,7 +333,7 @@ if(BUILD_TESTING)
     qt_add_executable(quemusic_plugin_ui_external_loader
         tests/tst_PluginUiExternal.cpp)
     target_link_libraries(quemusic_plugin_ui_external_loader PRIVATE
-        quemusic_plugin_core quemusic_plugin_ui quemusic_plugin_uiplugin
+        quemusic_plugin_core quemusic_plugin_ui
         Qt6::Core Qt6::Qml Qt6::Quick)
     add_test(NAME quemusic_plugin_ui_external_test
         COMMAND ${CMAKE_COMMAND}
@@ -348,7 +356,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(quemusic_plugin_ui_qml_test tests/tst_PluginUiQml.cpp)
     target_link_libraries(quemusic_plugin_ui_qml_test PRIVATE
-        quemusic_plugin_ui quemusic_plugin_uiplugin Qt6::Test Qt6::Qml Qt6::Quick)
+        quemusic_plugin_ui Qt6::Test Qt6::Qml Qt6::Quick)
     target_compile_definitions(quemusic_plugin_ui_qml_test PRIVATE
         QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME quemusic_plugin_ui_qml_test COMMAND quemusic_plugin_ui_qml_test)
@@ -1124,7 +1132,7 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     $<$<PLATFORM_ID:Windows>:icon.rc>
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_plugin_ui quemusic_plugin_uiplugin)
+target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_plugin_ui)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core/plugin-ui

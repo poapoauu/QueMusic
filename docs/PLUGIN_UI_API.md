@@ -85,10 +85,12 @@ target_link_libraries(my_source PRIVATE
     QueMusic::source_sdk QueMusic::plugin_ui_sdk Qt6::Core)
 ```
 
-`QueMusic::plugin_ui` and `QueMusic::plugin_ui_qml_plugin` are the public Host
-runtime/QML module targets. The installed QML module is under
-`share/quemusic/qml/QueMusic/PluginUI`. The reference external package in
-`tests/fixtures/plugin-ui-external` builds only from installed public targets.
+`QueMusic::plugin_ui` is the public Host runtime target. The generated QML
+plugin is a deployment artifact, not a link target; it is installed beside the
+module's `qmldir` under `share/quemusic/qml/QueMusic/PluginUI`. The reference
+external package in `tests/fixtures/plugin-ui-external` builds only from
+installed public targets, and its standalone Qt-only probe imports the module
+without linking any QueMusic runtime or build-tree plugin target.
 
 The Host service surface never exposes Secret plaintext to plugin QML. QML may
 request asynchronous save/clear and ask whether a Secret is configured; native

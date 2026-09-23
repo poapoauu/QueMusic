@@ -6,8 +6,12 @@ Item {
     property url source: ""
     readonly property bool validSource: {
         const value = source.toString()
-        return value.startsWith("qrc:/") || value.startsWith("file:/")
-            || value.startsWith("image://")
+        const packageRelative = value.length > 0
+            && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)
+            && !value.startsWith("/")
+            && value.split("/").indexOf("..") === -1
+        return packageRelative || value.startsWith("qrc:/")
+            || value.startsWith("file:/") || value.startsWith("image://")
     }
     readonly property bool error: !validSource || qrImage.status === Image.Error
     implicitWidth: 180 * PluginTheme.scaleFactor

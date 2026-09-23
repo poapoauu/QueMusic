@@ -6,6 +6,16 @@
 #include <QPointer>
 #include <QtQml/qqmlregistration.h>
 
+namespace PluginUiModeQmlRegistration {
+    Q_NAMESPACE
+    QML_NAMED_ELEMENT(PluginUiMode)
+    enum Value {
+        Create = static_cast<int>(::PluginUiMode::Create),
+        Edit = static_cast<int>(::PluginUiMode::Edit)
+    };
+    Q_ENUM_NS(Value)
+}
+
 class PluginUiContext : public QObject {
     Q_OBJECT
     QML_NAMED_ELEMENT(PluginUiContext)
@@ -14,7 +24,7 @@ class PluginUiContext : public QObject {
     Q_PROPERTY(QString sourceId READ sourceId NOTIFY contextChanged)
     Q_PROPERTY(QString sourceInstanceId READ sourceInstanceId NOTIFY contextChanged)
     Q_PROPERTY(QString accountId READ accountId NOTIFY contextChanged)
-    Q_PROPERTY(int mode READ mode NOTIFY contextChanged)
+    Q_PROPERTY(PluginUiMode mode READ mode NOTIFY contextChanged)
     Q_PROPERTY(QObject *backend READ backend NOTIFY contextChanged)
     Q_PROPERTY(QObject *settings READ settings NOTIFY contextChanged)
     Q_PROPERTY(QObject *capabilities READ capabilities NOTIFY contextChanged)
@@ -27,7 +37,7 @@ public:
     QString sourceId() const { return m_data.sourceId; }
     QString sourceInstanceId() const { return m_data.sourceInstanceId; }
     QString accountId() const { return m_data.accountId; }
-    int mode() const { return static_cast<int>(m_data.mode); }
+    PluginUiMode mode() const { return m_data.mode; }
     QObject *backend() const { return m_backend; }
     QObject *settings() const { return m_settings; }
     QObject *capabilities() const { return m_capabilities; }

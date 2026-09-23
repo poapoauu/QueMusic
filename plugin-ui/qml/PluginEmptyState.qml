@@ -9,10 +9,12 @@ Column {
     property bool actionVisible: false
     signal actionRequested()
     spacing: PluginTheme.spacingSmall
-    PluginLabel { text: root.title; visible: text.length > 0 }
-    PluginDescription { text: root.description; visible: text.length > 0 }
+    width: 240 * PluginTheme.scaleFactor
+    PluginLabel { width: root.width; text: root.title; visible: text.length > 0 }
+    PluginDescription { width: root.width; text: root.description; visible: text.length > 0 }
     PluginButton {
         objectName: "pluginEmptyAction"
+        width: Math.min(implicitWidth, root.width)
         text: root.actionText
         visible: root.actionVisible
         onClicked: root.actionRequested()

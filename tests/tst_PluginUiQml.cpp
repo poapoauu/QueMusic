@@ -1,4 +1,7 @@
 #include <QGuiApplication>
+#include <QAccessible>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QTest>
@@ -13,8 +16,10 @@ private slots:
     void themeIsReadOnly();
     void generalKitTypesInstantiate();
     void generalControlsBehavior();
+    void keyboardNavigationAndAccessibility();
     void managementKitTypesInstantiate();
     void managementKitBehavior();
+    void narrowLongTextLayoutHasNoWarnings();
 };
 
 void PluginUiQmlTest::importsStandaloneModule()
@@ -25,12 +30,17 @@ void PluginUiQmlTest::importsStandaloneModule()
     component.setData(R"(
         import QtQuick
         import QueMusic.PluginUI 1.0
-        PluginPage { width: 480; title: "Fixture" }
+        PluginPage {
+            width: 480
+            title: "Fixture"
+            property bool editModeValueIsStable: PluginUiMode.Edit === 1
+        }
     )", QUrl());
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
     QScopedPointer<QObject> object(component.create());
     QVERIFY2(object, qPrintable(component.errorString()));
     QCOMPARE(object->property("title").toString(), QStringLiteral("Fixture"));
+    QVERIFY(object->property("editModeValueIsStable").toBool());
 }
 
 void PluginUiQmlTest::themeIsReadOnly()
@@ -141,6 +151,56 @@ void PluginUiQmlTest::generalControlsBehavior()
     PluginTheme::instance()->apply(tokens);
 }
 
+void PluginUiQmlTest::keyboardNavigationAndAccessibility()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QtQuick.Window
+        import QueMusic.PluginUI 1.0
+        Window {
+            width: 320; height: 240; visible: true
+            Column {
+                PluginTextField { objectName: "first"; placeholderText: "Server address" }
+                PluginButton { objectName: "disabled"; text: "Unavailable"; enabled: false }
+                PluginButton { objectName: "second"; text: "Save account" }
+                PluginSwitch { objectName: "third"; text: "Enable sync" }
+            }
+        }
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *window = qobject_cast<QQuickWindow *>(object.data());
+    QVERIFY(window);
+    auto child = [&object](const char *name) { return object->findChild<QQuickItem *>(name); };
+    auto *first = child("first");
+    auto *second = child("second");
+    auto *third = child("third");
+    QVERIFY(first && second && third);
+
+    first->forceActiveFocus();
+    QVERIFY(first->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Tab);
+    QVERIFY(second->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Tab);
+    QVERIFY(third->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Backtab);
+    QVERIFY(second->hasActiveFocus());
+
+    auto accessibleName = [](QObject *target) {
+        QAccessibleInterface *interface = QAccessible::queryAccessibleInterface(target);
+        return interface ? interface->text(QAccessible::Name) : QString();
+    };
+    QCOMPARE(accessibleName(first), QStringLiteral("Server address"));
+    QCOMPARE(accessibleName(second), QStringLiteral("Save account"));
+    QCOMPARE(accessibleName(third), QStringLiteral("Enable sync"));
+    QCOMPARE(warnings.count(), 0);
+}
+
 void PluginUiQmlTest::managementKitTypesInstantiate()
 {
     QQmlEngine engine;
@@ -183,6 +243,7 @@ void PluginUiQmlTest::managementKitBehavior()
             PluginAccountCard { objectName: "account" }
             PluginServerCard { objectName: "server" }
             PluginQrCode { objectName: "qr"; source: "https://example.com/qr.png" }
+            PluginQrCode { objectName: "relativeQr"; source: "qr.png" }
             PluginQrLogin { objectName: "login"; qrSource: "" }
         }
     )", QUrl());
@@ -196,6 +257,7 @@ void PluginUiQmlTest::managementKitBehavior()
     QVERIFY(!child("busy")->property("animating").toBool());
     QCOMPARE(child("server")->property("status").toString(), QStringLiteral("warning"));
     QVERIFY(child("qr")->property("error").toBool());
+    QVERIFY(child("relativeQr")->property("validSource").toBool());
     QVERIFY(child("login"));
 
     QSignalSpy retry(child("error"), SIGNAL(retryRequested()));
@@ -214,6 +276,35 @@ void PluginUiQmlTest::managementKitBehavior()
                                       "click"));
     QCOMPARE(refresh.count(), 1);
     QCOMPARE(cancel.count(), 1);
+}
+
+void PluginUiQmlTest::narrowLongTextLayoutHasNoWarnings()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QueMusic.PluginUI 1.0
+        Item {
+            width: 120; height: 400
+            PluginErrorState {
+                id: errorState
+                objectName: "errorState"
+                width: parent.width
+                title: "A very long connection error title that must wrap"
+                description: "A detailed recovery message that must remain inside a narrow plugin panel."
+            }
+            property bool contentFits: errorState.children.every(
+                function(child) { return !child.visible || child.width <= errorState.width })
+        }
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    QVERIFY(object->property("contentFits").toBool());
+    QCOMPARE(warnings.count(), 0);
 }
 
 QTEST_MAIN(PluginUiQmlTest)

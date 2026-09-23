@@ -9,10 +9,17 @@ Column {
     property bool actionVisible: false
     signal retryRequested()
     spacing: PluginTheme.spacingSmall
-    PluginLabel { text: root.title; color: PluginTheme.danger; visible: text.length > 0 }
-    PluginDescription { text: root.description; visible: text.length > 0 }
+    width: 240 * PluginTheme.scaleFactor
+    PluginLabel {
+        width: root.width
+        text: root.title
+        color: PluginTheme.danger
+        visible: text.length > 0
+    }
+    PluginDescription { width: root.width; text: root.description; visible: text.length > 0 }
     PluginButton {
         objectName: "pluginErrorAction"
+        width: Math.min(implicitWidth, root.width)
         text: root.actionText
         visible: root.actionVisible
         onClicked: root.retryRequested()
