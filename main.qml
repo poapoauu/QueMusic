@@ -15,6 +15,7 @@ import QtQuick.Controls.Basic
 
 Window {
     id: window
+    PluginThemeBinding { id: pluginThemeBinding }
     property var musicAdapter: originalUiMusic
     property var playbackAdapter: securePlaybackControls
     readonly property bool securePlaybackActive: playbackCoordinator

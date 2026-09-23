@@ -62,6 +62,21 @@ target_link_libraries(quemusic_plugin_ui_sdk INTERFACE Qt6::Core)
 target_include_directories(quemusic_plugin_ui_sdk INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
 
+qt_add_library(quemusic_plugin_ui STATIC)
+qt_add_qml_module(quemusic_plugin_ui
+    URI QueMusic.PluginUI
+    VERSION 1.0
+    RESOURCE_PREFIX /qt/qml
+    SOURCES
+        plugin-ui/PluginUiContext.cpp plugin-ui/PluginUiContext.h
+        plugin-ui/PluginTheme.cpp plugin-ui/PluginTheme.h
+    QML_FILES
+        plugin-ui/qml/PluginPage.qml)
+target_link_libraries(quemusic_plugin_ui PUBLIC
+    quemusic_plugin_ui_sdk Qt6::Core Qt6::Qml Qt6::Quick)
+target_include_directories(quemusic_plugin_ui PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/plugin-ui)
+
 add_library(quemusic_music_page_model STATIC
     core/music/SourceScopeStore.cpp
     core/music/SourceScopeStore.h
@@ -215,6 +230,24 @@ file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_
 
 if(BUILD_TESTING)
     enable_testing()
+
+    qt_add_executable(quemusic_plugin_ui_theme_test tests/tst_PluginUiTheme.cpp)
+    target_sources(quemusic_plugin_ui_theme_test PRIVATE
+        core/plugin-ui/PluginThemeAdapter.cpp core/plugin-ui/PluginThemeAdapter.h)
+    target_include_directories(quemusic_plugin_ui_theme_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/plugin-ui)
+    target_link_libraries(quemusic_plugin_ui_theme_test PRIVATE
+        quemusic_plugin_ui Qt6::Test Qt6::Qml)
+    add_test(NAME quemusic_plugin_ui_theme_test COMMAND quemusic_plugin_ui_theme_test)
+
+    qt_add_executable(quemusic_plugin_ui_qml_test tests/tst_PluginUiQml.cpp)
+    target_link_libraries(quemusic_plugin_ui_qml_test PRIVATE
+        quemusic_plugin_ui quemusic_plugin_uiplugin Qt6::Test Qt6::Qml Qt6::Quick)
+    target_compile_definitions(quemusic_plugin_ui_qml_test PRIVATE
+        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME quemusic_plugin_ui_qml_test COMMAND quemusic_plugin_ui_qml_test)
+    set_tests_properties(quemusic_plugin_ui_qml_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     function(canonicalize_plugin_architecture architecture output_variable)
         string(TOLOWER "${architecture}" normalized_architecture)
@@ -985,8 +1018,10 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     $<$<PLATFORM_ID:Windows>:icon.rc>
 )
+target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_plugin_ui quemusic_plugin_uiplugin)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/plugin-ui
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/api
     ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib
@@ -1062,6 +1097,7 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
     VERSION 1.0
     QML_FILES
         main.qml
+        core/plugin-ui/PluginThemeBinding.qml
         SettingsView.qml
         layout/MainContent.qml
         layout/PlayerControl.qml
@@ -1103,6 +1139,8 @@ qt6_add_qml_module(${PROJECT_NAME} # 默认导入项目的
         resources/app/icons/qticon.png
         resources/app/icons/qwk.png
     SOURCES
+        core/plugin-ui/PluginThemeAdapter.cpp
+        core/plugin-ui/PluginThemeAdapter.h
         cpp/CoverHelper.cpp
         cpp/CoverHelper.h
         cpp/ColorExtractor.cpp
