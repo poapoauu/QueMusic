@@ -56,6 +56,12 @@ target_include_directories(quemusic_source_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source
 )
 
+add_library(quemusic_plugin_ui_sdk INTERFACE)
+target_compile_features(quemusic_plugin_ui_sdk INTERFACE cxx_std_17)
+target_link_libraries(quemusic_plugin_ui_sdk INTERFACE Qt6::Core)
+target_include_directories(quemusic_plugin_ui_sdk INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
+
 add_library(quemusic_music_page_model STATIC
     core/music/SourceScopeStore.cpp
     core/music/SourceScopeStore.h
@@ -208,6 +214,12 @@ file(GLOB_RECURSE QML_COMPONENTS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_
 
 if(BUILD_TESTING)
     enable_testing()
+
+    qt_add_executable(quemusic_plugin_ui_contract_test tests/tst_PluginUiContract.cpp)
+    target_link_libraries(quemusic_plugin_ui_contract_test PRIVATE
+        quemusic_plugin_ui_sdk quemusic_source_sdk Qt6::Test)
+    add_test(NAME quemusic_plugin_ui_contract_test
+        COMMAND quemusic_plugin_ui_contract_test)
 
     qt_add_executable(quemusic_navidrome_smoke_state_test
         tests/tst_NavidromeSmokeState.cpp
