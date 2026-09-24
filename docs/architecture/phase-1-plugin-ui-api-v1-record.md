@@ -3,7 +3,7 @@
 > Completed: 2026-09-24
 > Architecture baseline: `QueMusic-Plugin-Architecture-Final-Plan.md`
 > Phase 0 base commit: `85b089c`
-> Phase 1 implementation commit before this evidence record: `e8d01fb`
+> Phase 1 implementation commit before this evidence record: `c50cbd2`
 
 ## Outcome
 
@@ -72,8 +72,9 @@ The public-boundary scan found no private `QueMusic 1.0` import or references to
 
 Interaction coverage verifies forward Tab and Backtab focus traversal,
 disabled-control skipping, accessible names, scale changes, and long text in a
-120-pixel-wide layout without `QQmlEngine` warnings. `PluginQrCode` accepts
-package-relative local assets while continuing to reject remote URLs.
+120-pixel-wide layout without `QQmlEngine` warnings. `PluginQrCode` loads a real
+package-relative image resolved by the calling page with `Qt.resolvedUrl`,
+reaches `Image.Ready`, and continues to reject remote URLs.
 
 ## Manifest and import rules
 
@@ -131,7 +132,7 @@ Full regression command:
   --test-dir build-phase1-final --output-on-failure
 ```
 
-Result: **49/49 passed, 0 failed**, total test time 74.62 seconds. This exceeds
+Result: **49/49 passed, 0 failed**, total test time 76.68 seconds. This exceeds
 the Phase 0 baseline of 36 tests. The authoritative inventory was:
 
 ```text
@@ -191,6 +192,9 @@ all exited successfully. The installed CMake metadata contains no checkout,
 `core/`, or `components/` path. The staged QML plugin has install RPATH
 `@loader_path/../../../../../lib`, resolving its shared Host runtime from the
 same installation prefix.
+On Windows, the exported runtime remains in `bin` and is additionally installed
+beside the QML plugin so the platform DLL search rules support the same Qt-only
+installed-module probe; the verifier requires that colocated runtime on Windows.
 
 ## Deferred to Phase 2 and later
 
