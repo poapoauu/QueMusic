@@ -2,6 +2,7 @@
 #include "SourceRegistry.h"
 #include "SourceAccountStore.h"
 #include "fixtures/SettingsV2FixturePlugin.h"
+#include "PluginManagementUiSession.h"
 #include <QSettings>
 #include <QDir>
 #include <QSignalSpy>
@@ -38,6 +39,22 @@ struct Harness {
         manager.pluginInstance(packageId)->setProperty("control", QVariant::fromValue<void *>(&control));
         controller = std::make_unique<PluginSettingsController>(&manager, &registry, &store);
         return true;
+    }
+};
+struct UiHarness {
+    QTemporaryDir temp;
+    QSettings settings{temp.filePath("ui.ini"), QSettings::IniFormat};
+    Secrets secrets;
+    SourceAccountStore store{&settings, &secrets};
+    PluginManager manager;
+    SourceRegistry registry{&manager, &store};
+    std::unique_ptr<PluginSettingsController> controller;
+    const QString id = QStringLiteral("org.quemusic.source.ui-valid");
+    bool load() {
+        manager.addSearchPath(QUEMUSIC_UI_FIXTURE_ROOT);
+        if (manager.discover() != 7 || !manager.load(id)) return false;
+        controller = std::make_unique<PluginSettingsController>(&manager, &registry, &store);
+        return controller->selectPlugin(id);
     }
 };
 QVariantMap field(const PluginSettingsController &c, const QString &id) {
@@ -80,7 +97,94 @@ private slots:
     void deletionDuringInvocation_data();
     void deletionDuringInvocation();
     void selectionAndEditsCancel();
+    void managementUiCreateEditAndClose();
+    void deferredUnloadWaitsForPage();
+    void selectionWaitsForPageTeardown();
+    void activeInstanceMutationWaitsForPage();
+    void managementUiFallbackAndReload();
 };
+void PluginSettingsControllerTest::managementUiCreateEditAndClose()
+{
+    UiHarness h; QVERIFY(h.load()); auto &c = *h.controller;
+    QVERIFY(c.managementUiAvailable());
+    QVERIFY(c.openManagementUi(PluginUiMode::Create));
+    QVERIFY(c.managementUiSession());
+    QCOMPARE(c.managementUiSession()->context()->mode(), PluginUiMode::Create);
+    QVERIFY(!c.managementUiSession()->context()->accountId().isEmpty());
+    QCOMPARE(h.manager.plugin(h.id).activeLeases, 1);
+    c.beginCloseManagementUi();
+    QVERIFY(!c.managementUiSession()->context()->isValid());
+    c.finishCloseManagementUi();
+    QVERIFY(!c.managementUiSession());
+    QCOMPARE(h.manager.plugin(h.id).activeLeases, 0);
+    QVERIFY(h.store.saveValidatedV2({h.id, "ui-valid", "home", "Home", true, 1, {}, {}}));
+    QVERIFY(c.selectInstance("ui-valid/home"));
+    QVERIFY(c.openManagementUi(PluginUiMode::Edit));
+    QCOMPARE(c.managementUiSession()->context()->sourceInstanceId(), QString("ui-valid/home"));
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+}
+void PluginSettingsControllerTest::deferredUnloadWaitsForPage()
+{
+    UiHarness h; QVERIFY(h.load()); auto &c = *h.controller;
+    QVERIFY(c.openManagementUi(PluginUiMode::Create));
+    QSignalSpy closeRequested(&c, &PluginSettingsController::managementUiCloseRequested);
+    QVERIFY(c.unloadPlugin(h.id));
+    QCOMPARE(closeRequested.size(), 1);
+    QCOMPARE(h.manager.plugin(h.id).state, PluginState::Loaded);
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+    QCOMPARE(h.manager.plugin(h.id).state, PluginState::Unloaded);
+    QVERIFY(!c.managementUiSession());
+}
+void PluginSettingsControllerTest::selectionWaitsForPageTeardown()
+{
+    UiHarness h; QVERIFY(h.load()); auto &c = *h.controller;
+    QVERIFY(c.openManagementUi(PluginUiMode::Create));
+    QSignalSpy closeRequested(&c, &PluginSettingsController::managementUiCloseRequested);
+    QVERIFY(c.selectInstance(""));
+    QCOMPARE(closeRequested.size(), 1);
+    QVERIFY(c.managementUiSession());
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+    QVERIFY(!c.managementUiSession());
+    QCOMPARE(h.manager.plugin(h.id).activeLeases, 0);
+}
+void PluginSettingsControllerTest::activeInstanceMutationWaitsForPage()
+{
+    UiHarness h; QVERIFY(h.load()); auto &c = *h.controller;
+    QVERIFY(h.store.saveValidatedV2({h.id, "ui-valid", "home", "Home", true, 1, {}, {}}));
+    QVERIFY(c.selectInstance("ui-valid/home"));
+    QVERIFY(c.openManagementUi(PluginUiMode::Edit));
+    QSignalSpy closeRequested(&c, &PluginSettingsController::managementUiCloseRequested);
+    QVERIFY(c.setInstanceEnabled("ui-valid/home", false));
+    QCOMPARE(closeRequested.size(), 1);
+    QVERIFY(h.store.storedAccount("ui-valid", "home")->enabled);
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+    QVERIFY(!h.store.storedAccount("ui-valid", "home")->enabled);
+    QVERIFY(c.selectInstance("ui-valid/home"));
+    QVERIFY(!c.openManagementUi(PluginUiMode::Edit));
+    QVERIFY(h.store.setEnabled("ui-valid", "home", true));
+    QVERIFY(c.openManagementUi(PluginUiMode::Edit));
+    QVERIFY(c.removeInstance("ui-valid/home"));
+    QVERIFY(h.store.storedAccount("ui-valid", "home"));
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+    QVERIFY(!h.store.storedAccount("ui-valid", "home"));
+}
+void PluginSettingsControllerTest::managementUiFallbackAndReload()
+{
+    Harness schema; QVERIFY(schema.load());
+    QVERIFY(schema.controller->selectPlugin(packageId));
+    QVERIFY(!schema.controller->managementUiAvailable());
+    QVERIFY(!schema.controller->openManagementUi(PluginUiMode::Create));
+    QVERIFY(!schema.controller->managementUiSession());
+
+    UiHarness h; QVERIFY(h.load()); auto &c = *h.controller;
+    QVERIFY(c.openManagementUi(PluginUiMode::Create));
+    QVERIFY(c.reloadPlugin(h.id));
+    QCOMPARE(h.manager.plugin(h.id).activeLeases, 1);
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+    QCOMPARE(h.manager.plugin(h.id).state, PluginState::Loaded);
+    QCOMPARE(h.manager.plugin(h.id).activeLeases, 0);
+    QVERIFY(!c.managementUiSession());
+}
 void PluginSettingsControllerTest::genericCrudAndForeignIdentity()
 {
     Harness h; QVERIFY(h.load()); auto &c = *h.controller; QVERIFY(c.selectPlugin(packageId));

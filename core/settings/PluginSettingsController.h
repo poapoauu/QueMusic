@@ -4,6 +4,8 @@
 #include <QUrl>
 #include <QVariantMap>
 #include <memory>
+#include "plugin-ui/v1/PluginUiTypes.h"
+#include "PluginManagementUiSession.h"
 class PluginManager;
 class SourceRegistry;
 class SourceAccountStore;
@@ -20,6 +22,9 @@ class PluginSettingsController final : public QObject {
     Q_PROPERTY(QString selectedInstanceId READ selectedInstanceId NOTIFY snapshotsChanged)
     Q_PROPERTY(QString lastErrorKey READ lastErrorKey NOTIFY snapshotsChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY snapshotsChanged)
+    Q_PROPERTY(bool managementUiAvailable READ managementUiAvailable NOTIFY snapshotsChanged)
+    Q_PROPERTY(PluginManagementUiSession *managementUiSession READ managementUiSession NOTIFY managementUiChanged)
+    Q_PROPERTY(QString managementUiErrorKey READ managementUiErrorKey NOTIFY managementUiChanged)
 public:
     PluginSettingsController(PluginManager *, SourceRegistry *, SourceAccountStore *, QObject *parent = nullptr);
     ~PluginSettingsController() override;
@@ -33,6 +38,12 @@ public:
     QString selectedInstanceId() const;
     QString lastErrorKey() const;
     bool busy() const;
+    bool managementUiAvailable() const;
+    PluginManagementUiSession *managementUiSession() const;
+    QString managementUiErrorKey() const;
+    Q_INVOKABLE bool openManagementUi(PluginUiMode mode);
+    Q_INVOKABLE void beginCloseManagementUi();
+    Q_INVOKABLE void finishCloseManagementUi();
     Q_INVOKABLE bool selectPlugin(const QString &packageId);
     Q_INVOKABLE bool selectInstance(const QString &instanceId);
     Q_INVOKABLE bool setDraftValues(const QVariantMap &publicDraft);
@@ -52,6 +63,8 @@ signals:
     void connectionTestFinished(QUuid requestId, QVariantMap result);
     void settingsActionFinished(QUuid requestId, QVariantMap result);
     void draftReset();
+    void managementUiChanged();
+    void managementUiCloseRequested();
 private:
     struct State;
     std::shared_ptr<State> d;

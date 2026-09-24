@@ -6,6 +6,8 @@
 #include "SourceRegistry.h"
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
+#include "PluginManagementUiSession.h"
+#include "plugin-ui/v1/ISourceManagementUiProvider.h"
 #include <QTimer>
 #include <utility>
 
@@ -32,6 +34,8 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
         SourceDescriptorV2 descriptor;
         SettingsSchemaV2 schema;
         bool available = false;
+        bool managementCreate = false;
+        bool managementEdit = false;
         QString reason;
     };
     QHash<QString, Cache> caches;
@@ -43,6 +47,24 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
     QPointer<QObject> selectedObject;
     quint64 generation = 0;
     std::shared_ptr<PluginSettingsOperation> operation;
+    std::unique_ptr<PluginManagementUiSession> managementSession;
+    QString managementError;
+    enum class PendingKind { None, SelectPlugin, SelectInstance, RemoveInstance, SetEnabled, Unload, Reload };
+    PendingKind pendingKind = PendingKind::None;
+    QString pendingId;
+    bool pendingEnabled = false;
+    bool managementClosing = false;
+
+    bool requestManagementClose(PendingKind kind, const QString &id = {}, bool enabled = false)
+    {
+        if (!managementSession) return false;
+        if (managementClosing) return true;
+        managementClosing = true;
+        pendingKind = kind; pendingId = id; pendingEnabled = enabled;
+        managementSession->invalidateContext();
+        if (owner) emit owner->managementUiCloseRequested();
+        return true;
+    }
 
     void invalidate()
     {
@@ -89,6 +111,11 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
                     const auto detached = detachSettingsSchemaV2(settings->settingsSchema());
                     if (detached) { next.schema = *detached; next.available = true; next.reason.clear(); }
                     else next.reason = QStringLiteral("source.settings.invalidSchema");
+                }
+                if (auto *ui = qobject_cast<ISourceManagementUiProvider *>(object.data())) {
+                    const auto descriptor = ui->managementUi();
+                    next.managementCreate = descriptor.supportsCreate;
+                    next.managementEdit = descriptor.supportsEdit;
                 }
             } else next.reason = QStringLiteral("source.settings.invalidIdentity");
         }
@@ -149,6 +176,7 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
         if (!owner) { refreshing = false; return; }
         auto object = manager ? QPointer<QObject>(manager->pluginInstance(pluginId)) : QPointer<QObject>();
         if (selectedWasLoaded && (!object || object != selectedObject)) {
+            requestManagementClose(PendingKind::None);
             invalidate(); freshDraft();
             selectedWasLoaded = false;
             emit owner->draftReset();
@@ -157,12 +185,14 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
         selectedObject = object;
         selectedWasLoaded = bool(object);
         if (!pluginId.isEmpty() && selected.isEmpty()) {
+            requestManagementClose(PendingKind::None);
             invalidate(); pluginId.clear(); freshDraft();
             emit owner->draftReset();
             if (!owner) { refreshing = false; return; }
         }
         auto previous = instanceId.isEmpty() ? std::optional<StoredSourceAccount>() : ownedAccount(instanceId);
         if (!instanceId.isEmpty() && !previous) {
+            requestManagementClose(PendingKind::None);
             invalidate(); freshDraft();
             emit owner->draftReset();
             if (!owner) { refreshing = false; return; }
@@ -286,7 +316,10 @@ PluginSettingsController::PluginSettingsController(PluginManager *manager, Sourc
     }
     d->refresh();
 }
-PluginSettingsController::~PluginSettingsController() { d->owner = nullptr; d->invalidate(); }
+PluginSettingsController::~PluginSettingsController() {
+    d->owner = nullptr; d->invalidate(); d->pendingKind = State::PendingKind::None;
+    if (d->managementSession) { d->managementSession->invalidateContext(); d->managementSession.reset(); }
+}
 QVariantList PluginSettingsController::plugins() const { return d->snapshot.value("plugins").toList(); }
 QVariantList PluginSettingsController::instances() const { return d->snapshot.value("instances").toList(); }
 QVariantList PluginSettingsController::settingsSections() const { return d->snapshot.value("settingsSections").toList(); }
@@ -297,11 +330,74 @@ QString PluginSettingsController::selectedPluginId() const { return d->pluginId;
 QString PluginSettingsController::selectedInstanceId() const { return d->instanceId; }
 QString PluginSettingsController::lastErrorKey() const { return d->error; }
 bool PluginSettingsController::busy() const { return bool(d->operation); }
+bool PluginSettingsController::managementUiAvailable() const
+{
+    const auto cache = d->caches.value(d->pluginId);
+    return d->manager && d->manager->plugin(d->pluginId).state == PluginState::Loaded
+        && (d->instanceId.isEmpty() ? cache.managementCreate : cache.managementEdit);
+}
+PluginManagementUiSession *PluginSettingsController::managementUiSession() const { return d->managementSession.get(); }
+QString PluginSettingsController::managementUiErrorKey() const { return d->managementError; }
+bool PluginSettingsController::openManagementUi(PluginUiMode mode)
+{
+    auto s = d;
+    if (!s->manager || !s->store || s->pluginId.isEmpty() || s->managementSession)
+        return s->fail(QStringLiteral("plugin.ui.unavailable"));
+    const auto cache = s->caches.value(s->pluginId);
+    if ((mode == PluginUiMode::Create && (!s->instanceId.isEmpty() || !cache.managementCreate))
+        || (mode == PluginUiMode::Edit && (s->instanceId.isEmpty() || !cache.managementEdit))
+        || (mode != PluginUiMode::Create && mode != PluginUiMode::Edit))
+        return s->fail(QStringLiteral("plugin.ui.unsupportedMode"));
+    PluginUiContextData identity{s->pluginId, cache.descriptor.sourceId, {}, {}, mode};
+    if (mode == PluginUiMode::Edit) {
+        identity.sourceInstanceId = s->instanceId;
+        identity.accountId = s->accountId;
+    }
+    s->managementSession = std::make_unique<PluginManagementUiSession>(s->manager, s->store,
+        s->registry, identity, cache.schema, this);
+    if (s->managementSession->state() != QStringLiteral("ready")) {
+        s->managementError = s->managementSession->errorKey();
+        s->managementSession.reset();
+        emit managementUiChanged();
+        return s->fail(s->managementError);
+    }
+    s->managementError.clear();
+    emit managementUiChanged();
+    s->refresh();
+    return true;
+}
+void PluginSettingsController::beginCloseManagementUi()
+{
+    if (d->managementSession) d->managementSession->invalidateContext();
+}
+void PluginSettingsController::finishCloseManagementUi()
+{
+    auto s = d;
+    if (s->managementSession) {
+        s->managementSession->release();
+        s->managementSession.reset();
+        emit managementUiChanged();
+    }
+    const auto kind = std::exchange(s->pendingKind, State::PendingKind::None);
+    s->managementClosing = false;
+    const QString id = std::exchange(s->pendingId, {});
+    const bool enabled = s->pendingEnabled;
+    switch (kind) {
+    case State::PendingKind::SelectPlugin: selectPlugin(id); break;
+    case State::PendingKind::SelectInstance: selectInstance(id); break;
+    case State::PendingKind::RemoveInstance: removeInstance(id); break;
+    case State::PendingKind::SetEnabled: setInstanceEnabled(id, enabled); break;
+    case State::PendingKind::Unload: unloadPlugin(id); break;
+    case State::PendingKind::Reload: reloadPlugin(id); break;
+    default: s->refresh(); break;
+    }
+}
 
 bool PluginSettingsController::selectPlugin(const QString &id)
 {
     auto s = d;
     if (!s->manager || s->manager->plugin(id).id != id || id.isEmpty()) return s->fail(QStringLiteral("source.settings.unknownPlugin"));
+    if (s->managementSession) return s->requestManagementClose(State::PendingKind::SelectPlugin, id);
     s->invalidate(); s->pluginId = id; s->freshDraft(); s->error.clear();
     s->selectedWasLoaded = false; s->selectedObject = nullptr;
     emit draftReset();
@@ -312,6 +408,7 @@ bool PluginSettingsController::selectInstance(const QString &id)
 {
     auto s = d;
     if (s->pluginId.isEmpty() || (!id.isEmpty() && !s->ownedAccount(id))) return s->fail(QStringLiteral("source.settings.invalidIdentity"));
+    if (s->managementSession) return s->requestManagementClose(State::PendingKind::SelectInstance, id);
     s->invalidate(); s->freshDraft();
     if (!id.isEmpty()) { s->instanceId = id; s->accountId = s->ownedAccount(id)->accountId; }
     s->error.clear(); emit draftReset();
@@ -366,6 +463,9 @@ bool PluginSettingsController::removeInstance(const QString &id)
 {
     auto s = d; const auto account = s->ownedAccount(id);
     if (!account) return s->fail(QStringLiteral("source.settings.invalidIdentity"));
+    if (s->managementSession && s->managementSession->context()
+        && s->managementSession->context()->sourceInstanceId() == id)
+        return s->requestManagementClose(State::PendingKind::RemoveInstance, id);
     QString error;
     if (!s->store->remove(account->sourceId, account->accountId, &error))
         return s->fail(QStringLiteral("source.settings.removeFailed"));
@@ -380,6 +480,9 @@ bool PluginSettingsController::setInstanceEnabled(const QString &id, bool enable
 {
     auto s = d;
     if (!s->registry || !s->ownedAccount(id)) return s->fail(QStringLiteral("source.settings.invalidIdentity"));
+    if (s->managementSession && s->managementSession->context()
+        && s->managementSession->context()->sourceInstanceId() == id)
+        return s->requestManagementClose(State::PendingKind::SetEnabled, id, enabled);
     const bool success = enabled ? s->registry->enableInstance(id) : s->registry->disableInstance(id);
     if (!success) return s->fail(QStringLiteral("source.settings.updateFailed"));
     s->error.clear(); if (s->owner) s->refresh(); return true;
@@ -402,6 +505,8 @@ bool PluginSettingsController::loadPlugin(const QString &id)
 bool PluginSettingsController::unloadPlugin(const QString &id)
 {
     auto s = d;
+    if (s->managementSession && s->pluginId == id)
+        return s->requestManagementClose(State::PendingKind::Unload, id);
     const auto result = s->manager ? s->manager->unload(id) : PluginOperationResult::NotFound;
     if (result != PluginOperationResult::Success) return s->fail(result == PluginOperationResult::Busy
         ? QStringLiteral("source.settings.pluginBusy") : QStringLiteral("source.settings.pluginUnloadFailed"));
@@ -410,6 +515,8 @@ bool PluginSettingsController::unloadPlugin(const QString &id)
 bool PluginSettingsController::reloadPlugin(const QString &id)
 {
     auto s = d;
+    if (s->managementSession && s->pluginId == id)
+        return s->requestManagementClose(State::PendingKind::Reload, id);
     const auto result = s->manager ? s->manager->reload(id) : PluginOperationResult::NotFound;
     if (result != PluginOperationResult::Success) return s->fail(result == PluginOperationResult::Busy
         ? QStringLiteral("source.settings.pluginBusy") : QStringLiteral("source.settings.pluginReloadFailed"));

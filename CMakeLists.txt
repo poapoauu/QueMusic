@@ -674,7 +674,9 @@ if(BUILD_TESTING)
     target_compile_definitions(quemusic_plugin_settings_controller_test PRIVATE
         QUEMUSIC_SETTINGS_PACKAGES="${QUEMUSIC_SETTINGS_PACKAGE_ROOT}"
         QUEMUSIC_NO_SETTINGS_PACKAGE="$<TARGET_FILE_DIR:quemusic_fake_v2_source_fixture>")
-    add_dependencies(quemusic_plugin_settings_controller_test quemusic_settings_fixture quemusic_fake_v2_source_fixture)
+    target_compile_definitions(quemusic_plugin_settings_controller_test PRIVATE
+        QUEMUSIC_UI_FIXTURE_ROOT="${QUEMUSIC_UI_FIXTURE_ROOT}")
+    add_dependencies(quemusic_plugin_settings_controller_test quemusic_settings_fixture quemusic_fake_v2_source_fixture quemusic_ui_fixture_valid)
     add_test(NAME quemusic_plugin_settings_controller_test COMMAND quemusic_plugin_settings_controller_test)
     qt_add_executable(quemusic_plugin_ui_settings_bridge_test tests/tst_PluginUiSettingsBridge.cpp)
     target_link_libraries(quemusic_plugin_ui_settings_bridge_test PRIVATE quemusic_plugin_settings Qt6::Test)
