@@ -109,7 +109,53 @@ private slots:
     void visibilityPreservesHiddenAndRequiresVisible();
     void partialEditUsesStoredVisibilityContext();
     void invalidVisibilityAndActions();
+    void clearsOnlyNamedSecretForBoundAccount();
+    void clearSecretRollsBackOnCleanupFailure();
 };
+
+void SourceSettingsStorageTest::clearsOnlyNamedSecretForBoundAccount()
+{
+    Fixture f;
+    auto optional = credentials();
+    optional.first().fields[0].required = false;
+    optional.first().fields[1].required = false;
+    auto r = request(optional, {{"password", "PRIVATE-one"}, {"token", "PRIVATE-two"}});
+    QVERIFY(f.store.saveValidatedV2(r));
+    const QString before = f.reference();
+    QString error;
+    QVERIFY(!f.store.clearNamedSecretV2(r, "missing", &error));
+    QCOMPARE(f.reference(), before);
+    QCOMPARE(error, QString("source.settings.invalidSecretDraft"));
+    auto foreign = r;
+    foreign.pluginPackageId = "org.example.foreign";
+    QVERIFY(!f.store.clearNamedSecretV2(foreign, "password", &error));
+    QCOMPARE(error, QString("source.settings.identityConflict"));
+    QVERIFY(f.store.clearNamedSecretV2(r, "password", &error));
+    QVERIFY(!f.account()->configuredSecretFieldIds.contains("password"));
+    QCOMPARE(f.account()->configuredSecretFieldIds, QStringList({"token"}));
+    QCOMPARE(*decodeSourceSecretsV2(f.secrets.values.value(f.reference())),
+             SourceNamedSecretsV2({{"token", "PRIVATE-two"}}));
+    QVERIFY(!f.secrets.values.contains(before));
+}
+
+void SourceSettingsStorageTest::clearSecretRollsBackOnCleanupFailure()
+{
+    Fixture f;
+    auto optional = credentials();
+    optional.first().fields[0].required = false;
+    optional.first().fields[1].required = false;
+    auto r = request(optional, {{"password", "PRIVATE-one"}, {"token", "PRIVATE-two"}});
+    QVERIFY(f.store.saveValidatedV2(r));
+    const QString before = f.reference();
+    f.secrets.failRemove = before;
+    QString error;
+    QVERIFY(!f.store.clearNamedSecretV2(r, "password", &error));
+    QCOMPARE(error, QString("source.settings.previousSecretCleanupFailed"));
+    QCOMPARE(f.reference(), before);
+    QCOMPARE(f.secrets.values.size(), 1);
+    QCOMPARE(f.account()->configuredSecretFieldIds, QStringList({"password", "token"}));
+    QVERIFY(!error.contains("PRIVATE"));
+}
 
 void SourceSettingsStorageTest::visibilityPreservesHiddenAndRequiresVisible()
 {

@@ -34,7 +34,7 @@ account IDs and Create/Edit mode. Create may omit instance/account IDs; Edit
 requires them. The plugin must not derive trusted identity from QML inputs.
 `PluginUiContext` exposes these fields, backend, settings, capabilities, host,
 and `valid` as read-only QML properties. On teardown the Host sets `valid=false`
-and clears object pointers. Phase 2 will wire the live container and lifecycle.
+and clears object pointers. The live container integration is being added in Phase 2.
 
 ## Manifest and QML
 
@@ -56,7 +56,7 @@ The package validation script is `cmake/ValidatePluginQmlImports.cmake`; pass
 `-DROOT=<plugin-qml-directory>`. Private `QueMusic 1.0` and Host implementation
 types are not part of this contract.
 
-The 28 QML types are:
+The public QML types include:
 
 - Containers: `PluginPage`, `PluginScrollPage`, `PluginSection`, `PluginGroup`.
 - Text: `PluginLabel`, `PluginDescription`, `PluginSeparator`.
@@ -65,6 +65,17 @@ The 28 QML types are:
 - Selection: `PluginSwitch`, `PluginCheckBox`, `PluginComboBox`.
 - State: `PluginStatus`, `PluginBadge`, `PluginBusyIndicator`, `PluginErrorState`, `PluginEmptyState`.
 - Management: `PluginAccountCard`, `PluginServerCard`, `PluginQrCode`, `PluginQrLogin`.
+- Settings: `PluginSettingsForm`, which uses `pluginUiContext.settings` and
+  `pluginUiContext.host` without importing Host-private QML.
+
+The installed runtime headers `PluginUiSettingsBridge.h` and
+`PluginUiHostServices.h` describe the minimal Host services. The settings
+bridge exposes public schema sections and values, Secret-configured state, and
+request-ID-based save/clear completion; it never returns Secret values. The
+Host service can request a local directory and publish a notification key.
+Only `plugin.ui.*` and `source.settings.*` keys are accepted as notifications;
+arbitrary strings are not displayed. Concrete Host storage/service classes are
+not part of the plugin SDK.
 
 `PluginQrCode.source` accepts local resource, file, and image-provider URLs.
 Resolve a plugin-package-relative asset at the calling page with
@@ -101,5 +112,6 @@ without linking any QueMusic runtime or build-tree plugin target.
 The Host service surface never exposes Secret plaintext to plugin QML. QML may
 request asynchronous save/clear and ask whether a Secret is configured; native
 plugin backends use the Host-managed secure C++ storage path for credentials.
-Phase 1 publishes the contract and UI Kit; Phase 2 adds the live Custom
-Management Page container, navigation, error view, and teardown handling.
+Phase 1 publishes the contract and UI Kit. Phase 2 adds the settings bridge,
+public Schema form, live Custom Management Page container, navigation, error
+view, and teardown handling.

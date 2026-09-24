@@ -95,6 +95,7 @@ set(QUEMUSIC_PLUGIN_UI_QML_FILES
     plugin-ui/qml/PluginServerCard.qml
     plugin-ui/qml/PluginQrCode.qml
     plugin-ui/qml/PluginQrLogin.qml)
+list(APPEND QUEMUSIC_PLUGIN_UI_QML_FILES plugin-ui/qml/PluginSettingsForm.qml)
 foreach(plugin_ui_qml_file IN LISTS QUEMUSIC_PLUGIN_UI_QML_FILES)
     get_filename_component(plugin_ui_qml_name "${plugin_ui_qml_file}" NAME)
     set_source_files_properties("${plugin_ui_qml_file}" PROPERTIES
@@ -110,6 +111,8 @@ qt_add_qml_module(quemusic_plugin_ui
     SOURCES
         plugin-ui/PluginUiContext.cpp plugin-ui/PluginUiContext.h
         plugin-ui/PluginTheme.cpp plugin-ui/PluginTheme.h
+        plugin-ui/PluginUiSettingsBridge.h
+        plugin-ui/PluginUiHostServices.h
     QML_FILES ${QUEMUSIC_PLUGIN_UI_QML_FILES})
 target_link_libraries(quemusic_plugin_ui PUBLIC
     quemusic_plugin_ui_sdk Qt6::Core Qt6::Qml Qt6::Quick)
@@ -155,6 +158,7 @@ install(DIRECTORY sdk/plugin-ui/v1/
     COMPONENT PluginSdk
     FILES_MATCHING PATTERN "*.h")
 install(FILES plugin-ui/PluginTheme.h plugin-ui/PluginUiContext.h
+    plugin-ui/PluginUiSettingsBridge.h plugin-ui/PluginUiHostServices.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/runtime
     COMPONENT PluginSdk)
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/QueMusic/PluginUI/"
@@ -270,8 +274,10 @@ add_library(quemusic_plugin_settings STATIC
     core/settings/PluginSettingsOperation.cpp
     core/settings/SettingsSchemaPresentation.h
     core/settings/SettingsSchemaPresentation.cpp
+    core/settings/HostPluginUiSettingsBridge.h
+    core/settings/HostPluginUiSettingsBridge.cpp
 )
-target_link_libraries(quemusic_plugin_settings PUBLIC quemusic_source_registry)
+target_link_libraries(quemusic_plugin_settings PUBLIC quemusic_source_registry quemusic_plugin_ui)
 
 add_library(quemusic_music_repository STATIC
     core/music/CapabilityResolver.cpp
@@ -668,6 +674,9 @@ if(BUILD_TESTING)
         QUEMUSIC_NO_SETTINGS_PACKAGE="$<TARGET_FILE_DIR:quemusic_fake_v2_source_fixture>")
     add_dependencies(quemusic_plugin_settings_controller_test quemusic_settings_fixture quemusic_fake_v2_source_fixture)
     add_test(NAME quemusic_plugin_settings_controller_test COMMAND quemusic_plugin_settings_controller_test)
+    qt_add_executable(quemusic_plugin_ui_settings_bridge_test tests/tst_PluginUiSettingsBridge.cpp)
+    target_link_libraries(quemusic_plugin_ui_settings_bridge_test PRIVATE quemusic_plugin_settings Qt6::Test)
+    add_test(NAME quemusic_plugin_ui_settings_bridge_test COMMAND quemusic_plugin_ui_settings_bridge_test)
 
     # Task7 fixture lives at the provider boundary of the real hub orchestration.
     set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task7")

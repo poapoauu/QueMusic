@@ -281,6 +281,89 @@ bool SourceAccountStore::saveValidatedV2(const SourceAccountSaveV2 &request, QSt
     return true;
 }
 
+bool SourceAccountStore::clearNamedSecretV2(const SourceAccountSaveV2 &request,
+                                             const QString &fieldId, QString *error)
+{
+    if (error) error->clear();
+    auto fail = [error](const char *key) {
+        if (error) *error = QString::fromLatin1(key);
+        return false;
+    };
+    if (request.pluginPackageId.isEmpty() || request.sourceId.isEmpty()
+        || request.sourceId.contains('/') || request.accountId.isEmpty()
+        || request.configurationVersion <= 0)
+        return fail("source.settings.invalidIdentity");
+    if (!validateSourceSettingsDraftV2(request.schema, {}).isEmpty())
+        return fail("source.settings.invalidSchema");
+    bool secretField = false;
+    for (const auto &section : request.schema)
+        for (const auto &field : section.fields)
+            if (field.id == fieldId && (field.secret || field.type == SettingsFieldTypeV2::Secret))
+                secretField = true;
+    if (!secretField) return fail("source.settings.invalidSecretDraft");
+    if (!m_settings) return fail("source.settings.storageUnavailable");
+    const QString group = matchingGroupFor(request.sourceId, request.accountId);
+    const auto account = group.isEmpty() ? std::optional<StoredSourceAccount>() : storedAccountForGroup(group);
+    if (!account) return fail("source.settings.invalidIdentity");
+    if (account->recordVersion != 2 || account->pluginPackageId != request.pluginPackageId)
+        return fail("source.settings.identityConflict");
+    const QVariantMap previousValues = recordValues(group);
+    for (auto it = previousValues.cbegin(); it != previousValues.cend(); ++it)
+        if (it.key().endsWith(QStringLiteral("/version")))
+            return fail("source.settings.identityConflict");
+    QStringList schemaSecretIds;
+    for (const auto &section : request.schema)
+        for (const auto &field : section.fields)
+            if (field.secret || field.type == SettingsFieldTypeV2::Secret)
+                schemaSecretIds.append(field.id);
+    for (const auto &configuredId : account->configuredSecretFieldIds)
+        if (!schemaSecretIds.contains(configuredId))
+            return fail("source.settings.credentialsReentryRequired");
+    if (!account->configuredSecretFieldIds.contains(fieldId)) return true;
+    if (account->secretFormat != QStringLiteral("namedEnvelopeV2")
+        || account->secretReference.isEmpty())
+        return fail("source.settings.credentialsReentryRequired");
+    if (!m_secretStore) return fail("source.settings.secureStorageUnavailable");
+    const auto oldBytes = m_secretStore->read(account->secretReference, nullptr);
+    if (!oldBytes) return fail("source.settings.secureReadFailed");
+    auto secrets = decodeSourceSecretsV2(*oldBytes);
+    if (!secrets || secrets->keys() != account->configuredSecretFieldIds
+        || !secrets->contains(fieldId))
+        return fail("source.settings.credentialsReentryRequired");
+    secrets->remove(fieldId);
+    QByteArray newBytes;
+    QString newReference;
+    if (!secrets->isEmpty()) {
+        const auto encoded = encodeSourceSecretsV2(*secrets);
+        if (!encoded) return fail("source.settings.invalidSecretEnvelope");
+        newBytes = *encoded;
+        newReference = freshSecretReference();
+        if (!m_secretStore->write(newReference, newBytes, nullptr)) {
+            if (!m_secretStore->remove(newReference, nullptr))
+                return fail("source.settings.secretCleanupFailed");
+            return fail("source.settings.secureWriteFailed");
+        }
+    }
+    QVariantMap values = previousValues;
+    values.insert(QStringLiteral("secretReference"), newReference);
+    values.insert(QStringLiteral("secretFormat"), newReference.isEmpty()
+        ? QStringLiteral("none") : QStringLiteral("namedEnvelopeV2"));
+    values.insert(QStringLiteral("configuredSecretFieldIds"), secrets->keys());
+    if (!restoreRecord(group, values)) {
+        const bool restored = restoreRecord(group, previousValues);
+        const bool cleaned = newReference.isEmpty() || m_secretStore->remove(newReference, nullptr);
+        if (!cleaned) return fail("source.settings.secretCleanupFailed");
+        return fail(restored ? "source.settings.metadataWriteFailed" : "source.settings.metadataRestoreFailed");
+    }
+    if (!m_secretStore->remove(account->secretReference, nullptr)) {
+        if (!restoreRecord(group, previousValues)) return fail("source.settings.metadataRestoreFailed");
+        if (!newReference.isEmpty() && !m_secretStore->remove(newReference, nullptr))
+            return fail("source.settings.secretCleanupFailed");
+        return fail("source.settings.previousSecretCleanupFailed");
+    }
+    return true;
+}
+
 bool SourceAccountStore::saveResolvedV2(const ResolvedSourceAccountV2 &account, bool enabled,
                                         QString *error)
 {

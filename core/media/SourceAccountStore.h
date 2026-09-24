@@ -72,6 +72,9 @@ public:
                         QString *error = nullptr);
     // Errors are host-owned keys; never contain draft values or backend diagnostics.
     bool saveValidatedV2(const SourceAccountSaveV2 &request, QString *error = nullptr);
+    // Removes one named credential without treating an empty Secret draft as a no-op.
+    bool clearNamedSecretV2(const SourceAccountSaveV2 &request, const QString &fieldId,
+                            QString *error = nullptr);
     std::optional<SourceConfigurationV2> configurationForDraftV2(
         const SourceAccountSaveV2 &request, QString *error = nullptr);
     bool setEnabled(const QString &sourceId, const QString &accountId, bool enabled,

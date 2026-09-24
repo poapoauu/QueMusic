@@ -20,7 +20,25 @@ private slots:
     void managementKitTypesInstantiate();
     void managementKitBehavior();
     void narrowLongTextLayoutHasNoWarnings();
+    void publicSettingsFormInstantiates();
 };
+
+void PluginUiQmlTest::publicSettingsFormInstantiates()
+{
+    QQmlEngine engine;
+    engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        import QueMusic.PluginUI 1.0
+        PluginSettingsForm { width: 400 }
+    )", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    QCOMPARE(warnings.size(), 0);
+}
 
 void PluginUiQmlTest::importsStandaloneModule()
 {
