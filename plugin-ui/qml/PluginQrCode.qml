@@ -20,6 +20,7 @@ Item {
 
     Image {
         id: qrImage
+        objectName: "pluginQrImage"
         anchors.fill: parent
         source: root.validSource ? root.source : ""
         fillMode: Image.PreserveAspectFit

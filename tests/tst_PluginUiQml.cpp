@@ -26,6 +26,7 @@ void PluginUiQmlTest::importsStandaloneModule()
 {
     QQmlEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     QQmlComponent component(&engine);
     component.setData(R"(
         import QtQuick
@@ -41,6 +42,7 @@ void PluginUiQmlTest::importsStandaloneModule()
     QVERIFY2(object, qPrintable(component.errorString()));
     QCOMPARE(object->property("title").toString(), QStringLiteral("Fixture"));
     QVERIFY(object->property("editModeValueIsStable").toBool());
+    QCOMPARE(warnings.count(), 0);
 }
 
 void PluginUiQmlTest::themeIsReadOnly()
@@ -63,6 +65,7 @@ void PluginUiQmlTest::generalKitTypesInstantiate()
 {
     QQmlEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     const QStringList types{
         QStringLiteral("PluginScrollPage"), QStringLiteral("PluginSection"),
         QStringLiteral("PluginGroup"), QStringLiteral("PluginLabel"),
@@ -83,12 +86,14 @@ void PluginUiQmlTest::generalKitTypesInstantiate()
         QVERIFY2(object, qPrintable(type + QStringLiteral(": ")
                                    + component.errorString()));
     }
+    QCOMPARE(warnings.count(), 0);
 }
 
 void PluginUiQmlTest::generalControlsBehavior()
 {
     QQmlEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     QQmlComponent component(&engine);
     component.setData(R"(
         import QtQuick
@@ -149,6 +154,7 @@ void PluginUiQmlTest::generalControlsBehavior()
     QVERIFY(child("label")->property("font").value<QFont>().pixelSize() > originalFontSize);
     tokens.scaleFactor = 1.0;
     PluginTheme::instance()->apply(tokens);
+    QCOMPARE(warnings.count(), 0);
 }
 
 void PluginUiQmlTest::keyboardNavigationAndAccessibility()
@@ -205,6 +211,7 @@ void PluginUiQmlTest::managementKitTypesInstantiate()
 {
     QQmlEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     const QStringList types{QStringLiteral("PluginStatus"),
                             QStringLiteral("PluginBadge"),
                             QStringLiteral("PluginBusyIndicator"),
@@ -224,12 +231,14 @@ void PluginUiQmlTest::managementKitTypesInstantiate()
         QVERIFY2(object, qPrintable(type + QStringLiteral(": ")
                                    + component.errorString()));
     }
+    QCOMPARE(warnings.count(), 0);
 }
 
 void PluginUiQmlTest::managementKitBehavior()
 {
     QQmlEngine engine;
     engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     QQmlComponent component(&engine);
     component.setData(R"(
         import QtQuick
@@ -243,10 +252,11 @@ void PluginUiQmlTest::managementKitBehavior()
             PluginAccountCard { objectName: "account" }
             PluginServerCard { objectName: "server" }
             PluginQrCode { objectName: "qr"; source: "https://example.com/qr.png" }
-            PluginQrCode { objectName: "relativeQr"; source: "qr.png" }
+            PluginQrCode { objectName: "relativeQr"; source: Qt.resolvedUrl("logo.png") }
             PluginQrLogin { objectName: "login"; qrSource: "" }
         }
-    )", QUrl());
+    )", QUrl::fromLocalFile(QStringLiteral(QUEMUSIC_PLUGIN_UI_QML_FIXTURE_DIR)
+                            + QStringLiteral("/ManagementPage.qml")));
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
     QScopedPointer<QObject> form(component.create());
     QVERIFY2(form, qPrintable(component.errorString()));
@@ -258,6 +268,10 @@ void PluginUiQmlTest::managementKitBehavior()
     QCOMPARE(child("server")->property("status").toString(), QStringLiteral("warning"));
     QVERIFY(child("qr")->property("error").toBool());
     QVERIFY(child("relativeQr")->property("validSource").toBool());
+    auto *relativeQrImage = child("relativeQr")->findChild<QObject *>("pluginQrImage");
+    QVERIFY(relativeQrImage);
+    QTRY_COMPARE(relativeQrImage->property("status").toInt(), 1); // Image.Ready
+    QVERIFY(!child("relativeQr")->property("error").toBool());
     QVERIFY(child("login"));
 
     QSignalSpy retry(child("error"), SIGNAL(retryRequested()));
@@ -276,6 +290,7 @@ void PluginUiQmlTest::managementKitBehavior()
                                       "click"));
     QCOMPARE(refresh.count(), 1);
     QCOMPARE(cancel.count(), 1);
+    QCOMPARE(warnings.count(), 0);
 }
 
 void PluginUiQmlTest::narrowLongTextLayoutHasNoWarnings()

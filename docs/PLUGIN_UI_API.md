@@ -66,6 +66,12 @@ The 28 QML types are:
 - State: `PluginStatus`, `PluginBadge`, `PluginBusyIndicator`, `PluginErrorState`, `PluginEmptyState`.
 - Management: `PluginAccountCard`, `PluginServerCard`, `PluginQrCode`, `PluginQrLogin`.
 
+`PluginQrCode.source` accepts local resource, file, and image-provider URLs.
+Resolve a plugin-package-relative asset at the calling page with
+`Qt.resolvedUrl("qr.png")`; a bare relative string inside an imported component
+would otherwise be resolved against the UI Kit module rather than the plugin
+package.
+
 `PluginTheme` is a QML-read-only singleton. Its semantic colors are
 `background`, `surface`, `surfaceHover`, `primary`, `textPrimary`,
 `textSecondary`, `border`, `success`, `warning`, and `danger`. It also exposes

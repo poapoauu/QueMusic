@@ -131,6 +131,14 @@ install(TARGETS quemusic_plugin_uiplugin
         COMPONENT PluginSdk
     RUNTIME DESTINATION "${CMAKE_INSTALL_DATADIR}/quemusic/qml/QueMusic/PluginUI"
         COMPONENT PluginSdk)
+if(WIN32)
+    # Windows resolves DLL dependencies from the importing module's directory.
+    # Keep the exported Host runtime in bin and deploy a second copy beside the
+    # QML plugin so a Qt-only process can import the installed module directly.
+    install(TARGETS quemusic_plugin_ui
+        RUNTIME DESTINATION "${CMAKE_INSTALL_DATADIR}/quemusic/qml/QueMusic/PluginUI"
+            COMPONENT PluginSdk)
+endif()
 if(APPLE)
     set_target_properties(quemusic_plugin_uiplugin PROPERTIES
         INSTALL_RPATH "@loader_path/../../../../../${CMAKE_INSTALL_LIBDIR}")
@@ -350,6 +358,7 @@ if(BUILD_TESTING)
             "-DHOST_ARCHITECTURE=${CMAKE_SYSTEM_PROCESSOR}"
             "-DHOST_BUILD_KEY=$<IF:$<CONFIG:Debug>,Debug,Release>"
             "-DLOADER=$<TARGET_FILE:quemusic_plugin_ui_external_loader>"
+            "-DPLUGIN_UI_RUNTIME=$<TARGET_FILE_NAME:quemusic_plugin_ui>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyPluginUiExternalFixture.cmake")
 
     qt_add_executable(quemusic_plugin_ui_theme_test tests/tst_PluginUiTheme.cpp)
@@ -365,7 +374,8 @@ if(BUILD_TESTING)
     target_link_libraries(quemusic_plugin_ui_qml_test PRIVATE
         quemusic_plugin_ui Qt6::Test Qt6::Qml Qt6::Quick)
     target_compile_definitions(quemusic_plugin_ui_qml_test PRIVATE
-        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+        QUEMUSIC_PLUGIN_UI_QML_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/doc/example")
     add_test(NAME quemusic_plugin_ui_qml_test COMMAND quemusic_plugin_ui_qml_test)
     set_tests_properties(quemusic_plugin_ui_qml_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

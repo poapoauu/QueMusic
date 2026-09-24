@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 foreach(required PROJECT_SOURCE_DIR PROJECT_BUILD_DIR QT6_DIR HOST_ARCHITECTURE
-                 HOST_BUILD_KEY LOADER)
+                 HOST_BUILD_KEY LOADER PLUGIN_UI_RUNTIME)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
         message(FATAL_ERROR "Missing ${required}")
     endif()
@@ -44,4 +44,8 @@ run_checked("External plugin and QML load" "${CMAKE_COMMAND}" -E env
 
 if(NOT EXISTS "${stage}/share/quemusic/qml/QueMusic/PluginUI/qmldir")
     message(FATAL_ERROR "Installed QML module qmldir is missing")
+endif()
+if(CMAKE_HOST_WIN32 AND NOT EXISTS
+        "${stage}/share/quemusic/qml/QueMusic/PluginUI/${PLUGIN_UI_RUNTIME}")
+    message(FATAL_ERROR "Installed QML module is missing its colocated Windows runtime")
 endif()
