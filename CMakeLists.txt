@@ -276,6 +276,8 @@ add_library(quemusic_plugin_settings STATIC
     core/settings/SettingsSchemaPresentation.cpp
     core/settings/HostPluginUiSettingsBridge.h
     core/settings/HostPluginUiSettingsBridge.cpp
+    plugin-ui/PluginManagementUiSession.h
+    plugin-ui/PluginManagementUiSession.cpp
 )
 target_link_libraries(quemusic_plugin_settings PUBLIC quemusic_source_registry quemusic_plugin_ui)
 
@@ -677,6 +679,12 @@ if(BUILD_TESTING)
     qt_add_executable(quemusic_plugin_ui_settings_bridge_test tests/tst_PluginUiSettingsBridge.cpp)
     target_link_libraries(quemusic_plugin_ui_settings_bridge_test PRIVATE quemusic_plugin_settings Qt6::Test)
     add_test(NAME quemusic_plugin_ui_settings_bridge_test COMMAND quemusic_plugin_ui_settings_bridge_test)
+    qt_add_executable(quemusic_plugin_management_ui_session_test tests/tst_PluginManagementUiSession.cpp)
+    target_link_libraries(quemusic_plugin_management_ui_session_test PRIVATE quemusic_plugin_settings Qt6::Test)
+    target_compile_definitions(quemusic_plugin_management_ui_session_test PRIVATE
+        QUEMUSIC_UI_FIXTURE_ROOT="${QUEMUSIC_UI_FIXTURE_ROOT}")
+    add_dependencies(quemusic_plugin_management_ui_session_test quemusic_ui_fixture_valid quemusic_ui_fixture_null_backend)
+    add_test(NAME quemusic_plugin_management_ui_session_test COMMAND quemusic_plugin_management_ui_session_test)
 
     # Task7 fixture lives at the provider boundary of the real hub orchestration.
     set(QUEMUSIC_V2_FIXTURE_PACKAGE_ID "org.quemusic.source.task7")
