@@ -1,10 +1,11 @@
 # Phase 3：Local Source Plugin 设计规格
 
-> 状态：目录/实例方案已确认；书面规格待审阅，尚未开始实现
+> 状态：书面规格已确认；实施计划待审阅，尚未开始实现
 > 设计基线：[最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md)
 > 前置成果：[Phase 2 实施记录](phase-2-plugin-settings-ui-record.md)
 > 代码核对起点：`b95543c`，分支 `codex/plugin-ui-api-v1`
 > 日期：2026-09-27
+> 实施计划：[Phase 3 任务计划](../superpowers/plans/2026-09-27-phase-3-local-source-plugin.md)
 
 ## 1. 目的与本次确认
 
