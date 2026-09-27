@@ -292,7 +292,7 @@ target_compile_features(quemusic_source_registry PUBLIC cxx_std_17)
 target_link_libraries(quemusic_source_registry PUBLIC
     quemusic_plugin_core
     quemusic_source_account_store
-    quemusic_source_sdk
+    quemusic_source_sdk quemusic_source_content_events
     Qt6::Core
 )
 target_include_directories(quemusic_source_registry PUBLIC
@@ -1161,6 +1161,11 @@ if(BUILD_TESTING)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyV2FixturePackage.cmake"
     )
 
+    foreach(content_fixture IN ITEMS quemusic_source_registry_v2_fixture
+            quemusic_source_registry_v2_secondary_fixture
+            quemusic_source_registry_v2_mismatch_fixture)
+        target_link_libraries(${content_fixture} PRIVATE quemusic_source_content_events)
+    endforeach()
     qt_add_executable(quemusic_source_registry_v2_test
         tests/tst_SourceRegistryV2.cpp
     )

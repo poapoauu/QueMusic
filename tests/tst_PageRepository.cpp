@@ -128,6 +128,49 @@ static PageSectionV2 favoriteSection(QString source, PageSectionKindV2 kind, QSt
 class PageRepositoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void contentRefreshInvalidatesOnlyMatchingInstance()
+    {
+        PageHarness h; QVERIFY(h.init());
+        auto *home = h.session("home"); auto *office = h.session("office");
+        musicCacheIoPool()->waitForDone();
+        PageQueryV2 homeQuery; homeQuery.scope.sourceInstanceId = "task5/home";
+        PageQueryV2 officeQuery; officeQuery.scope.sourceInstanceId = "task5/office";
+        PageCacheKeyV2 homeKey{homeQuery, {"task5/home"}};
+        PageCacheKeyV2 officeKey{officeQuery, {"task5/office"}};
+        PageCacheKeyV2 aggregateKey{{}, {"task5/home", "task5/office"}};
+        const auto now = QDateTime::currentDateTimeUtc();
+        QVERIFY(h.cache->store(homeKey, sample("home"), now));
+        QVERIFY(h.cache->store(officeKey, sample("office"), now));
+        QVERIFY(h.cache->store(aggregateKey, sample("home"), now));
+        QSignalSpy ready(&h.repo, &PageRepository::pageReady);
+        // A non-cacheable filter makes provider request correlation deterministic.
+        homeQuery.filters = {{"testMarker", true}};
+        officeQuery.filters = {{"testMarker", true}};
+        PageQueryV2 aggregateQuery; aggregateQuery.filters = {{"testMarker", true}};
+        h.repo.requestPage(homeQuery, 1);
+        h.repo.requestPage(officeQuery, 2);
+        QTRY_VERIFY(!home->property("lastRequest").toUuid().isNull());
+        QTRY_VERIFY(!office->property("lastRequest").toUuid().isNull());
+        const auto oldHomeId = home->property("lastRequest").toUuid();
+        const auto officeId = office->property("lastRequest").toUuid();
+        h.repo.requestPage(aggregateQuery, 3);
+        QTRY_COMPARE(home->property("calls").toInt(), 2);
+        QTRY_COMPARE(office->property("calls").toInt(), 2);
+        const auto aggregateHomeId = home->property("lastRequest").toUuid();
+        QVERIFY(QMetaObject::invokeMethod(&h.registry, "instanceContentChanged",
+            Q_ARG(QString, QString("task5/home")), Q_ARG(quint64, quint64(1))));
+        musicCacheIoPool()->waitForDone();
+        QVERIFY(!h.cache->lookup(homeKey, now, std::chrono::minutes(5)));
+        QVERIFY(!h.cache->lookup(aggregateKey, now, std::chrono::minutes(5)));
+        QVERIFY(h.cache->lookup(officeKey, now, std::chrono::minutes(5)));
+        QCOMPARE(home->property("cancelled").toUuid(), aggregateHomeId);
+        QCOMPARE(h.session("home"), home);
+        emit home->pageReady(oldHomeId, sample("home"));
+        emit home->pageReady(aggregateHomeId, sample("home"));
+        emit office->pageReady(officeId, sample("office"));
+        QTRY_COMPARE(ready.count(), 1);
+        QCOMPARE(ready.at(0).at(1).toULongLong(), quint64(2));
+    }
     void partialSuccessWaitsForEverySource()
     {
         PageHarness h; QVERIFY(h.init());

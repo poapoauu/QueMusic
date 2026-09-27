@@ -143,6 +143,21 @@ struct MusicHub::Impl {
             emit q->selectedSourceInstanceIdChanged();
         });
         if (sources) {
+            QObject::connect(sources, &SourceRegistry::instanceContentChanged, q,
+                [this](const QString &source, quint64) {
+                    const QPointer<MusicHub> guard(q);
+                    for (int i = 0; i < 4; ++i) {
+                        const auto query = baseQuery(i);
+                        if (pages[i].activated && (query.scope.isAggregate()
+                            || query.scope.sourceInstanceId == source)) refresh(i);
+                        if (!guard) return;
+                    }
+                });
+            QObject::connect(sources, &SourceRegistry::instanceRefreshFailed, q,
+                [this](const QString &source, const SourceErrorV2 &) {
+                    if (selected().isEmpty() || selected() == source)
+                        emit q->sourceRefreshFailed(source, QStringLiteral("source.instance.refreshFailed"));
+                });
             QObject::connect(sources, &SourceRegistry::instanceChanged, q, [this] { synchronizeSources(); });
             QObject::connect(sources, &QObject::destroyed, q, [this] { synchronizeSources(); });
             if (sources->pluginManager()) QObject::connect(sources->pluginManager(), &PluginManager::pluginChanged,

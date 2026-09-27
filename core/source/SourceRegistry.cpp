@@ -2,6 +2,8 @@
 
 #include "SourceAccountStore.h"
 #include "v2/IMusicSourcePluginV2.h"
+#include "extensions/content-events/v1/ISourceContentEventsProviderV1.h"
+#include "extensions/content-events/v1/SourceContentEventsV1.h"
 
 #include <QVariantMap>
 
@@ -10,6 +12,15 @@
 #include <utility>
 
 namespace {
+
+bool sessionOwnsEvents(QObject *session, SourceContentEventsV1 *events)
+{
+    if (!session || !events || events->thread() != session->thread()) return false;
+    for (QObject *owner = events->parent(); owner; owner = owner->parent()) {
+        if (owner == session) return true;
+    }
+    return false;
+}
 
 QList<StoredSourceAccount> sortedAccounts(SourceAccountStore *accounts)
 {
@@ -272,6 +283,8 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
                 }
             });
 
+    bindContentEvents(instanceId, session);
+    if (!registryGuard || !session || !reservation->isCurrent()) return nullptr;
     session->open();
     if (registryGuard == nullptr || !reservation->isCurrent()) {
         return nullptr;
@@ -313,6 +326,71 @@ bool SourceRegistry::enableInstance(const QString &instanceId)
     }
     emit instanceChanged(instanceId);
     return true;
+}
+
+bool SourceRegistry::contentBindingIsCurrent(const QString &instanceId, QObject *session,
+                                            SourceContentEventsV1 *events) const
+{
+    const auto current = m_sessions.constFind(instanceId);
+    return current != m_sessions.cend() && current->sessionIdentity == session
+        && current->session && current->contentEvents == events
+        && sessionOwnsEvents(session, events);
+}
+
+void SourceRegistry::bindContentEvents(const QString &instanceId, IMusicSourceSessionV2 *session)
+{
+    // Retain the callable package across the optional getter and connectNotify.
+    // Reentrant close/destruction may remove the registry's entry meanwhile.
+    PluginLease callLease;
+    {
+        const auto current = m_sessions.constFind(instanceId);
+        if (current == m_sessions.cend() || current->sessionIdentity != session) return;
+        callLease = current->lease;
+    }
+    auto *provider = qobject_cast<ISourceContentEventsProviderV1 *>(session);
+    if (!provider) return; // Old v2 plugins have no dependency on this extension.
+    const QPointer<SourceRegistry> guard(this);
+    const QPointer<IMusicSourceSessionV2> sessionGuard(session);
+    SourceContentEventsV1 *rawEvents = provider->contentEvents();
+    if (!guard || !sessionGuard) return;
+    const QPointer<SourceContentEventsV1> events = rawEvents;
+    if (!events || !sessionOwnsEvents(sessionGuard, events)) return;
+    {
+        auto entry = m_sessions.find(instanceId);
+        if (entry == m_sessions.end() || entry->sessionIdentity != sessionGuard.data()) return;
+        entry->contentEvents = events;
+    }
+    const auto changedConnection = connect(events, &SourceContentEventsV1::contentChanged, this,
+        [this, instanceId, sessionGuard, events](quint64 revision) {
+            // Captured QPointers fence queued deliveries even if a new session
+            // is later allocated at the exact same addresses (ABA).
+            if (!sessionGuard || !events
+                || !contentBindingIsCurrent(instanceId, sessionGuard, events)) return;
+            {
+                auto current = m_sessions.find(instanceId);
+                if (revision <= current->lastContentRevision) return;
+                current->lastContentRevision = revision;
+            }
+            emit instanceContentChanged(instanceId, revision);
+        });
+    if (!guard || !sessionGuard || !events
+        || !contentBindingIsCurrent(instanceId, sessionGuard, events)) {
+        QObject::disconnect(changedConnection);
+        return;
+    }
+    m_sessions[instanceId].contentChangedConnection = changedConnection;
+    const auto failedConnection = connect(events, &SourceContentEventsV1::refreshFailed, this,
+        [this, instanceId, sessionGuard, events](SourceErrorV2 error) {
+            if (!sessionGuard || !events
+                || !contentBindingIsCurrent(instanceId, sessionGuard, events)) return;
+            emit instanceRefreshFailed(instanceId, error);
+        });
+    if (!guard || !sessionGuard || !events
+        || !contentBindingIsCurrent(instanceId, sessionGuard, events)) {
+        QObject::disconnect(failedConnection);
+        return;
+    }
+    m_sessions[instanceId].refreshFailedConnection = failedConnection;
 }
 
 bool SourceRegistry::disableInstance(const QString &instanceId)
@@ -498,6 +576,8 @@ void SourceRegistry::handleExternalDestruction(const QString &instanceId, QObjec
 
     m_closingInstances.insert(instanceId);
     SessionEntry entry = m_sessions.take(instanceId);
+    QObject::disconnect(entry.contentChangedConnection);
+    QObject::disconnect(entry.refreshFailedConnection);
     const QPointer<SourceRegistry> registry(this);
     if (m_plugins != nullptr) {
         m_plugins->pinLoadedPackage(entry.packageId);
@@ -521,6 +601,8 @@ bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
 
     m_closingInstances.insert(instanceId);
     SessionEntry entry = m_sessions.take(instanceId);
+    QObject::disconnect(entry.contentChangedConnection);
+    QObject::disconnect(entry.refreshFailedConnection);
     const QPointer<SourceRegistry> guard(this);
     const QPointer<IMusicSourceSessionV2> session = entry.session;
     if (session != nullptr) {

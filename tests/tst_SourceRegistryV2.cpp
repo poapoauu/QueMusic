@@ -1,3 +1,6 @@
+#include "extensions/content-events/v1/ISourceContentEventsProviderV1.h"
+#include "extensions/content-events/v1/SourceContentEventsV1.h"
+
 #if defined(QUEMUSIC_SOURCE_REGISTRY_V2_FIXTURE)
 
 #include "v2/IMusicSourcePluginV2.h"
@@ -41,6 +44,7 @@ public:
 signals:
     void fixtureChanged();
     void sessionCreated(QObject *session);
+    void contentEventsRequested();
 
 private:
     int m_createCount = 0;
@@ -49,9 +53,10 @@ private:
 };
 
 class RegistryV2FixtureSession final : public IMusicSourceSessionV2,
-                                       public IPageProviderV2 {
+                                       public IPageProviderV2,
+                                       public ISourceContentEventsProviderV1 {
     Q_OBJECT
-    Q_INTERFACES(IPageProviderV2)
+    Q_INTERFACES(IPageProviderV2 ISourceContentEventsProviderV1)
 
 public:
     RegistryV2FixtureSession(const SourceConfigurationV2 &configuration,
@@ -60,6 +65,16 @@ public:
         , m_configuration(configuration)
         , m_plugin(plugin)
     {
+        m_contentEvents = new SourceContentEventsV1(
+            (configuration.accountId == "foreign-events" || configuration.accountId == "close-on-events")
+                ? static_cast<QObject *>(plugin) : this);
+    }
+
+    SourceContentEventsV1 *contentEvents() const override
+    {
+        auto *events = m_contentEvents;
+        if (m_configuration.accountId == "close-on-events") emit m_plugin->contentEventsRequested();
+        return events;
     }
 
     ~RegistryV2FixtureSession() override
@@ -154,6 +169,7 @@ private:
     }
 
     SourceConfigurationV2 m_configuration;
+    SourceContentEventsV1 *m_contentEvents = nullptr;
     RegistryV2FixturePlugin *m_plugin = nullptr;
     SourceSessionStateV2 m_state = SourceSessionStateV2::Closed;
 };
@@ -212,6 +228,7 @@ IMusicSourceSessionV2 *RegistryV2FixturePlugin::createSession(
 #include <QTest>
 
 #include <utility>
+#include <thread>
 
 namespace {
 
@@ -447,10 +464,27 @@ void runPinTestChild()
 
 }
 
+class ContentGetterCloseObserver final : public QObject {
+    Q_OBJECT
+public:
+    SourceRegistry *registry = nullptr;
+    PluginManager *plugins = nullptr;
+    int leasesDuringGetter = -1;
+public slots:
+    void closeDuringGetter()
+    {
+        registry->closeInstance("registry-v2/close-on-events");
+        leasesDuringGetter = plugins->plugin(kPackageId).activeLeases;
+    }
+};
+
 class SourceRegistryV2Test : public QObject {
     Q_OBJECT
 
 private slots:
+    void rejectsForeignAndStaleContentEvents();
+    void queuedOldContentBindingIsRejected();
+    void contentGetterRetainsCallableLeaseDuringReentrantClose();
     void configurationNotificationWithoutSessionAndAfterRemoval();
     void configurationReplacesOldSession();
     void configurationInvalidatesReentrantCreation();
@@ -491,6 +525,81 @@ auto configurationChanged(Registry &r, const QString &id, int)
     -> decltype(r.configurationChanged(id)) { return r.configurationChanged(id); }
 template<class Registry>
 bool configurationChanged(Registry &, const QString &, long) { return false; }
+
+void SourceRegistryV2Test::rejectsForeignAndStaleContentEvents()
+{
+    RegistryHarness h;
+    QVERIFY(h.loadValidPlugin());
+    QVERIFY(h.saveAccount("home", "Home"));
+    QVERIFY(h.saveAccount("foreign-events", "Foreign"));
+    auto *session = h.registry.sessionFor("registry-v2/home");
+    auto *foreign = h.registry.sessionFor("registry-v2/foreign-events");
+    QVERIFY(session && foreign);
+    auto *events = qobject_cast<ISourceContentEventsProviderV1 *>(session)->contentEvents();
+    auto *foreignEvents = qobject_cast<ISourceContentEventsProviderV1 *>(foreign)->contentEvents();
+    QSignalSpy changed(&h.registry, SIGNAL(instanceContentChanged(QString,quint64)));
+    QSignalSpy failed(&h.registry, SIGNAL(instanceRefreshFailed(QString,SourceErrorV2)));
+    QVERIFY(changed.isValid());
+    QVERIFY(failed.isValid());
+    emit foreignEvents->contentChanged(100);
+    QCOMPARE(changed.count(), 0);
+    emit events->contentChanged(1);
+    emit events->contentChanged(1);
+    emit events->contentChanged(0);
+    emit events->contentChanged(2);
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(changed.at(0).at(0).toString(), QString("registry-v2/home"));
+    QCOMPARE(changed.at(0).at(1).toULongLong(), quint64(1));
+    QCOMPARE(changed.at(1).at(1).toULongLong(), quint64(2));
+    emit events->refreshFailed({SourceErrorKindV2::Unavailable, "fixture.refresh.failed"});
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(failed.at(0).at(0).toString(), QString("registry-v2/home"));
+    QCOMPARE(qvariant_cast<SourceErrorV2>(failed.at(0).at(1)).kind, SourceErrorKindV2::Unavailable);
+    QCOMPARE(h.registry.sessionFor("registry-v2/home"), session);
+    // Even a previously valid emitter loses authority if ownership changes.
+    events->setParent(h.validPluginObject());
+    emit events->contentChanged(3);
+    emit events->refreshFailed({SourceErrorKindV2::Unavailable});
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(failed.count(), 1);
+}
+
+void SourceRegistryV2Test::queuedOldContentBindingIsRejected()
+{
+    RegistryHarness h;
+    QVERIFY(h.loadValidPlugin());
+    QVERIFY(h.saveAccount("home", "Home"));
+    auto *session = h.registry.sessionFor("registry-v2/home");
+    QVERIFY(session);
+    auto *events = qobject_cast<ISourceContentEventsProviderV1 *>(session)->contentEvents();
+    QSignalSpy changed(&h.registry, SIGNAL(instanceContentChanged(QString,quint64)));
+    QVERIFY(changed.isValid());
+    // AutoConnection queues an event emitted from a worker thread. No QObject
+    // method except signal emission is called on that worker.
+    std::thread worker([events] { emit events->contentChanged(99); });
+    worker.join();
+    QVERIFY(h.registry.configurationChanged("registry-v2/home"));
+    auto *replacement = h.registry.sessionFor("registry-v2/home");
+    QVERIFY(replacement);
+    auto *newEvents = qobject_cast<ISourceContentEventsProviderV1 *>(replacement)->contentEvents();
+    emit newEvents->contentChanged(1);
+    QCoreApplication::processEvents();
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.at(0).at(1).toULongLong(), quint64(1));
+}
+
+void SourceRegistryV2Test::contentGetterRetainsCallableLeaseDuringReentrantClose()
+{
+    RegistryHarness h; QVERIFY(h.loadValidPlugin());
+    QVERIFY(h.saveAccount("close-on-events", "Close"));
+    ContentGetterCloseObserver observer;
+    observer.registry = &h.registry; observer.plugins = &h.pluginManager;
+    QVERIFY(QObject::connect(h.validPluginObject(), SIGNAL(contentEventsRequested()),
+                             &observer, SLOT(closeDuringGetter())));
+    QVERIFY(!h.registry.sessionFor("registry-v2/close-on-events"));
+    QCOMPARE(observer.leasesDuringGetter, 1);
+    QCOMPARE(h.pluginManager.plugin(kPackageId).activeLeases, 0);
+}
 
 void SourceRegistryV2Test::configurationNotificationWithoutSessionAndAfterRemoval()
 {

@@ -126,6 +126,38 @@ static int rowFor(MusicPageModel *model, PageSectionKindV2 kind)
 class MusicHubTest final : public QObject {
     Q_OBJECT
 private slots:
+    void contentRefreshInvalidatesOnlyMatchingInstance()
+    {
+        HubHarness h; QVERIFY(h.init());
+        auto *home = h.session("home"); auto *office = h.session("office");
+        h.hub->setSelectedSourceInstanceId("task7/home");
+        h.hub->activatePage(int(MusicPageKindV2::Recommendation));
+        QTRY_COMPARE(h.hub->recommendation()->state(), PageLoadStateV2::Ready);
+        const auto homeCalls = h.requests().size();
+        const auto officeCalls = h.requests("office").size();
+        const auto oldTitle = h.hub->recommendation()->section(0).items.at(0).title;
+        QSignalSpy refreshFailed(h.hub.get(), SIGNAL(sourceRefreshFailed(QString,QString)));
+        QVERIFY(refreshFailed.isValid());
+        QVERIFY(QMetaObject::invokeMethod(&h.registry, "instanceRefreshFailed",
+            Q_ARG(QString, QString("task7/home")),
+            Q_ARG(SourceErrorV2, (SourceErrorV2{SourceErrorKindV2::Unavailable,
+                "plugin.unknownError", "private path should not leak"}))));
+        QCOMPARE(refreshFailed.count(), 1);
+        QCOMPARE(refreshFailed.at(0).at(1).toString(), QString("source.instance.refreshFailed"));
+        QCOMPARE(h.hub->recommendation()->state(), PageLoadStateV2::Ready);
+        QCOMPARE(h.hub->recommendation()->section(0).items.at(0).title, oldTitle);
+        QCOMPARE(h.requests().size(), homeCalls);
+        QVERIFY(QMetaObject::invokeMethod(&h.registry, "instanceContentChanged",
+            Q_ARG(QString, QString("task7/office")), Q_ARG(quint64, quint64(1))));
+        QCoreApplication::processEvents();
+        QCOMPARE(h.requests().size(), homeCalls);
+        QVERIFY(QMetaObject::invokeMethod(&h.registry, "instanceContentChanged",
+            Q_ARG(QString, QString("task7/home")), Q_ARG(quint64, quint64(1))));
+        QTRY_VERIFY(h.requests().size() > homeCalls);
+        QTRY_COMPARE(h.hub->recommendation()->state(), PageLoadStateV2::Ready);
+        QCOMPARE(h.requests("office").size(), officeCalls);
+        QCOMPARE(h.session(), home); QCOMPARE(h.session("office"), office);
+    }
     void sharedScopeResetsStableModelsAndRefreshesActivatedOnly()
     {
         HubHarness h; QVERIFY(h.init());

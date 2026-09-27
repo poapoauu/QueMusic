@@ -52,6 +52,7 @@ PageRepository::PageRepository(SourceRegistry *sources,AggregateComposer *compos
 {
     if (!sources) return;
     connect(sources,&SourceRegistry::instanceChanged,this,&PageRepository::sourceChanged);
+    connect(sources,&SourceRegistry::instanceContentChanged,this,&PageRepository::contentChanged);
     connect(sources,&QObject::destroyed,this,[this] {
         for (const auto &id:m_groups.keys()) fail(id,error(SourceErrorKindV2::Unavailable));
     });
@@ -272,5 +273,31 @@ void PageRepository::sourceChanged(const QString &source)
         req->done=false; req->result.page={};
         receive(id,source,{},error(SourceErrorKindV2::Unavailable));
         if (pending && session && !providerId.isNull()) session->cancel(providerId);
+    }
+}
+
+void PageRepository::contentChanged(const QString &source, quint64 revision)
+{
+    Q_UNUSED(revision)
+    if (m_composer) m_composer->invalidateSource(source);
+    // FIFO IO ordering prevents a later lookup from racing this invalidation.
+    (void)QtConcurrent::run(musicCacheIoPool(), [cache=m_cache, source] {
+        cache->invalidateSource(source);
+    });
+    QList<QUuid> affected;
+    for (const auto &id : m_groups.keys()) {
+        const auto group = m_groups.value(id);
+        if (!group) continue;
+        const auto scope = group->key.query.scope;
+        if (group->key.sourceInstanceIds.contains(source)
+            || (!group->fannedOut && (scope.isAggregate() || scope.sourceInstanceId == source))) {
+            group->cacheInvalidated = true;
+            affected.append(id);
+        }
+    }
+    const QPointer<PageRepository> guard(this);
+    for (const auto &id : affected) {
+        cancel(id); // removes the group before invoking provider cancellation
+        if (!guard) return;
     }
 }

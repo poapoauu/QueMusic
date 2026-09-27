@@ -28,6 +28,7 @@ private:
     void finish(const QUuid &id);
     void fail(const QUuid &id, SourceErrorV2 error);
     void sourceChanged(const QString &source);
+    void contentChanged(const QString &sourceInstanceId, quint64 revision);
     QPointer<SourceRegistry> m_sources;
     AggregateComposer *m_composer;
     std::shared_ptr<PageCache> m_cache;

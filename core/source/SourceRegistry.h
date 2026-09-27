@@ -14,6 +14,7 @@
 
 class IMusicSourcePluginV2;
 class SourceAccountStore;
+class SourceContentEventsV1;
 struct StoredSourceAccount;
 
 inline QString sourceInstanceId(const QString &sourceId, const QString &accountId)
@@ -52,6 +53,8 @@ public:
 
 signals:
     void instanceChanged(QString sourceInstanceId);
+    void instanceContentChanged(QString sourceInstanceId, quint64 revision);
+    void instanceRefreshFailed(QString sourceInstanceId, SourceErrorV2 error);
 
 private:
     class CreationReservation;
@@ -62,6 +65,10 @@ private:
         PluginLease lease;
         QString packageId;
         QSet<QUuid> activeRequests;
+        QPointer<SourceContentEventsV1> contentEvents;
+        QMetaObject::Connection contentChangedConnection;
+        QMetaObject::Connection refreshFailedConnection;
+        quint64 lastContentRevision = 0;
     };
 
     std::optional<StoredSourceAccount> accountForInstance(
@@ -82,6 +89,9 @@ private:
     void invalidateInstanceCreation(const QString &sourceInstanceId);
     void handleExternalDestruction(const QString &sourceInstanceId, QObject *session);
     bool closeEntry(const QString &sourceInstanceId, bool notify);
+    void bindContentEvents(const QString &sourceInstanceId, IMusicSourceSessionV2 *session);
+    bool contentBindingIsCurrent(const QString &sourceInstanceId, QObject *session,
+                                 SourceContentEventsV1 *events) const;
     void closeAll(bool notify);
 
     QPointer<PluginManager> m_plugins;

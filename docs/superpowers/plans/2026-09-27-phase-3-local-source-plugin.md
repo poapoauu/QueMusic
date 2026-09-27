@@ -98,11 +98,15 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - Produces：Registry Host 私有信号 `instanceContentChanged(QString sourceInstanceId, quint64 revision)`、`instanceRefreshFailed(QString sourceInstanceId, SourceErrorV2 error)`。
 - Repository 新增 private `void contentChanged(const QString &sourceInstanceId, quint64 revision)`；与 lifecycle `sourceChanged` 分开，内容更新不重新创建 Session。
 
-- [ ] 写 `rejectsForeignAndStaleContentEvents`：外实例事件对象不订阅；同 Session `1,1,0,2` 只转发 `1,2`；关闭后的 queued signal 无影响。`contentRefreshInvalidatesOnlyMatchingInstance` 验证缓存与在途 generation 只作废受影响实例，Aggregate 包含该实例也失效；在线其他实例缓存保留；旧插件不受影响。
-- [ ] RED：依次 `CHECK quemusic_source_registry_v2_test`、`CHECK quemusic_page_repository_test`、`CHECK quemusic_music_hub_test`；预期新增 spy/缓存断言失败。
-- [ ] SessionEntry 增加事件对象 identity/QPointer、连接和 lastRevision；验证对象是该 Session 的子对象，回调校验 entry/session identity。先断订阅再关闭/销毁 Session、释放 lease。Repository cancel 匹配请求后失效缓存，Hub 刷新可见相关页；后台失败保留旧有效快照并展示稳定错误，不制造 requestFailed。
-- [ ] GREEN：上述三个 CHECK；测试包含 old Session 在新配置 revision `1` 后发高 revision 仍被拒绝，不以 `capabilitiesChanged` 代替通知。
-- [ ] 提交本项 Host / 测试：`feat: invalidate source pages on versioned content events`。
+- [x] 写 `rejectsForeignAndStaleContentEvents`：外实例事件对象不订阅；同 Session `1,1,0,2` 只转发 `1,2`；关闭后的 queued signal 无影响。`contentRefreshInvalidatesOnlyMatchingInstance` 验证缓存与在途 generation 只作废受影响实例，Aggregate 包含该实例也失效；在线其他实例缓存保留；旧插件不受影响。
+- [x] RED：依次 `CHECK quemusic_source_registry_v2_test`、`CHECK quemusic_page_repository_test`、`CHECK quemusic_music_hub_test`；预期新增 spy/缓存断言失败。
+- [x] SessionEntry 增加事件对象 identity/QPointer、连接和 lastRevision；验证对象是该 Session 的子对象，回调校验 entry/session identity。先断订阅再关闭/销毁 Session、释放 lease。Repository cancel 匹配请求后失效缓存，Hub 刷新可见相关页；后台失败保留旧有效快照并展示稳定错误，不制造 requestFailed。
+- [x] GREEN：上述三个 CHECK；测试包含 old Session 在新配置 revision `1` 后发高 revision 仍被拒绝，不以 `capabilitiesChanged` 代替通知。
+- [x] 提交本项 Host / 测试：`feat: invalidate source pages on versioned content events`。
+
+验证记录（2026-09-27，macOS / Qt 6.11.1）：先补信号声明后观察四项行为断言 RED，再 3/3 目标 GREEN；额外 `contentGetterRetainsCallableLeaseDuringReentrantClose` 先观测 lease 0（预期 1），保持临时 callable lease 后 GREEN。最终全量构建与 CTest 52/52 通过（54.13s），v2 目录无 diff。纯 v2 Page/Hub fixture 仍只链接原 SDK，验证未实现扩展的旧插件行为。当前自审，无独立审查工具。
+
+实施裁定：新增 Host-only `MusicHub::sourceRefreshFailed(QString,QString)` 提示接缝，只发 Host 通用错误键并保留旧页面数据，不伪造请求失败；如果后续 UI 提示方式调整，只需调整消费者，不改变 Source SDK ABI。Local Watcher、资源解析、完整 UI 提示与发行部署仍由后续任务验收。
 
 ### Task 3：受控路径、元数据纯工具与 Scanner
 
@@ -224,4 +228,4 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - 公共扩展版本独立；跨任务共享类型/方法在 Interfaces 中固定。新增 Local enum、账号 UI、数据库/播放器依赖都不在计划范围。
 - 五项 Review Focus 均有所属测试；权限和 watcher 故障通过可控 seam 复现，真实平台限制另记录。
 - 实施以逐任务 RED→GREEN 为证据；integration/package 首次即通过的组合测试不替代底层 RED 记录。
-- 实施已获确认，Task 1 证据见该任务验证记录；其余任务尚未验收。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。
+- 实施已获确认，Task 1–2 证据见各任务验证记录；Task 3–9 尚未验收，下一项为受控路径/纯元数据工具/Scanner。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。

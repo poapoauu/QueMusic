@@ -58,6 +58,9 @@ public:
     Q_INVOKABLE QUuid loadLyrics(const QVariantMap &media);
     Q_INVOKABLE void cancelAsset(const QUuid &requestId);
 signals:
+    // A background refresh warning, not a failed page request. The reason is
+    // host-owned; plugin diagnostics never enter the presentation signal.
+    void sourceRefreshFailed(QString sourceInstanceId, QString reasonKey);
     void sourceOptionsChanged();
     void selectedSourceInstanceIdChanged();
     void categoryContextChanged();
