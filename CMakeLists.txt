@@ -59,6 +59,38 @@ target_include_directories(quemusic_source_sdk PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source>
 )
 
+# Optional, separately versioned session notifications. The v2 ABI stays frozen.
+include(GenerateExportHeader)
+set(QUEMUSIC_CONTENT_EVENTS_HEADER_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/source/extensions/content-events/v1")
+add_library(quemusic_source_content_events SHARED
+    sdk/source/extensions/content-events/v1/ISourceContentEventsProviderV1.h
+    sdk/source/extensions/content-events/v1/SourceContentEventsV1.h
+    sdk/source/extensions/content-events/v1/SourceContentEventsV1.cpp
+)
+add_library(QueMusic::source_content_events ALIAS quemusic_source_content_events)
+target_compile_features(quemusic_source_content_events PUBLIC cxx_std_17)
+target_link_libraries(quemusic_source_content_events PUBLIC quemusic_source_sdk)
+target_include_directories(quemusic_source_content_events PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated/source>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source>
+)
+set_target_properties(quemusic_source_content_events PROPERTIES
+    EXPORT_NAME source_content_events VERSION 1.0.0 SOVERSION 1)
+generate_export_header(quemusic_source_content_events
+    EXPORT_FILE_NAME "${QUEMUSIC_CONTENT_EVENTS_HEADER_DIR}/SourceContentEventsV1Export.h")
+install(TARGETS quemusic_source_content_events
+    EXPORT QueMusicPluginSdkTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PluginSdk
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PluginSdk
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PluginSdk)
+install(DIRECTORY sdk/source/extensions/content-events/v1/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/content-events/v1
+    COMPONENT PluginSdk FILES_MATCHING PATTERN "*.h")
+install(FILES "${QUEMUSIC_CONTENT_EVENTS_HEADER_DIR}/SourceContentEventsV1Export.h"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/content-events/v1
+    COMPONENT PluginSdk)
+
 add_library(quemusic_plugin_ui_sdk INTERFACE)
 target_compile_features(quemusic_plugin_ui_sdk INTERFACE cxx_std_17)
 target_link_libraries(quemusic_plugin_ui_sdk INTERFACE Qt6::Core)
@@ -598,6 +630,15 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_v2_contract_test COMMAND quemusic_source_v2_contract_test)
+
+    qt_add_executable(quemusic_source_content_events_contract_test
+        tests/tst_SourceContentEventsContract.cpp
+    )
+    target_link_libraries(quemusic_source_content_events_contract_test PRIVATE
+        quemusic_source_content_events Qt6::Test
+    )
+    add_test(NAME quemusic_source_content_events_contract_test
+        COMMAND quemusic_source_content_events_contract_test)
 
     qt_add_executable(quemusic_source_settings_storage_test
         tests/tst_SourceSettingsStorage.cpp

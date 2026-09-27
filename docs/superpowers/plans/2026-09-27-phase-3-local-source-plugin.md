@@ -20,7 +20,7 @@
 - Play/Enqueue 必须走 Adapter → PlaybackCoordinator → Sink；仅返回媒体资源，不重写既有队列。
 - 删除实例只删除配置/索引，不删除音频；不删除旧数据库表、自建集合或仍有调用者的 Legacy 代码。
 - 测试只用临时目录、小型生成音频/标签和 fake Sink，不扫描真实音乐库、不连接平台；未运行的平台不声明通过。
-- 本计划待用户审阅；规格确认不等于计划批准。计划编写阶段仅改文档，不推送、合并或创建 PR。
+- 用户已批准本计划并开始执行。推送、合并或创建 PR 另按用户指示，不由实施计划自动授权。
 
 ## Review Focus
 
@@ -74,7 +74,7 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - `SourceContentEventsV1 : QObject`，继承 QObject 构造函数；信号 `void contentChanged(quint64 revision)`、`void refreshFailed(SourceErrorV2 error)`。
 - IID `org.quemusic.source.ContentEventsProvider/1.0`；共享目标 `quemusic_source_content_events`，导出 `QueMusic::source_content_events`，链接 Source SDK；用生成 export header 导出 QObject 的跨库符号。
 
-- [ ] 写 `optionalInterfaceRoundTrip`：`qobject_cast<ISourceContentEventsProviderV1*>` 对 mock Session 成功，对纯 v2 Session 为 nullptr；`QSignalSpy` 收到 revision `1` 和原样 SourceError；事件对象 parent 是 Session。
+- [x] 写 `optionalInterfaceRoundTrip`：`qobject_cast<ISourceContentEventsProviderV1*>` 对 mock Session 成功，对纯 v2 Session 为 nullptr；`QSignalSpy` 收到 revision `1` 和原样 SourceError；事件对象 parent 是 Session。
 
   ```cpp
   QVERIFY(qobject_cast<ISourceContentEventsProviderV1 *>(extendedSession));
@@ -82,10 +82,12 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
   QCOMPARE(events->parent(), extendedSession);
   QCOMPARE(changedSpy.at(0).at(0).toULongLong(), quint64(1));
   ```
-- [ ] RED：`CHECK quemusic_source_content_events_contract_test`，缺扩展声明或 cast 断言失败。
-- [ ] 实现上述两个文件契约和 runtime；头文件独立安装到 `include/quemusic/source/extensions/content-events/v1`，runtime 加入既有 PluginSdk export，包含生成 export header。不在 v2 Session 新增信号。
-- [ ] GREEN：同一 CHECK；另运行 `CHECK quemusic_source_v2_contract_test`，确认原插件契约仍通过。
-- [ ] 提交本项 SDK / CMake / 测试：`feat: add optional source content events v1 contract`。
+- [x] RED：`CHECK quemusic_source_content_events_contract_test`，缺扩展声明或 cast 断言失败。
+- [x] 实现上述两个文件契约和 runtime；头文件独立安装到 `include/quemusic/source/extensions/content-events/v1`，runtime 加入既有 PluginSdk export，包含生成 export header。不在 v2 Session 新增信号。
+- [x] GREEN：同一 CHECK；另运行 `CHECK quemusic_source_v2_contract_test`，确认原插件契约仍通过。
+- [x] 提交本项 SDK / CMake / 测试：`feat: add optional source content events v1 contract`。
+
+验证记录（2026-09-27，macOS / Qt 6.11.1）：新增测试先因契约缺失 RED，再 2/2 contract GREEN；全量构建与 CTest 52/52 通过（53.19s），PluginSdk 安装及独立消费者链接/运行 exit 0；`sdk/source/v2` 无 diff。外部动态插件与其他平台发行验证仍属于 Task 9。
 
 ### Task 2：Registry 与页面缓存的通用内容失效
 
@@ -222,4 +224,4 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - 公共扩展版本独立；跨任务共享类型/方法在 Interfaces 中固定。新增 Local enum、账号 UI、数据库/播放器依赖都不在计划范围。
 - 五项 Review Focus 均有所属测试；权限和 watcher 故障通过可控 seam 复现，真实平台限制另记录。
 - 实施以逐任务 RED→GREEN 为证据；integration/package 首次即通过的组合测试不替代底层 RED 记录。
-- 当前仅完成文档计划，不声称新增测试已运行。**待用户审阅并确认本计划后，沿用当前会话逐任务执行。**
+- 实施已获确认，Task 1 证据见该任务验证记录；其余任务尚未验收。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。

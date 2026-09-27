@@ -1,6 +1,6 @@
 # Phase 3：Local Source Plugin 设计规格
 
-> 状态：书面规格已确认；实施计划待审阅，尚未开始实现
+> 状态：规格与实施计划已确认；实施中（Task 1 独立内容通知契约已完成）
 > 设计基线：[最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md)
 > 前置成果：[Phase 2 实施记录](phase-2-plugin-settings-ui-record.md)
 > 代码核对起点：`b95543c`，分支 `codex/plugin-ui-api-v1`
