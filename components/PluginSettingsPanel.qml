@@ -27,6 +27,7 @@ Rectangle {
     property string pendingRemovalId: ""
     property string pendingActionId: ""
     property string directoryFieldId: ""
+    property var managementDirectoryRequest: null
     property string observedPluginState: ""
     property string pendingProbeRequest: ""
     property bool probeCurrent: true
@@ -118,6 +119,8 @@ Rectangle {
         schemaForm.clearSecrets()
         controller.selectInstance(instanceId)
         refreshFromController(false)
+        if (controller.managementUiAvailable)
+            controller.openManagementUi(instanceId ? 1 : 0)
     }
 
     function saveInstance() {
@@ -182,11 +185,16 @@ Rectangle {
         refreshFromController(true)
     }
     onVisibleChanged: {
-        if (!visible)
+        if (!visible) {
             schemaForm.clearSecrets()
+            managementHost.closePage()
+        }
     }
     Component.onCompleted: refreshFromController(true)
-    Component.onDestruction: schemaForm.clearSecrets()
+    Component.onDestruction: {
+        managementHost.closePage()
+        schemaForm.clearSecrets()
+    }
 
     Connections {
         target: root.controller
@@ -208,6 +216,16 @@ Rectangle {
             root.probeCurrent = result.success === true
         }
     }
+    Connections {
+        target: root.controller && root.controller.managementUiSession
+                && root.controller.managementUiSession.context
+                ? root.controller.managementUiSession.context.host : null
+        ignoreUnknownSignals: true
+        function onDirectoryRequested(requestId) {
+            root.managementDirectoryRequest = requestId
+            directoryDialog.open()
+        }
+    }
 
     Dialog {
         id: removalConfirmation
@@ -219,6 +237,13 @@ Rectangle {
         palette.window: Style.themes.containColor
         palette.windowText: Style.themes.fontColor
         onAccepted: {
+            if (root.managementDirectoryRequest) {
+                var host = root.controller && root.controller.managementUiSession
+                           ? root.controller.managementUiSession.context.host : null
+                if (host) host.completeDirectory(root.managementDirectoryRequest, selectedFolder)
+                root.managementDirectoryRequest = null
+                return
+            }
             if (root.controller && root.pendingRemovalId)
                 root.controller.removeInstance(root.pendingRemovalId)
             root.pendingRemovalId = ""
@@ -260,7 +285,10 @@ Rectangle {
             }
             root.directoryFieldId = ""
         }
-        onRejected: root.directoryFieldId = ""
+        onRejected: {
+            root.directoryFieldId = ""
+            root.managementDirectoryRequest = null
+        }
     }
 
     Item {
@@ -335,6 +363,14 @@ Rectangle {
             anchors.bottom: parent.bottom
             width: parent.width
 
+            PluginManagementPageHost {
+                id: managementHost
+                anchors.fill: parent
+                z: 10
+                visible: !!root.controller && !!root.controller.managementUiSession
+                controller: root.controller
+            }
+
             Text {
                 objectName: "pluginUnavailablePlaceholder"
                 anchors.centerIn: parent
@@ -360,7 +396,7 @@ Rectangle {
             ListView {
                 id: masterList
                 objectName: "pluginMasterList"
-                visible: !!root.controller && root.plugins.length > 0
+                visible: !!root.controller && root.plugins.length > 0 && !managementHost.visible
                 x: 0
                 y: 0
                 width: root.compact ? workArea.width
@@ -413,7 +449,7 @@ Rectangle {
             ScrollView {
                 id: detailPane
                 objectName: "pluginDetailPane"
-                visible: !!root.controller && root.plugins.length > 0
+                visible: !!root.controller && root.plugins.length > 0 && !managementHost.visible
                 x: root.compact ? 0 : masterList.width + 12
                 y: root.compact ? masterList.height + 12 : 0
                 width: root.compact ? workArea.width
@@ -513,6 +549,19 @@ Rectangle {
                             if (root.controller)
                                 root.controller.setInstanceEnabled(instanceId, enabled)
                         }
+                    }
+
+                    Button {
+                        objectName: "openManagementUiAction"
+                        width: parent.width
+                        visible: !!root.controller && root.controller.managementUiAvailable === true
+                        enabled: visible && !root.busy
+                        text: root.controller && root.controller.selectedInstanceId
+                              ? qsTr("Manage account in plugin") : qsTr("Set up account in plugin")
+                        palette.button: Style.themes.containColor
+                        palette.buttonText: Style.themes.fontColor
+                        onClicked: root.controller.openManagementUi(
+                                       root.controller.selectedInstanceId ? 1 : 0)
                     }
 
                     TextField {

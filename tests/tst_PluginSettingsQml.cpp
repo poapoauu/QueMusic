@@ -1,4 +1,6 @@
 #include <QGuiApplication>
+#include <QFile>
+#include <QDir>
 #include <QPointer>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -10,6 +12,9 @@
 #include <QUuid>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
+#include "PluginSettingsController.h"
+#include "SourceAccountStore.h"
+#include "SourceRegistry.h"
 
 namespace {
 
@@ -508,6 +513,32 @@ struct PanelHarness {
     }
 };
 
+class UiSecrets final : public ISecretStore {
+public:
+    bool write(const QString &, const QByteArray &, QString *) override { return true; }
+    std::optional<QByteArray> read(const QString &, QString *) const override { return {}; }
+    bool remove(const QString &, QString *) override { return true; }
+};
+struct RealPanelHarness {
+    QTemporaryDir dir;
+    QSettings settings{dir.filePath("accounts.ini"), QSettings::IniFormat};
+    UiSecrets secrets;
+    SourceAccountStore store{&settings, &secrets};
+    PluginManager manager;
+    SourceRegistry registry{&manager, &store};
+    std::unique_ptr<PluginSettingsController> controller;
+    std::unique_ptr<PanelHarness> panel;
+    const QString id = QStringLiteral("org.quemusic.source.ui-valid");
+    bool load(const QString &packages = QStringLiteral(QUEMUSIC_UI_FIXTURE_ROOT)) {
+        manager.addSearchPath(packages);
+        if (manager.discover() < 1 || !manager.load(id)) return false;
+        controller = std::make_unique<PluginSettingsController>(&manager, &registry, &store);
+        if (!controller->selectPlugin(id)) return false;
+        panel = std::make_unique<PanelHarness>(controller.get());
+        return panel->panel;
+    }
+};
+
 bool click(QObject *object)
 {
     return object && QMetaObject::invokeMethod(object, "click", Qt::DirectConnection);
@@ -554,10 +585,82 @@ private slots:
     void longFallbackLabelWraps();
     void responsiveGeometryAndTheme_data();
     void responsiveGeometryAndTheme();
+    void clearsPageBeforeReleasingLease();
+    void schemaOnlyPluginRetainsCurrentSettingsFlow();
+    void customUiReceivesOnlyPluginUiContext();
+    void loadFailureShowsGenericErrorState();
 
 private:
     QTemporaryDir m_settingsDirectory;
 };
+
+void PluginSettingsQmlTest::clearsPageBeforeReleasingLease()
+{
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.controller->managementUiSession());
+    QTRY_VERIFY(h.panel->named("managementPageLoader"));
+    QTRY_VERIFY(h.panel->named("fixtureManagementPage"));
+    QPointer<QObject> page = h.panel->named("fixtureManagementPage");
+    QPointer<QObject> backend = h.controller->managementUiSession()->context()->backend();
+    QVERIFY(backend);
+    QCOMPARE(h.manager.plugin(h.id).activeLeases, 1);
+    bool pageGoneAtLeaseRelease = false;
+    connect(&h.manager, &PluginManager::pluginChanged, h.controller.get(), [&] {
+        if (h.manager.plugin(h.id).activeLeases == 0) pageGoneAtLeaseRelease = page.isNull();
+    });
+    QVERIFY(click(h.panel->named("closeManagementUiAction")));
+    QTRY_VERIFY(!h.controller->managementUiSession());
+    QVERIFY(backend.isNull());
+    QVERIFY(pageGoneAtLeaseRelease);
+    QCOMPARE(h.manager.plugin(h.id).activeLeases, 0);
+}
+
+void PluginSettingsQmlTest::schemaOnlyPluginRetainsCurrentSettingsFlow()
+{
+    PluginSettingsControllerDouble controller;
+    PanelHarness harness(&controller);
+    QVERIFY(harness.panel);
+    QVERIFY(harness.named("openManagementUiAction"));
+    QVERIFY(!harness.named("openManagementUiAction")->property("visible").toBool());
+    QVERIFY(harness.named("schemaSettingsForm"));
+    QVERIFY(click(harness.named("saveInstanceAction")));
+    QCOMPARE(controller.saveCalls, 1);
+}
+
+void PluginSettingsQmlTest::customUiReceivesOnlyPluginUiContext()
+{
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureManagementPage"));
+    auto *page = h.panel->named("fixtureManagementPage");
+    QCOMPARE(page->property("pluginUiContext").value<QObject *>(),
+             static_cast<QObject *>(h.controller->managementUiSession()->context()));
+    QVERIFY(page->property("controller").isNull());
+}
+
+void PluginSettingsQmlTest::loadFailureShowsGenericErrorState()
+{
+    QTemporaryDir packages;
+    QVERIFY(packages.isValid());
+    const QString destination = packages.filePath("valid");
+    QVERIFY(QDir().mkpath(destination + "/qml"));
+    const QDir source(QStringLiteral(QUEMUSIC_UI_FIXTURE_ROOT) + "/valid");
+    for (const auto &name : source.entryList(QDir::Files))
+        QVERIFY(QFile::copy(source.filePath(name), destination + '/' + name));
+    QFile broken(destination + "/qml/ManagementPage.qml");
+    QVERIFY(broken.open(QIODevice::WriteOnly));
+    broken.write("import QtQuick\nItem { invalid syntax\n");
+    broken.close();
+    RealPanelHarness h; QVERIFY(h.load(packages.path()));
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    auto *error = h.panel->named("managementPageError");
+    QVERIFY(error);
+    QTRY_VERIFY(error->property("visible").toBool());
+    QVERIFY(!error->property("description").toString().contains(packages.path()));
+    QVERIFY(click(h.panel->named("closeManagementUiAction")));
+    QTRY_VERIFY(!h.controller->managementUiSession());
+}
 
 void PluginSettingsQmlTest::initTestCase()
 {

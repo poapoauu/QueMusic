@@ -1146,6 +1146,7 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_plugin_settings_qml_test PRIVATE cxx_std_17)
     target_compile_definitions(quemusic_plugin_settings_qml_test PRIVATE
         QUEMUSIC_QML_IMPORT_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+        QUEMUSIC_UI_FIXTURE_ROOT="${QUEMUSIC_UI_FIXTURE_ROOT}"
     )
     qt_add_resources(quemusic_plugin_settings_qml_test "quemusic_plugin_settings_qml_test_qml"
         PREFIX "/QueMusic"
@@ -1154,10 +1155,12 @@ if(BUILD_TESTING)
             components/PluginSettingsText.js
     )
     target_link_libraries(quemusic_plugin_settings_qml_test PRIVATE
+        quemusic_plugin_settings
         Qt6::Qml
         Qt6::Quick
         Qt6::Test
     )
+    add_dependencies(quemusic_plugin_settings_qml_test quemusic_ui_fixture_valid)
     add_test(NAME quemusic_plugin_settings_qml_test COMMAND quemusic_plugin_settings_qml_test)
     set_tests_properties(quemusic_plugin_settings_qml_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"

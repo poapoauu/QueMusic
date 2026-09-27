@@ -54,6 +54,7 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
     QString pendingId;
     bool pendingEnabled = false;
     bool managementClosing = false;
+    bool waitingForPage = false;
 
     bool requestManagementClose(PendingKind kind, const QString &id = {}, bool enabled = false)
     {
@@ -318,7 +319,16 @@ PluginSettingsController::PluginSettingsController(PluginManager *manager, Sourc
 }
 PluginSettingsController::~PluginSettingsController() {
     d->owner = nullptr; d->invalidate(); d->pendingKind = State::PendingKind::None;
-    if (d->managementSession) { d->managementSession->invalidateContext(); d->managementSession.reset(); }
+    if (d->managementSession) {
+        d->managementSession->invalidateContext();
+        if (d->managementSession->pageAlive()) {
+            auto *session = d->managementSession.release();
+            session->setParent(nullptr);
+            connect(session, &PluginManagementUiSession::pageDestroyed, session, [session] {
+                session->release(); session->deleteLater();
+            });
+        } else d->managementSession.reset();
+    }
 }
 QVariantList PluginSettingsController::plugins() const { return d->snapshot.value("plugins").toList(); }
 QVariantList PluginSettingsController::instances() const { return d->snapshot.value("instances").toList(); }
@@ -374,6 +384,14 @@ void PluginSettingsController::finishCloseManagementUi()
 {
     auto s = d;
     if (s->managementSession) {
+        if (s->managementSession->pageAlive()) {
+            if (!s->waitingForPage) {
+                s->waitingForPage = true;
+                connect(s->managementSession.get(), &PluginManagementUiSession::pageDestroyed,
+                    this, [this] { d->waitingForPage = false; finishCloseManagementUi(); });
+            }
+            return;
+        }
         s->managementSession->release();
         s->managementSession.reset();
         emit managementUiChanged();

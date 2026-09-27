@@ -39,7 +39,7 @@ public:
     using PluginUiHostServices::PluginUiHostServices;
     QUuid requestDirectory() override;
     void notify(const QString &message, bool isError) override;
-    void completeDirectory(QUuid requestId, const QUrl &localDirectory);
+    Q_INVOKABLE void completeDirectory(QUuid requestId, const QUrl &localDirectory);
     void invalidate();
 private:
     QSet<QUuid> m_pending;

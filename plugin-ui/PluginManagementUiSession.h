@@ -30,10 +30,13 @@ public:
     PluginUiContext *context() const { return m_context; }
     QString state() const { return m_state; }
     QString errorKey() const { return m_errorKey; }
+    Q_INVOKABLE void trackPage(QObject *page);
+    bool pageAlive() const { return !m_page.isNull() || m_pageTeardownPending; }
     Q_INVOKABLE void invalidateContext();
     Q_INVOKABLE void release();
 signals:
     void changed();
+    void pageDestroyed();
 private:
     void fail(const QString &key);
     QUrl m_componentUrl;
@@ -41,6 +44,8 @@ private:
     QPointer<HostPluginUiSettingsBridge> m_settings;
     QPointer<HostPluginUiHostServices> m_host;
     QPointer<QObject> m_backend;
+    QPointer<QObject> m_page;
+    bool m_pageTeardownPending = false;
     PluginLease m_lease;
     QString m_state = QStringLiteral("error");
     QString m_errorKey;

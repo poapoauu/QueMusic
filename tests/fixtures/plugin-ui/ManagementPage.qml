@@ -1,2 +1,5 @@
 import QtQuick
-Item {}
+Item {
+    objectName: "fixtureManagementPage"
+    property var pluginUiContext: null
+}

@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QUuid>
+#include <QTimer>
 
 PluginManagementUiSession::PluginManagementUiSession(PluginManager *manager,
     SourceAccountStore *store, SourceRegistry *registry, const PluginUiContextData &identity,
@@ -113,6 +114,21 @@ PluginManagementUiSession::PluginManagementUiSession(PluginManager *manager,
 PluginManagementUiSession::~PluginManagementUiSession()
 {
     release();
+}
+
+void PluginManagementUiSession::trackPage(QObject *page)
+{
+    if (!page || m_page || m_released) return;
+    m_page = page;
+    connect(page, &QObject::destroyed, this, [this] {
+        // QObject::destroyed precedes child destruction. Wait for the entire
+        // Loader disposal stack to unwind before destroying backend/plugin code.
+        m_pageTeardownPending = true;
+        QTimer::singleShot(0, this, [this] {
+            m_pageTeardownPending = false;
+            emit pageDestroyed();
+        });
+    });
 }
 
 void PluginManagementUiSession::fail(const QString &key)
