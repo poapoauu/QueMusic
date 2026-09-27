@@ -51,6 +51,27 @@ add_library(quemusic_source_sdk STATIC
     sdk/source/v2/SourceSecretsV2.cpp
     sdk/source/v2/SourceSecretsV2.h
 )
+add_library(quemusic_local_media STATIC core/local-media/LocalMediaFiles.cpp core/local-media/LocalMediaFiles.h)
+set(QUEMUSIC_LOCAL_TAGLIB_INCLUDES
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib/toolkit
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib/mpeg
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib/mpeg/id3v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib/mpeg/id3v2/frames
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib/riff
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/taglib/taglib/riff/wav)
+target_compile_features(quemusic_local_media PUBLIC cxx_std_17)
+set_target_properties(quemusic_local_media PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(quemusic_local_media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(quemusic_local_media PRIVATE ${QUEMUSIC_LOCAL_TAGLIB_INCLUDES})
+target_link_libraries(quemusic_local_media PUBLIC Qt6::Core Qt6::Gui PRIVATE tag)
+
+add_library(quemusic_local_scanner STATIC plugins/local-source/LocalSourceScanner.cpp plugins/local-source/LocalSourceScanner.h)
+target_compile_features(quemusic_local_scanner PUBLIC cxx_std_17)
+set_target_properties(quemusic_local_scanner PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(quemusic_local_scanner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(quemusic_local_scanner PRIVATE ${QUEMUSIC_LOCAL_TAGLIB_INCLUDES})
+target_link_libraries(quemusic_local_scanner PUBLIC quemusic_source_sdk quemusic_local_media PRIVATE tag)
 target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
@@ -1449,3 +1470,14 @@ target_link_libraries(quemusic_local_lyrics_test PRIVATE
     tag
 )
 add_test(NAME quemusic_local_lyrics_test COMMAND quemusic_local_lyrics_test)
+target_link_libraries(quemusic_local_lyrics_test PRIVATE quemusic_local_media)
+target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_local_media)
+
+if(BUILD_TESTING)
+    add_executable(quemusic_local_source_scanner_test tests/tst_LocalSourceScanner.cpp)
+    target_include_directories(quemusic_local_source_scanner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(quemusic_local_source_scanner_test PRIVATE ${QUEMUSIC_LOCAL_TAGLIB_INCLUDES})
+    target_link_libraries(quemusic_local_source_scanner_test PRIVATE
+        quemusic_local_scanner Qt6::Gui Qt6::Test tag)
+    add_test(NAME quemusic_local_source_scanner_test COMMAND quemusic_local_source_scanner_test)
+endif()

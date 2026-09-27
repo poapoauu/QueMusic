@@ -119,12 +119,18 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - `LocalScanResult { QList<LocalScanEntry> entries; QStringList watchedDirectories; QStringList warningKeys; std::optional<SourceErrorV2> error; bool cancelled=false; }`。
 - `LocalSourceScanner::parseConfig(const QVariantMap&, SourceErrorV2*) -> std::optional<LocalScanConfig>`；`scan(const LocalScanConfig&, const std::atomic_bool&) const -> LocalScanResult`；`validatedPath(const LocalScanConfig&, const QString &entityId, bool directory) -> std::optional<QString>`。
 
-- [ ] 写 `rootBoundaryAndEncodedIdentity`：根为 `music`，`music-other` 和外部链接拒绝，中文/空格 URL 成功，fully-encoded canonical ID 重扫一致；目录 symlink 不递归，根 symlink 可规范化，内部文件 symlink 去重。
-- [ ] 写 `schemaAndScanFailures`：relative/network/userinfo 根拒绝；ignore `../x`、`a//b`、绝对路径拒绝；递归关/忽略后代、空库、取消、坏标签 filename fallback、删除/移动 ID、新增后排序确定；生成音频标签 fixture 验证 title/artists/album/时长。`sidecarPayloads` 验证 LRC 优先于内嵌，Artwork 内嵌优先于 sidecar、字节 MIME 正确，越界 sidecar 不读；缺 lyrics 返回空 QString。
-- [ ] RED：`CHECK quemusic_local_source_scanner_test`，新路径/资源断言失败。
-- [ ] 实现接口；先抽取真实既有歌词文本/封面逻辑，必要时从旧歌词展示列表序列化 LRC，不能直接返回 QVariantList。Scanner 不做异步调度、不访问 SQLite；canonical 路径组件判断边界，不用字符串前缀。候选扩展集从现有 FilePage 选择范围迁入测试固定，不承诺解码。
-- [ ] GREEN：同 CHECK 和 `CHECK quemusic_local_lyrics_test`；注入文件访问失败覆盖不可读根/子目录/文件，不依赖特权下无效 chmod；有平台真实权限测试时明确 SKIP 原因。
-- [ ] 提交纯工具 / Scanner / 测试：`feat: add bounded local media scanning and asset helpers`。
+- [x] 写 `rootBoundaryAndEncodedIdentity`：根为 `music`，`music-other` 和外部链接拒绝，中文/空格 URL 成功，fully-encoded canonical ID 重扫一致；目录 symlink 不递归，根 symlink 可规范化，内部文件 symlink 去重。
+- [x] 写 `schemaAndScanFailures`：relative/network/userinfo 根拒绝；ignore `../x`、`a//b`、绝对路径拒绝；递归关/忽略后代、空库、取消、坏标签 filename fallback、删除/移动 ID、新增后排序确定；生成音频标签 fixture 验证 title/artists/album/时长。`sidecarPayloads` 验证 LRC 优先于内嵌，Artwork 内嵌优先于 sidecar、字节 MIME 正确，越界 sidecar 不读；缺 lyrics 返回空 QString。
+- [x] RED：`CHECK quemusic_local_source_scanner_test`，新路径/资源断言失败。
+- [x] 实现接口；先抽取真实既有歌词文本/封面逻辑，必要时从旧歌词展示列表序列化 LRC，不能直接返回 QVariantList。Scanner 不做异步调度、不访问 SQLite；canonical 路径组件判断边界，不用字符串前缀。候选扩展集从现有 FilePage 选择范围迁入测试固定，不承诺解码。
+- [x] GREEN：同 CHECK 和 `CHECK quemusic_local_lyrics_test`；注入文件访问失败覆盖不可读根/子目录/文件，不依赖特权下无效 chmod；有平台真实权限测试时明确 SKIP 原因。
+- [x] 提交纯工具 / Scanner / 测试：`feat: add bounded local media scanning and asset helpers`。
+
+验证记录（2026-09-27，macOS / Qt 6.11.1）：首轮 Scanner 四项缺失契约 RED；实现后真实 WAV 标签/1000ms 时长、路径身份、资源优先级通过。额外测试先暴露根失效被报告为成功空库、canonical 根替换后扩大权限，以及多行 USLT 序列化丢行，分别修正后 GREEN。根路径固定为已规范化路径，旧歌词/封面接口保留并复用纯工具。最新全量构建 exit 0、CTest 53/53（49.65s）；没有依赖 QML/model、SQLite 或播放器，也没有改 v2 目录。访问故障使用只能额外拒绝的可注入 AccessPolicy 与真实枚举/读取组合覆盖，未宣称真实 chmod 或 Windows/Linux 权限测试通过。当前为作者自审，整分支审查及发行包验证仍属于 Task 9。
+
+实施裁定：Scanner 增加值持有的可选 AccessPolicy，仅拒绝额外路径，不绕过文件系统检查；用于可靠复现根/子目录/文件访问失败。若未来平台需替换此内部接缝，不影响 Source SDK ABI。
+
+稳定性复验：最终代码 Scanner CTest 连续 10/10 通过（1.22s），复验全量构建 exit 0；`git diff 28d0403 -- sdk/source/v2` 为空，`git diff --check` 无问题。
 
 ### Task 4：Plugin-owned 共享异步索引与 Watcher
 
@@ -228,4 +234,4 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - 公共扩展版本独立；跨任务共享类型/方法在 Interfaces 中固定。新增 Local enum、账号 UI、数据库/播放器依赖都不在计划范围。
 - 五项 Review Focus 均有所属测试；权限和 watcher 故障通过可控 seam 复现，真实平台限制另记录。
 - 实施以逐任务 RED→GREEN 为证据；integration/package 首次即通过的组合测试不替代底层 RED 记录。
-- 实施已获确认，Task 1–2 证据见各任务验证记录；Task 3–9 尚未验收，下一项为受控路径/纯元数据工具/Scanner。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。
+- 实施已获确认，Task 1–3 证据见各任务验证记录；Task 4–9 尚未验收，下一项为 Plugin-owned 共享异步索引与 Watcher。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。

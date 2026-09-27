@@ -17,10 +17,6 @@ public:
     // The result contains: found (bool), source (sidecar/embedded), lyrics (list).
     static QVariantMap read(const QString &filePath);
 
-private:
-    static QVariantList parseEmbeddedLyrics(const QString &filePath);
-    static QVariantList parsePlainLyrics(const QString &text);
-    static QVariantMap result(const QString &source, const QVariantList &lyrics);
 };
 
 #endif // LOCALLYRICSREADER_H

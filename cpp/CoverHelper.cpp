@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 QueMusic Contributors
 //
 #include "CoverHelper.h"
+#include "core/local-media/LocalMediaFiles.h"
 #include <QTemporaryFile>
 #include <QStandardPaths>
 #include <QFile>
@@ -69,24 +70,9 @@ QString CoverHelper::findLocalCover(const QString &sourcePath)
     if (!fi.exists() || !fi.isFile())
         return QString();
 
-    const QDir dir = fi.absoluteDir();
-    const QString baseName = fi.completeBaseName();
-
-    // 探测顺序：与音频文件同名 -> 常见通用命名（cover/folder/AlbumArt）
-    const QStringList names = { baseName, QStringLiteral("cover"),
-                                QStringLiteral("folder"), QStringLiteral("AlbumArt") };
-    const QStringList extensions = { QStringLiteral("jpg"), QStringLiteral("jpeg"),
-                                     QStringLiteral("png"), QStringLiteral("webp"),
-                                     QStringLiteral("bmp"), QStringLiteral("gif") };
-
-    for (const QString &name : names) {
-        for (const QString &ext : extensions) {
-            const QString candidate = dir.filePath(name + QLatin1Char('.') + ext);
-            if (QFile::exists(candidate))
-                return QUrl::fromLocalFile(candidate).toString();
-        }
-    }
-    return QString();
+    const QString path = LocalMediaFiles::sidecarArtworkPath(fi.canonicalFilePath(),
+        QFileInfo(fi.absolutePath()).canonicalFilePath());
+    return path.isEmpty() ? QString{} : QUrl::fromLocalFile(path).toString();
 }
 
 QString CoverHelper::currentCoverUrl() const
