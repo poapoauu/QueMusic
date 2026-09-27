@@ -104,7 +104,7 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - [x] GREEN：上述三个 CHECK；测试包含 old Session 在新配置 revision `1` 后发高 revision 仍被拒绝，不以 `capabilitiesChanged` 代替通知。
 - [x] 提交本项 Host / 测试：`feat: invalidate source pages on versioned content events`。
 
-验证记录（2026-09-27，macOS / Qt 6.11.1）：先补信号声明后观察四项行为断言 RED，再 3/3 目标 GREEN；额外 `contentGetterRetainsCallableLeaseDuringReentrantClose` 先观测 lease 0（预期 1），保持临时 callable lease 后 GREEN。最终全量构建与 CTest 52/52 通过（54.13s），v2 目录无 diff。纯 v2 Page/Hub fixture 仍只链接原 SDK，验证未实现扩展的旧插件行为。当前自审，无独立审查工具。
+验证记录（2026-09-27，macOS / Qt 6.11.1）：先补信号声明后观察四项行为断言 RED，再 3/3 目标 GREEN；额外 `contentGetterRetainsCallableLeaseDuringReentrantClose` 先观测 lease 0（预期 1），保持临时 callable lease 后 GREEN。完成门禁随后暴露测试错误地假设 QHash 请求取消顺序；重复诊断观察最后取消的是 oldHome，而非 aggregateHome。fixture 改为记录全部取消，断言两个受影响请求各取消一次、office-only 请求不取消，生产代码未调整顺序。修正后 PageRepository 连续 10/10 通过，最新全量构建与 CTest 52/52 通过（50.70s），v2 目录无 diff。纯 v2 Page/Hub fixture 仍只链接原 SDK，验证未实现扩展的旧插件行为。当前自审，无独立审查工具。
 
 实施裁定：新增 Host-only `MusicHub::sourceRefreshFailed(QString,QString)` 提示接缝，只发 Host 通用错误键并保留旧页面数据，不伪造请求失败；如果后续 UI 提示方式调整，只需调整消费者，不改变 Source SDK ABI。Local Watcher、资源解析、完整 UI 提示与发行部署仍由后续任务验收。
 

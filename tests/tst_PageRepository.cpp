@@ -15,7 +15,13 @@ public:
     CapabilitySetV2 capabilities() const override { return {}; }
     QUuid open() override { auto id = QUuid::createUuid(); emit requestStarted(id); emit actionCompleted(id, {}); return id; }
     void close() override { current = SourceSessionStateV2::Closing; emit stateChanged(current); }
-    void cancel(const QUuid &id) override { setProperty("cancelled", id); }
+    void cancel(const QUuid &id) override
+    {
+        setProperty("cancelled", id);
+        auto requests = property("cancelledRequests").toList();
+        requests.append(id);
+        setProperty("cancelledRequests", requests);
+    }
     QUuid fetchPage(const PageQueryV2 &query) override
     {
         auto id = QUuid::createUuid();
@@ -163,7 +169,11 @@ private slots:
         QVERIFY(!h.cache->lookup(homeKey, now, std::chrono::minutes(5)));
         QVERIFY(!h.cache->lookup(aggregateKey, now, std::chrono::minutes(5)));
         QVERIFY(h.cache->lookup(officeKey, now, std::chrono::minutes(5)));
-        QCOMPARE(home->property("cancelled").toUuid(), aggregateHomeId);
+        // QHash traversal intentionally has no request cancellation order.
+        const auto cancelled = home->property("cancelledRequests").toList();
+        QCOMPARE(cancelled.count(QVariant::fromValue(oldHomeId)), 1);
+        QCOMPARE(cancelled.count(QVariant::fromValue(aggregateHomeId)), 1);
+        QVERIFY(!office->property("cancelledRequests").toList().contains(officeId));
         QCOMPARE(h.session("home"), home);
         emit home->pageReady(oldHomeId, sample("home"));
         emit home->pageReady(aggregateHomeId, sample("home"));
