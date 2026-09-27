@@ -22,6 +22,7 @@ Host 提供公开 settings/host QObject 合约，具体实现位于 `core/settin
 
 - `cmake --build build-phase2 --parallel 4`：完整应用、SDK、fixture 和测试构建通过。
 - `ctest --test-dir build-phase2 --output-on-failure`：51/51，通过；首次完整收尾运行 85.82 秒。
+- 聚焦 `quemusic_plugin_ui|quemusic_plugin_settings|quemusic_source_registry_v2`：18/18，通过（16.42 秒）。
 - 外部插件测试实际安装 PluginSdk、独立 configure/build、扫描生成后的 QR 页面、
   运行 Qt-only 模块 probe，再由 Host 加载外部插件并完成原生认证保存和卸载。
 - `git diff --check`：通过；相对 Phase 2 起点 `4b68984`，`sdk/source/v2/` 与
@@ -53,3 +54,24 @@ Secret store 使用测试实现；真实系统钥匙串交互不由这些测试�
 
 最终审查为作者单独自审（当前无 reviewer 子代理工具），不能替代独立审查。
 本阶段不自动推送、合并或创建 PR。
+
+## 实施决策及误判代价
+
+1. 指定 Secret 清除新增 Host 存储事务，不复用“空值保持不变”的保存语义；误判会导致凭据清除或引用回滚出错。
+2. 公开 QObject 合约与 Host 私有实现分离；误判会引入 SDK 私有依赖或运行库依赖环。
+3. Loader 清空后等待页面完整析构，而不假设同步销毁；误判会让插件 QML 在动态库卸载后仍执行。
+4. SettingsView 已通过隐藏面板退出，保留现有导航；误判会使其他退出路径遗留会话。
+5. 新增原子 `saveSettings()`，保留已有单项方法；误判会让同时要求普通字段与 Secret 的创建流程无法提交。
+6. Backend 的 QObject 父对象采用已初始化的公开 Context，Provider ABI 不变；误判可能影响依赖未约定私有父对象的插件。
+7. 通知渲染 Host 通用成功/失败文案；代价是暂不显示插件特有业务细节。
+
+## 审查收尾
+
+单独自审检查存储事务、身份绑定、Provider/包路径、请求隔离、QML/backend/lease
+顺序、设置页和安装后的公开 SDK 依赖。发现目录完成处理误接到移除确认窗口，
+通过 `managementDirectoryResultReturnsToOriginatingService` 先失败再修复。
+修复将处理迁回 FolderDialog，保存请求所属 service，取消/关闭后拒绝迟到结果。
+修复后再次完整构建通过，全量 CTest 51/51 通过（53.61 秒），`git diff --check` 通过。
+
+延期 Minor：公开 Schema 表单的字段和错误键尚未接入插件专用翻译目录。
+原生插件属于受信任代码；import 校验与只读 Context 不是恶意插件安全沙箱。

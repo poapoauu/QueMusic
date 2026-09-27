@@ -599,6 +599,7 @@ private slots:
     void managementNotificationIsDisplayed();
     void publicFormIgnoresUnrelatedCompletion();
     void publicFormVisibilityUsesUnsavedDraft();
+    void managementDirectoryResultReturnsToOriginatingService();
 
 private:
     QTemporaryDir m_settingsDirectory;
@@ -755,6 +756,31 @@ void PluginSettingsQmlTest::publicFormVisibilityUsesUnsavedDraft()
     QVERIFY(QMetaObject::invokeMethod(form, "fieldVisible", Q_RETURN_ARG(QVariant, result),
                                     Q_ARG(QVariant, field)));
     QVERIFY(!result.toBool());
+}
+
+void PluginSettingsQmlTest::managementDirectoryResultReturnsToOriginatingService()
+{
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureManagementPage"));
+    auto *host = h.controller->managementUiSession()->context()->host();
+    QSignalSpy selected(host, SIGNAL(directorySelected(QUuid,QUrl)));
+    QUuid id;
+    QVERIFY(QMetaObject::invokeMethod(host, "requestDirectory", Q_RETURN_ARG(QUuid, id)));
+    auto *dialog = h.panel->named("pluginDirectoryDialog");
+    QVERIFY(dialog && dialog->property("visible").toBool());
+    const auto directory = QUrl::fromLocalFile(h.dir.path());
+    QVERIFY(dialog->setProperty("selectedFolder", directory));
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accepted", Qt::DirectConnection));
+    QCOMPARE(selected.size(), 1);
+    QCOMPARE(selected.first().at(0).toUuid(), id);
+    QCOMPARE(selected.first().at(1).toUrl(), directory);
+    QVERIFY(QMetaObject::invokeMethod(host, "requestDirectory", Q_RETURN_ARG(QUuid, id)));
+    QVERIFY(click(h.panel->named("closeManagementUiAction")));
+    QTRY_VERIFY(!h.controller->managementUiSession());
+    QVERIFY(!dialog->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accepted", Qt::DirectConnection));
+    QCOMPARE(selected.size(), 1);
 }
 
 void PluginSettingsQmlTest::managementLifecycleOperations_data()

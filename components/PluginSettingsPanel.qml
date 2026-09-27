@@ -28,6 +28,7 @@ Rectangle {
     property string pendingActionId: ""
     property string directoryFieldId: ""
     property var managementDirectoryRequest: null
+    property var managementDirectoryHost: null
     property string observedPluginState: ""
     property string pendingProbeRequest: ""
     property bool probeCurrent: true
@@ -186,6 +187,9 @@ Rectangle {
     }
     onVisibleChanged: {
         if (!visible) {
+            directoryDialog.close()
+            managementDirectoryRequest = null
+            managementDirectoryHost = null
             schemaForm.clearSecrets()
             managementHost.closePage()
         }
@@ -199,6 +203,18 @@ Rectangle {
     Connections {
         target: root.controller
         ignoreUnknownSignals: true
+        function onManagementUiCloseRequested() {
+            directoryDialog.close()
+            root.managementDirectoryRequest = null
+            root.managementDirectoryHost = null
+        }
+        function onManagementUiChanged() {
+            if (!root.controller || !root.controller.managementUiSession) {
+                directoryDialog.close()
+                root.managementDirectoryRequest = null
+                root.managementDirectoryHost = null
+            }
+        }
         function onSnapshotsChanged() { root.refreshFromController(false) }
         function onDraftReset() {
             schemaForm.clearSecrets()
@@ -223,6 +239,7 @@ Rectangle {
         ignoreUnknownSignals: true
         function onDirectoryRequested(requestId) {
             root.managementDirectoryRequest = requestId
+            root.managementDirectoryHost = target
             directoryDialog.open()
         }
     }
@@ -237,13 +254,6 @@ Rectangle {
         palette.window: Style.themes.containColor
         palette.windowText: Style.themes.fontColor
         onAccepted: {
-            if (root.managementDirectoryRequest) {
-                var host = root.controller && root.controller.managementUiSession
-                           ? root.controller.managementUiSession.context.host : null
-                if (host) host.completeDirectory(root.managementDirectoryRequest, selectedFolder)
-                root.managementDirectoryRequest = null
-                return
-            }
             if (root.controller && root.pendingRemovalId)
                 root.controller.removeInstance(root.pendingRemovalId)
             root.pendingRemovalId = ""
@@ -274,6 +284,13 @@ Rectangle {
         objectName: "pluginDirectoryDialog"
         title: qsTr("Choose a local folder")
         onAccepted: {
+            if (root.managementDirectoryRequest) {
+                var host = root.managementDirectoryHost
+                if (host) host.completeDirectory(root.managementDirectoryRequest, selectedFolder)
+                root.managementDirectoryRequest = null
+                root.managementDirectoryHost = null
+                return
+            }
             if (!root.controller || !root.directoryFieldId)
                 return
             var localFolder = selectedFolder
@@ -287,7 +304,10 @@ Rectangle {
         }
         onRejected: {
             root.directoryFieldId = ""
+            if (root.managementDirectoryHost && root.managementDirectoryRequest)
+                root.managementDirectoryHost.completeDirectory(root.managementDirectoryRequest, "")
             root.managementDirectoryRequest = null
+            root.managementDirectoryHost = null
         }
     }
 

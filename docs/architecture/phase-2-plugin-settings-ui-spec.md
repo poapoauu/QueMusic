@@ -1,6 +1,7 @@
 # Phase 2：Plugin Settings 双层 UI 规格
 
-> 状态：实施与全量回归完成，最终审查进行中
+> 状态：实施完成；最终自审修复及全量 CTest 51/51 通过
+> 实施与限制：[`phase-2-plugin-settings-ui-record.md`](./phase-2-plugin-settings-ui-record.md)
 > 架构基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 > 前置阶段：Phase 1 — Plugin UI API 1.0
 
