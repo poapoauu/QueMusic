@@ -15,6 +15,7 @@
 #include "PluginSettingsController.h"
 #include "SourceAccountStore.h"
 #include "SourceRegistry.h"
+#include "v2/SourceSecretsV2.h"
 
 namespace {
 
@@ -515,9 +516,12 @@ struct PanelHarness {
 
 class UiSecrets final : public ISecretStore {
 public:
-    bool write(const QString &, const QByteArray &, QString *) override { return true; }
-    std::optional<QByteArray> read(const QString &, QString *) const override { return {}; }
-    bool remove(const QString &, QString *) override { return true; }
+    QHash<QString, QByteArray> values;
+    bool write(const QString &id, const QByteArray &bytes, QString *) override { values.insert(id, bytes); return true; }
+    std::optional<QByteArray> read(const QString &id, QString *) const override {
+        return values.contains(id) ? std::optional<QByteArray>(values.value(id)) : std::nullopt;
+    }
+    bool remove(const QString &id, QString *) override { values.remove(id); return true; }
 };
 struct RealPanelHarness {
     QTemporaryDir dir;
@@ -589,6 +593,12 @@ private slots:
     void schemaOnlyPluginRetainsCurrentSettingsFlow();
     void customUiReceivesOnlyPluginUiContext();
     void loadFailureShowsGenericErrorState();
+    void qrLoginSavesSecretAndIgnoresCancelledCompletion();
+    void managementLifecycleOperations_data();
+    void managementLifecycleOperations();
+    void managementNotificationIsDisplayed();
+    void publicFormIgnoresUnrelatedCompletion();
+    void publicFormVisibilityUsesUnsavedDraft();
 
 private:
     QTemporaryDir m_settingsDirectory;
@@ -660,6 +670,118 @@ void PluginSettingsQmlTest::loadFailureShowsGenericErrorState()
     QVERIFY(!error->property("description").toString().contains(packages.path()));
     QVERIFY(click(h.panel->named("closeManagementUiAction")));
     QTRY_VERIFY(!h.controller->managementUiSession());
+}
+
+void PluginSettingsQmlTest::qrLoginSavesSecretAndIgnoresCancelledCompletion()
+{
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureManagementPage"));
+    auto *context = h.controller->managementUiSession()->context();
+    auto *backend = context->backend();
+    QVERIFY(QMetaObject::invokeMethod(backend, "failNextLogin"));
+    QVERIFY(QMetaObject::invokeMethod(backend, "requestLogin"));
+    QTRY_COMPARE(backend->property("loginState").toString(), QString("error"));
+    QVERIFY(!h.store.storedAccount(context->sourceId(), context->accountId()));
+    QVERIFY(QMetaObject::invokeMethod(backend, "requestLogin"));
+    QVERIFY(QMetaObject::invokeMethod(backend, "cancelLogin"));
+    QTest::qWait(80);
+    QCOMPARE(backend->property("loginState").toString(), QString("idle"));
+    QVERIFY(!h.store.storedAccount(context->sourceId(), context->accountId()));
+    QVERIFY(QMetaObject::invokeMethod(backend, "requestLogin"));
+    QTRY_COMPARE(backend->property("loginState").toString(), QString("success"));
+    auto account = h.store.storedAccount(context->sourceId(), context->accountId());
+    QVERIFY(account);
+    QCOMPARE(decodeSourceSecretsV2(h.secrets.values.value(account->secretReference))->value("token"),
+             QByteArray("fixture-native-secret"));
+    QVERIFY(!context->settings()->property("publicValues").toMap().contains("token"));
+    QVERIFY(click(h.panel->named("closeManagementUiAction")));
+    QTRY_VERIFY(!h.controller->managementUiSession());
+
+    QVERIFY(h.controller->selectInstance(""));
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureManagementPage"));
+    backend = h.controller->managementUiSession()->context()->backend();
+    QVERIFY(QMetaObject::invokeMethod(backend, "requestLogin"));
+    QVERIFY(click(h.panel->named("closeManagementUiAction")));
+    QTRY_VERIFY(!h.controller->managementUiSession());
+    QTest::qWait(80);
+    QCOMPARE(h.store.accounts().size(), 1);
+}
+
+void PluginSettingsQmlTest::managementNotificationIsDisplayed()
+{
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureManagementPage"));
+    auto *host = h.controller->managementUiSession()->context()->host();
+    QVERIFY(QMetaObject::invokeMethod(host, "notify", Q_ARG(QString, "plugin.ui.saved"), Q_ARG(bool, false)));
+    auto *notice = h.panel->named("managementNotification");
+    QVERIFY(notice);
+    QVERIFY(notice->property("visible").toBool());
+    QVERIFY(!notice->property("text").toString().isEmpty());
+}
+
+void PluginSettingsQmlTest::publicFormIgnoresUnrelatedCompletion()
+{
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureSettingsForm"));
+    auto *form = h.panel->named("fixtureSettingsForm");
+    auto *settings = h.controller->managementUiSession()->context()->settings();
+    QVERIFY(QMetaObject::invokeMethod(form, "savePublic"));
+    QVERIFY(form->property("busy").toBool());
+    QVERIFY(QMetaObject::invokeMethod(settings, "operationFinished", Qt::DirectConnection,
+        Q_ARG(QUuid, QUuid::createUuid()), Q_ARG(bool, false), Q_ARG(QString, "source.settings.invalidDraft")));
+    QVERIFY(form->property("busy").toBool());
+    QTRY_VERIFY(!form->property("busy").toBool());
+    QCOMPARE(form->property("errorKey").toString(), QString());
+}
+
+void PluginSettingsQmlTest::publicFormVisibilityUsesUnsavedDraft()
+{
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureSettingsForm"));
+    auto *form = h.panel->named("fixtureSettingsForm");
+    const QVariantMap field{{"visible", false}, {"visibleWhen", QVariantMap{
+        {"fieldId", "enabled"}, {"comparison", 0}, {"value", true}}}};
+    QVERIFY(form->setProperty("draft", QVariantMap{{"enabled", true}}));
+    QVariant result;
+    QVERIFY(QMetaObject::invokeMethod(form, "fieldVisible", Q_RETURN_ARG(QVariant, result),
+                                    Q_ARG(QVariant, field)));
+    QVERIFY(result.toBool());
+    QVERIFY(form->setProperty("draft", QVariantMap{{"enabled", false}}));
+    QVERIFY(QMetaObject::invokeMethod(form, "fieldVisible", Q_RETURN_ARG(QVariant, result),
+                                    Q_ARG(QVariant, field)));
+    QVERIFY(!result.toBool());
+}
+
+void PluginSettingsQmlTest::managementLifecycleOperations_data()
+{
+    QTest::addColumn<QString>("operation");
+    for (const auto &operation : {"switch", "hide", "unload", "reload", "destroyController"})
+        QTest::newRow(operation) << QString::fromLatin1(operation);
+}
+void PluginSettingsQmlTest::managementLifecycleOperations()
+{
+    QFETCH(QString, operation);
+    RealPanelHarness h; QVERIFY(h.load());
+    QVERIFY(click(h.panel->named("openManagementUiAction")));
+    QTRY_VERIFY(h.panel->named("fixtureManagementPage"));
+    QPointer<QObject> page = h.panel->named("fixtureManagementPage");
+    QPointer<QObject> backend = h.controller->managementUiSession()->context()->backend();
+    if (operation == "switch") QVERIFY(h.controller->selectInstance(""));
+    else if (operation == "hide") h.panel->panel->setVisible(false);
+    else if (operation == "unload") QVERIFY(h.controller->unloadPlugin(h.id));
+    else if (operation == "reload") QVERIFY(h.controller->reloadPlugin(h.id));
+    else {
+        h.controller.reset();
+        h.panel->panel->setProperty("controller", QVariant::fromValue<QObject *>(nullptr));
+    }
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(backend.isNull());
+    QTRY_COMPARE(h.manager.plugin(h.id).activeLeases, 0);
 }
 
 void PluginSettingsQmlTest::initTestCase()

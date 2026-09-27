@@ -18,6 +18,8 @@ public:
     Q_INVOKABLE virtual QUuid savePublicValues(const QVariantMap &values) = 0;
     Q_INVOKABLE virtual QUuid saveSecret(const QString &fieldId, const QString &value) = 0;
     Q_INVOKABLE virtual QUuid clearSecret(const QString &fieldId) = 0;
+    Q_INVOKABLE virtual QUuid saveSettings(const QVariantMap &publicValues,
+                                           const QVariantMap &secretValues) = 0;
 signals:
     void changed();
     void operationFinished(QUuid requestId, bool success, QString reasonKey);

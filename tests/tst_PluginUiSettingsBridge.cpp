@@ -50,6 +50,8 @@ private slots:
     void directoryRequestReturnsOnlyLocalUrl();
     void invalidatedServicesIgnoreLateResults();
     void notificationDoesNotIncludeSecretData();
+    void createsRequiredPublicAndSecretFieldsAtomically();
+    void exposesOnlyPublicVisibilityCondition();
 };
 
 void PluginUiSettingsBridgeTest::publicValuesOmitSecrets()
@@ -167,6 +169,34 @@ void PluginUiSettingsBridgeTest::notificationDoesNotIncludeSecretData()
     host.notify("plugin.ui.saved", false);
     QCOMPARE(notifications.size(), 1);
     QCOMPARE(notifications.first().first().toString(), QString("plugin.ui.saved"));
+}
+
+void PluginUiSettingsBridgeTest::createsRequiredPublicAndSecretFieldsAtomically()
+{
+    Fixture f;
+    auto request = f.request;
+    request.accountId = "new";
+    for (auto &field : request.schema.first().fields) field.required = true;
+    HostPluginUiSettingsBridge bridge(&f.store, nullptr, request);
+    QSignalSpy finished(&bridge, &PluginUiSettingsBridge::operationFinished);
+    bridge.saveSettings({{"server", "new-server"}}, {{"password", "PRIVATE-new"}});
+    QTRY_COMPARE(finished.size(), 1);
+    QVERIFY(finished.first().at(1).toBool());
+    QVERIFY(f.store.storedAccount("example", "new"));
+    QVERIFY(!bridge.publicValues().contains("password"));
+}
+
+void PluginUiSettingsBridgeTest::exposesOnlyPublicVisibilityCondition()
+{
+    Fixture f;
+    auto request = f.request;
+    request.schema.first().fields.last().visibleWhen = SettingsVisibilityConditionV2{
+        "server", SettingsComparisonV2::Equal, "changed"};
+    HostPluginUiSettingsBridge bridge(&f.store, nullptr, request);
+    const auto fields = bridge.sections().first().toMap().value("fields").toList();
+    const auto condition = fields.last().toMap().value("visibleWhen").toMap();
+    QCOMPARE(condition.value("fieldId").toString(), QString("server"));
+    QVERIFY(!fields.last().toMap().contains("value"));
 }
 
 QTEST_MAIN(PluginUiSettingsBridgeTest)

@@ -356,7 +356,7 @@ if(BUILD_TESTING)
     qt_add_executable(quemusic_plugin_ui_external_loader
         tests/tst_PluginUiExternal.cpp)
     target_link_libraries(quemusic_plugin_ui_external_loader PRIVATE
-        quemusic_plugin_core quemusic_plugin_ui
+        quemusic_plugin_core quemusic_plugin_ui quemusic_plugin_settings
         Qt6::Core Qt6::Qml Qt6::Quick)
     add_test(NAME quemusic_plugin_ui_external_test
         COMMAND ${CMAKE_COMMAND}
@@ -460,9 +460,9 @@ if(BUILD_TESTING)
         endif()
         add_library(${target} MODULE
             tests/fixtures/PluginUiFixturePlugin.cpp
-            tests/fixtures/PluginUiFixturePlugin.h)
+            tests/fixtures/PluginUiFixturePlugin.h tests/fixtures/PluginUiQrBackend.h)
         target_link_libraries(${target} PRIVATE
-            quemusic_source_sdk quemusic_plugin_ui_sdk)
+            quemusic_source_sdk quemusic_plugin_ui_sdk quemusic_plugin_ui)
         target_compile_definitions(${target} PRIVATE
             QUEMUSIC_UI_FIXTURE_PACKAGE_ID="${QUEMUSIC_UI_FIXTURE_PACKAGE_ID}"
             QUEMUSIC_UI_FIXTURE_SOURCE_ID="${QUEMUSIC_UI_FIXTURE_SOURCE_ID}")
@@ -483,7 +483,7 @@ if(BUILD_TESTING)
         file(GENERATE OUTPUT "${package_dir}/manifest.json"
             INPUT "${CMAKE_CURRENT_BINARY_DIR}/${target}-manifest.json.in")
         file(GENERATE OUTPUT "${package_dir}/qml/ManagementPage.qml"
-            INPUT "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugin-ui/ManagementPage.qml")
+            INPUT "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/plugin-ui-qr/ManagementPage.qml")
     endfunction()
     foreach(ui_variant valid provider_missing undeclared wrong_version wrong_path no_mode null_backend)
         add_plugin_ui_fixture(${ui_variant})

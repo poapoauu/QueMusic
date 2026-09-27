@@ -1,14 +1,21 @@
 #include "plugin-ui/v1/ISourceManagementUiProvider.h"
 #include "v2/IMusicSourcePluginV2.h"
+#include "v2/ISourceProvidersV2.h"
+#include "../PluginUiQrBackend.h"
 
 #include <QObject>
 
 class ExternalPlugin final : public QObject, public IMusicSourcePluginV2,
-                             public ISourceManagementUiProvider {
+                             public ISourceManagementUiProvider, public IPluginSettingsProviderV2 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID QUEMUSIC_MUSIC_SOURCE_PLUGIN_V2_IID)
-    Q_INTERFACES(IMusicSourcePluginV2 ISourceManagementUiProvider)
+    Q_INTERFACES(IMusicSourcePluginV2 ISourceManagementUiProvider IPluginSettingsProviderV2)
 public:
+    SettingsSchemaV2 settingsSchema() const override {
+        SettingsFieldV2 token;
+        token.id = QStringLiteral("token"); token.type = SettingsFieldTypeV2::Secret;
+        return {{QStringLiteral("auth"), QStringLiteral("plugin.ui.auth"), {token}}};
+    }
     SourceDescriptorV2 descriptor() const override
     {
         SourceDescriptorV2 descriptor;
@@ -33,7 +40,7 @@ public:
 
     QObject *createManagementBackend(const PluginUiContextData &, QObject *parent) override
     {
-        return new QObject(parent);
+        return new PluginUiQrBackend(parent);
     }
 };
 

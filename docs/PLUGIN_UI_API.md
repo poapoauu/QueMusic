@@ -27,14 +27,19 @@ QML component URL, and at least one supported mode (`supportsCreate` or
 The Host acquires a `PluginLease` before using the Provider and retains it until
 the QML page, context, and backend have been destroyed. A non-null backend must
 be parented to the supplied QObject. A null backend means the plugin cannot
-serve that context; the future Host page container displays the generic error.
+serve that context; the Host page container displays the generic error.
 
 `PluginUiContextData` carries the Host-supplied package, source, instance and
 account IDs and Create/Edit mode. Create may omit instance/account IDs; Edit
 requires them. The plugin must not derive trusted identity from QML inputs.
 `PluginUiContext` exposes these fields, backend, settings, capabilities, host,
 and `valid` as read-only QML properties. On teardown the Host sets `valid=false`
-and clears object pointers. The live container integration is being added in Phase 2.
+and clears object pointers. The supplied backend parent is a session-owned
+`PluginUiContext`, initialized with identity and settings/host services before
+`createManagementBackend()` runs. Native backends may cast that parent to the
+public context and use typed services; never assume a Host-private parent type.
+The plugin root must declare `property var pluginUiContext`; this is the only
+initial property injected by the Host.
 
 ## Manifest and QML
 
@@ -77,6 +82,24 @@ Only `plugin.ui.*` and `source.settings.*` keys are accepted as notifications;
 arbitrary strings are not displayed. Concrete Host storage/service classes are
 not part of the plugin SDK.
 
+`saveSettings(publicValues, secretValues)` submits an atomic validated update,
+including creation when both public and Secret fields are required.
+`savePublicValues()`, `saveSecret()` and `clearSecret()` are convenience
+operations. Match `operationFinished` by the returned request ID; another
+consumer (for example the native authentication backend) may use the same
+bridge. Storage is currently synchronous; completion is queued, not a
+promise of background I/O. No getter returns Secret plaintext. Input fields
+are cleared after submission, so a failed write requires credential re-entry.
+Directory results must also match the request ID and belong to the live
+context. Notifications render generic Host success/error text, not arbitrary
+plugin messages.
+
+On close the Host invalidates the context and service requests, clears the
+Loader, waits for the QML object's entire destruction stack to unwind, then
+destroys the native backend and releases the lease. Controller destruction
+keeps an orphaned session leased until its tracked page is gone. Plugin async
+callbacks must check context validity or cancel themselves on teardown.
+
 `PluginQrCode.source` accepts local resource, file, and image-provider URLs.
 Resolve a plugin-package-relative asset at the calling page with
 `Qt.resolvedUrl("qr.png")`; a bare relative string inside an imported component
@@ -99,7 +122,7 @@ Build the `PluginSdk` install component and consume the installed CMake package:
 find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick)
 find_package(QueMusicPluginSdk 1.0 REQUIRED)
 target_link_libraries(my_source PRIVATE
-    QueMusic::source_sdk QueMusic::plugin_ui_sdk Qt6::Core)
+    QueMusic::source_sdk QueMusic::plugin_ui_sdk QueMusic::plugin_ui Qt6::Core)
 ```
 
 `QueMusic::plugin_ui` is the public Host runtime target. The generated QML

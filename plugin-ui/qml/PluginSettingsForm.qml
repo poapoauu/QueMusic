@@ -12,6 +12,9 @@ Column {
     property bool busy: false
     property string errorKey: ""
     property string directoryField: ""
+    property string directoryRequest: ""
+    property string pendingRequest: ""
+    property var secretEditors: []
     signal cancelled()
     signal saved()
     spacing: PluginTheme.spacingMedium
@@ -22,21 +25,45 @@ Column {
         next[fieldId] = value
         draft = next
     }
+    function fieldVisible(field) {
+        var condition = field.visibleWhen
+        if (!condition) return field.visible !== false
+        var value = draft[condition.fieldId] !== undefined ? draft[condition.fieldId]
+                    : settings ? settings.publicValues[condition.fieldId] : undefined
+        if (value === undefined) return false
+        var equal = value === condition.value
+        return condition.comparison === 0 ? equal : condition.comparison === 1 && !equal
+    }
     function savePublic() {
         if (!settings || busy) return
         busy = true
         errorKey = ""
-        settings.savePublicValues(draft)
+        var secrets = {}
+        for (var editor of secretEditors) {
+            if (editor.input.text.length > 0) secrets[editor.id] = editor.input.text
+            editor.input.text = ""
+        }
+        pendingRequest = String(settings.saveSettings(draft, secrets))
     }
     function cancel() {
+        for (var editor of secretEditors) editor.input.text = ""
         draft = ({})
+        directoryField = ""
+        directoryRequest = ""
         errorKey = ""
         cancelled()
+    }
+    Component.onDestruction: {
+        for (var editor of secretEditors) {
+            if (editor.input) editor.input.text = ""
+        }
     }
 
     Connections {
         target: root.settings
         function onOperationFinished(requestId, success, reasonKey) {
+            if (!root.pendingRequest || String(requestId) !== root.pendingRequest) return
+            root.pendingRequest = ""
             root.busy = false
             root.errorKey = success ? "" : reasonKey
             if (success) root.saved()
@@ -46,10 +73,12 @@ Column {
     Connections {
         target: root.host
         function onDirectorySelected(requestId, localDirectory) {
+            if (!root.directoryRequest || String(requestId) !== root.directoryRequest) return
             if (root.directoryField && localDirectory.toString().startsWith("file:"))
                 root.setPublicValue(root.directoryField,
                                     decodeURIComponent(String(localDirectory).replace(/^file:\/\//, "")))
             root.directoryField = ""
+            root.directoryRequest = ""
         }
     }
 
@@ -68,7 +97,7 @@ Column {
                     required property var modelData
                     width: section.width
                     spacing: PluginTheme.spacingSmall
-                    visible: modelData.visible !== false
+                    visible: root.fieldVisible(modelData)
                     PluginLabel { text: fieldRow.modelData.labelKey || fieldRow.modelData.id }
                     PluginPasswordField {
                         id: secretInput
@@ -77,6 +106,15 @@ Column {
                         visible: fieldRow.modelData.secret
                         enabled: !root.busy
                         Accessible.name: fieldRow.modelData.labelKey || fieldRow.modelData.id
+                        Component.onCompleted: {
+                            if (fieldRow.modelData.secret)
+                                root.secretEditors.push({id: fieldRow.modelData.id, input: secretInput})
+                        }
+                        Component.onDestruction: {
+                            root.secretEditors = root.secretEditors.filter(function(editor) {
+                                return editor.input !== secretInput
+                            })
+                        }
                     }
                     RowLayout {
                         visible: fieldRow.modelData.secret
@@ -87,7 +125,9 @@ Column {
                                 var value = secretInput.text
                                 secretInput.text = ""
                                 root.busy = true
-                                root.settings.saveSecret(fieldRow.modelData.id, value)
+                                var secrets = {}
+                                secrets[fieldRow.modelData.id] = value
+                                root.pendingRequest = String(root.settings.saveSettings(root.draft, secrets))
                             }
                         }
                         PluginButton {
@@ -95,7 +135,7 @@ Column {
                             enabled: !root.busy && fieldRow.modelData.credentialConfigured
                             onClicked: {
                                 root.busy = true
-                                root.settings.clearSecret(fieldRow.modelData.id)
+                                root.pendingRequest = String(root.settings.clearSecret(fieldRow.modelData.id))
                             }
                         }
                     }
@@ -115,18 +155,20 @@ Column {
                         enabled: !root.busy && !!root.host
                         onClicked: {
                             root.directoryField = fieldRow.modelData.id
-                            root.host.requestDirectory()
+                            root.directoryRequest = String(root.host.requestDirectory())
                         }
                     }
                     PluginNumberField {
                         visible: fieldRow.modelData.type === 3
                         enabled: !root.busy
+                        from: fieldRow.modelData.constraints.min !== undefined
+                              ? Number(fieldRow.modelData.constraints.min) : -9007199254740991
+                        to: fieldRow.modelData.constraints.max !== undefined
+                            ? Number(fieldRow.modelData.constraints.max) : 9007199254740991
                         value: Number(root.draft[fieldRow.modelData.id] !== undefined
                             ? root.draft[fieldRow.modelData.id]
                             : root.settings ? root.settings.publicValues[fieldRow.modelData.id] || 0 : 0)
-                        onValueChanged: {
-                            if (visible) root.setPublicValue(fieldRow.modelData.id, value)
-                        }
+                        onEditingFinished: root.setPublicValue(fieldRow.modelData.id, Number(text))
                     }
                     PluginSwitch {
                         visible: fieldRow.modelData.type === 4
@@ -140,7 +182,10 @@ Column {
                         visible: fieldRow.modelData.type === 5
                         enabled: !root.busy
                         model: fieldRow.modelData.choices || []
-                        onActivated: root.setPublicValue(fieldRow.modelData.id, currentText)
+                        currentIndex: model.indexOf(root.draft[fieldRow.modelData.id] !== undefined
+                            ? root.draft[fieldRow.modelData.id]
+                            : root.settings ? root.settings.publicValues[fieldRow.modelData.id] : undefined)
+                        onActivated: (index) => root.setPublicValue(fieldRow.modelData.id, model[index])
                     }
                 }
             }

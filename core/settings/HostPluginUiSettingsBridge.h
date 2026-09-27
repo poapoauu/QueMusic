@@ -20,6 +20,7 @@ public:
     QUuid savePublicValues(const QVariantMap &values) override;
     QUuid saveSecret(const QString &fieldId, const QString &value) override;
     QUuid clearSecret(const QString &fieldId) override;
+    QUuid saveSettings(const QVariantMap &publicValues, const QVariantMap &secretValues) override;
     void invalidate();
 private:
     bool validIdentity() const;
@@ -31,6 +32,7 @@ private:
     QPointer<SourceRegistry> m_registry;
     SourceAccountSaveV2 m_request;
     bool m_valid = true;
+    bool m_existingRequired = false;
 };
 
 class HostPluginUiHostServices final : public PluginUiHostServices {

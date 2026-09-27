@@ -8,11 +8,13 @@ Item {
     property var controller: null
     property bool closing: false
     property bool loadFailed: false
+    property string notificationText: ""
     readonly property var session: controller ? controller.managementUiSession : null
 
     function loadPage() {
         if (!session || session.state !== "ready" || !session.context || !session.context.valid) return
         loadFailed = false
+        notificationText = ""
         managementLoader.active = true
         managementLoader.setSource(session.componentUrl,
                                    { "pluginUiContext": session.context })
@@ -30,6 +32,20 @@ Item {
     Component.onCompleted: loadPage()
     Component.onDestruction: closePage()
     onVisibleChanged: { if (!visible) closePage() }
+    onSessionChanged: {
+        if (!session) {
+            managementLoader.active = false
+            managementLoader.source = ""
+        }
+    }
+    Connections {
+        target: root.session && root.session.context ? root.session.context.host : null
+        function onNotificationRequested(message, isError) {
+            // Do not render plugin-supplied text, paths or credentials.
+            root.notificationText = isError ? qsTr("Plugin operation failed.")
+                                            : qsTr("Plugin operation completed.")
+        }
+    }
     Connections {
         target: root.controller
         ignoreUnknownSignals: true
@@ -62,6 +78,11 @@ Item {
                 text: qsTr("Plugin management")
                 anchors.verticalCenter: parent.verticalCenter
             }
+        }
+        PluginDescription {
+            objectName: "managementNotification"
+            text: root.notificationText
+            visible: text.length > 0
         }
         Item {
             width: parent.width

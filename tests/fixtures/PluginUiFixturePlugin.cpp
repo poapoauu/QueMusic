@@ -1,4 +1,5 @@
 #include "PluginUiFixturePlugin.h"
+#include "PluginUiQrBackend.h"
 
 namespace {
 class FixtureSession final : public IMusicSourceSessionV2 {
@@ -31,6 +32,13 @@ IMusicSourceSessionV2 *PluginUiFixturePlugin::createSession(
 }
 
 #if !defined(QUEMUSIC_UI_FIXTURE_NO_PROVIDER)
+SettingsSchemaV2 PluginUiFixturePlugin::settingsSchema() const
+{
+    SettingsFieldV2 token;
+    token.id = QStringLiteral("token"); token.type = SettingsFieldTypeV2::Secret;
+    token.labelKey = QStringLiteral("plugin.ui.token");
+    return {{QStringLiteral("authentication"), QStringLiteral("plugin.ui.authentication"), {token}}};
+}
 ManagementUiDescriptor PluginUiFixturePlugin::managementUi() const
 {
     ManagementUiDescriptor result{QStringLiteral("1.0"),
@@ -53,7 +61,7 @@ QObject *PluginUiFixturePlugin::createManagementBackend(
     Q_UNUSED(parent);
     return nullptr;
 #else
-    return new QObject(parent);
+    return new PluginUiQrBackend(parent);
 #endif
 }
 #endif

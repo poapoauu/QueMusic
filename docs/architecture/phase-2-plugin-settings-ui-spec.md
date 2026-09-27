@@ -1,6 +1,6 @@
 # Phase 2：Plugin Settings 双层 UI 规格
 
-> 状态：设计规格已确认；待实施
+> 状态：实施与全量回归完成，最终审查进行中
 > 架构基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 > 前置阶段：Phase 1 — Plugin UI API 1.0
 

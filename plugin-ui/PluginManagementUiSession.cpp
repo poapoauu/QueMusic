@@ -91,8 +91,10 @@ PluginManagementUiSession::PluginManagementUiSession(PluginManager *manager,
     }
     m_settings = new HostPluginUiSettingsBridge(store, registry, save, this);
     m_host = new HostPluginUiHostServices(this);
-    m_backend = provider->createManagementBackend(data, this);
-    if (m_backend && m_backend->parent() != this) {
+    m_context = new PluginUiContext(this);
+    m_context->setContext(data, nullptr, m_settings, nullptr, m_host);
+    m_backend = provider->createManagementBackend(data, m_context);
+    if (m_backend && m_backend->parent() != m_context) {
         // An external owner may still hold plugin code. Never unload its library
         // or delete an object that the Provider did not transfer to this session.
         m_lease.pinLoadedPackage();
@@ -104,7 +106,6 @@ PluginManagementUiSession::PluginManagementUiSession(PluginManager *manager,
         fail(QStringLiteral("plugin.ui.backendUnavailable"));
         return;
     }
-    m_context = new PluginUiContext(this);
     m_context->setContext(data, m_backend, m_settings, nullptr, m_host);
     m_componentUrl = QUrl::fromLocalFile(page);
     m_state = QStringLiteral("ready");

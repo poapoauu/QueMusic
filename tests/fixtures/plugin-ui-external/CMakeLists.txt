@@ -5,10 +5,10 @@ set(CMAKE_AUTOMOC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick)
 find_package(QueMusicPluginSdk 1.0 REQUIRED)
 
-add_library(external_plugin MODULE ExternalPlugin.cpp)
+add_library(external_plugin MODULE ExternalPlugin.cpp ../PluginUiQrBackend.h)
 target_compile_features(external_plugin PRIVATE cxx_std_17)
 target_link_libraries(external_plugin PRIVATE
-    QueMusic::source_sdk QueMusic::plugin_ui_sdk Qt6::Core)
+    QueMusic::source_sdk QueMusic::plugin_ui_sdk QueMusic::plugin_ui Qt6::Core)
 set_target_properties(external_plugin PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/package")
 
@@ -17,7 +17,7 @@ configure_file(manifest.json.in "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in" @
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/package/manifest.json"
     INPUT "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/package/qml")
-configure_file(ManagementPage.qml
+configure_file(../plugin-ui-qr/ManagementPage.qml
     "${CMAKE_CURRENT_BINARY_DIR}/package/qml/ManagementPage.qml" COPYONLY)
 
 add_executable(external_qml_probe ExternalQmlProbe.cpp)

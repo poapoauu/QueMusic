@@ -35,7 +35,7 @@ run_checked("External configure" "${CMAKE_COMMAND}"
 run_checked("External build" "${CMAKE_COMMAND}" --build "${fixture_build}"
     --config "${HOST_BUILD_KEY}" --parallel 4)
 run_checked("External QML import lint" "${CMAKE_COMMAND}"
-    "-DROOT=${fixture_source}" "-DINPUT=${fixture_source}/ManagementPage.qml"
+    "-DROOT=${fixture_build}/package/qml" "-DINPUT=${fixture_build}/package/qml/ManagementPage.qml"
     -P "${PROJECT_SOURCE_DIR}/cmake/ValidatePluginQmlImports.cmake")
 run_checked("Installed QML module probe" "${CMAKE_COMMAND}" -E env
     "QT_QPA_PLATFORM=offscreen" "${fixture_build}/external_qml_probe" "${stage}")
