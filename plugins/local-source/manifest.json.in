@@ -1,0 +1,17 @@
+{
+  "id": "org.quemusic.source.local",
+  "sourceId": "local",
+  "name": "Local Music",
+  "version": "1.0.0",
+  "category": "source",
+  "runtime": "native-qt",
+  "library": "@CMAKE_SHARED_MODULE_PREFIX@quemusic_local_source@CMAKE_SHARED_MODULE_SUFFIX@",
+  "pluginApi": { "major": 1, "minHostMinor": 0 },
+  "interfaces": [{ "id": "org.quemusic.MusicSourcePlugin/2.0", "version": "2.0" }],
+  "runtimeRequirements": {
+    "sourceSdkAbi": 2,
+    "qtMajor": @Qt6Core_VERSION_MAJOR@,
+    "architecture": "@QUEMUSIC_LOCAL_ARCHITECTURE@",
+    "buildKey": "@QUEMUSIC_LOCAL_BUILD_KEY@"
+  }
+}

@@ -242,4 +242,4 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - 公共扩展版本独立；跨任务共享类型/方法在 Interfaces 中固定。新增 Local enum、账号 UI、数据库/播放器依赖都不在计划范围。
 - 五项 Review Focus 均有所属测试；权限和 watcher 故障通过可控 seam 复现，真实平台限制另记录。
 - 实施以逐任务 RED→GREEN 为证据；integration/package 首次即通过的组合测试不替代底层 RED 记录。
-- 实施已获确认，Task 1–4 证据见各任务验证记录；Task 5–9 尚未验收，下一项为 Local Plugin / Session 完整 Provider 合约。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。
+- 实施已获确认，Task 1–5 证据见各任务验证记录；Task 6–9 尚未验收，下一项为 Local Plugin 动态加载与集成验收。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。

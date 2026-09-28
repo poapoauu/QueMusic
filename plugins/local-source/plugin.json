@@ -1,0 +1,5 @@
+{
+    "Keys": ["org.quemusic.source.local"],
+    "sourceId": "local",
+    "sdkAbi": 2
+}

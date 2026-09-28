@@ -585,6 +585,7 @@ if(BUILD_TESTING)
 endif()
 
 add_subdirectory(plugins/navidrome-source)
+add_subdirectory(plugins/local-source)
 
 qt_add_executable(quemusic_navidrome_smoke
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/NavidromeSmoke.cpp
@@ -1492,4 +1493,13 @@ if(BUILD_TESTING)
     target_link_libraries(quemusic_local_library_index_test PRIVATE
         quemusic_local_library_index Qt6::Test)
     add_test(NAME quemusic_local_library_index_test COMMAND quemusic_local_library_index_test)
+    add_executable(quemusic_local_source_test tests/tst_LocalSource.cpp)
+    target_sources(quemusic_local_source_test PRIVATE
+        plugins/local-source/LocalSourcePlugin.cpp plugins/local-source/LocalSourcePlugin.h
+        plugins/local-source/LocalSourceSession.cpp plugins/local-source/LocalSourceSession.h)
+    target_include_directories(quemusic_local_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(quemusic_local_source_test PRIVATE
+        quemusic_local_library_index quemusic_source_content_events Qt6::Test)
+    add_dependencies(quemusic_local_source_test quemusic_local_source)
+    add_test(NAME quemusic_local_source_test COMMAND quemusic_local_source_test)
 endif()
