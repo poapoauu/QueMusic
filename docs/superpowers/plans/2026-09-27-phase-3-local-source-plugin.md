@@ -142,12 +142,20 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - `LocalLibraryIndex : QObject`：构造 `LocalLibraryIndex(QString instanceId, QByteArray configurationFingerprint, LocalScanConfig, bool watchChanges, QObject *parent=nullptr)`；`void requestScan()`、`void stop()`、`snapshot() const -> std::shared_ptr<const LocalIndexSnapshot>`；信号 `snapshotChanged(quint64 revision)`、`refreshFailed(SourceErrorV2 error)`。
 - `LocalLibraryIndexPool`（Plugin 成员，非全局）提供 `acquire(const SourceConfigurationV2&, const LocalScanConfig&) -> std::shared_ptr<LocalLibraryIndex>`；相同 full instance+规范化完整配置指纹返回同一 index；析构 stop 所有活动 index。shared_ptr 删除器确保 owner 线程析构。
 
-- [ ] 写 `sameInstanceSharesDifferentInstancesIsolate`：临时/活跃使用者共享 revision，不同 account 即使同 root 也不共享对象。`oneScanOnePendingAndShutdown`：快速变更最多一 worker+一 pending；stop 之后提交计数不变，活跃 worker 为 0。
-- [ ] 写 `watchCoverageAndRootRecreation`：watch 注册失败产生 refreshFailed，保留旧 snapshot；根删再建可重新扫描；大量子目录注册结果全部核对；generation 过期结果不发布，不用空库覆盖根错误。
-- [ ] RED：`CHECK quemusic_local_library_index_test`，共享/停机/错误信号断言失败。
-- [ ] 实现 index/pool：每 index 有自己的 worker 生命周期和取消标志，不依赖全局线程池留住插件代码；worker 只返回值，owner 线程核对 generation 后增 revision。watch 去抖固定 200ms；监听根父目录检测重建，子目录逐一登记，失败报告 `local.watch.incomplete`，不声称完整监听。单独内部文件访问/扫描/watch 注入 seam 供确定性测试，生产默认使用 Qt 文件 API。
-- [ ] GREEN：同 CHECK；最后使用者退出调用 stop，取消并 join worker、移除 watch 后才销毁；同配置仍有其他 Session 时不提前停止共享服务。
-- [ ] 提交 index / 测试：`feat: add lifecycle-safe shared local library index`。
+- [x] 写 `sameInstanceSharesDifferentInstancesIsolate`：临时/活跃使用者共享 revision，不同 account 即使同 root 也不共享对象。`oneScanOnePendingAndShutdown`：快速变更最多一 worker+一 pending；stop 之后提交计数不变，活跃 worker 为 0。
+- [x] 写 `watchCoverageAndRootRecreation`：watch 注册失败产生 refreshFailed，保留旧 snapshot；根删再建可重新扫描；大量子目录注册结果全部核对；generation 过期结果不发布，不用空库覆盖根错误。
+- [x] RED：`CHECK quemusic_local_library_index_test`，共享/停机/错误信号断言失败。
+- [x] 实现 index/pool：每 index 有自己的 worker 生命周期和取消标志，不依赖全局线程池留住插件代码；worker 只返回值，owner 线程核对 generation 后增 revision。watch 去抖固定 200ms；监听根父目录检测重建，子目录逐一登记，失败报告 `local.watch.incomplete`，不声称完整监听。单独内部文件访问/扫描/watch 注入 seam 供确定性测试，生产默认使用 Qt 文件 API。
+- [x] GREEN：同 CHECK；最后使用者退出调用 stop，取消并 join worker、移除 watch 后才销毁；同配置仍有其他 Session 时不提前停止共享服务。
+- [x] 提交 index / 测试：`feat: add lifecycle-safe shared local library index`。
+
+验证记录（2026-09-28，macOS / Qt 6.11.1）：基线 CTest 53/53（59.13s）。新增目标最初 3 项契约缺失 RED；纯行为断言时测试把 `/var` 临时路径当作 canonical 父目录，诊断确认实际 `/private/var` 后仅修正期望。共享索引、最多一个 worker/一次 pending、generation 隔离、stop/join、最后使用者及跨线程释放、49 个目录/根父路径监听、注册失败保留旧快照、首次扫描前根缺失及删除重建均通过。额外文件监听覆盖断言先观测 50 而非期望 51，增加曲目文件监听后 GREEN；首次扫描前缺根恢复先失败后 GREEN。父监听重注册失败时旧 worker 的结果先真实 RED，提前推进 generation/取消 worker 后 GREEN；测试用受控 watch seam 隔离真实自动重试。最终目标连续 10/10 通过（30.95s），全量构建 exit 0、CTest 54/54（61.66s），`sdk/source/v2` 未变。作者自审；Windows/Linux、真实音乐库与发行包验收未做。
+
+实施裁定：显式监听扫描所得曲目文件及全部目录，而不只监听目录；文件内容修改在各平台的目录通知保证不同。若平台 watch 配额不足，报告 `local.watch.incomplete` 并保留旧快照；代价是大音乐库可能需要后续替代监听后端，不改变 Source SDK v2 ABI。
+
+测试敏感性复核：初轮 RED 为三个缺失契约断言，补充的文件监听、首次缺根与 generation 竞态分别观察真实行为 RED。提交前短暂注入三种错误并逐项运行目标用例：取消索引复用被 `playback == settings` 捕获，丢弃 pending 被 `changed.count()==1` 捕获，忽略 watcher 注册失败被 `failed.count()==1` 捕获。注入均已恢复，恢复后的完整构建和 CTest 再次运行，不把注入阶段当成 GREEN。
+
+恢复后最终复验：全量构建 exit 0、CTest 54/54 通过（60.57s）；本次未触及 `sdk/source/v2`，工作区 diff 无空白错误。
 
 ### Task 5：Local Plugin / Session 完整 Provider 合约
 
@@ -234,4 +242,4 @@ QT_QPA_PLATFORM=offscreen "$phase3_ctest" --test-dir build-phase3 -R '^<name>$' 
 - 公共扩展版本独立；跨任务共享类型/方法在 Interfaces 中固定。新增 Local enum、账号 UI、数据库/播放器依赖都不在计划范围。
 - 五项 Review Focus 均有所属测试；权限和 watcher 故障通过可控 seam 复现，真实平台限制另记录。
 - 实施以逐任务 RED→GREEN 为证据；integration/package 首次即通过的组合测试不替代底层 RED 记录。
-- 实施已获确认，Task 1–3 证据见各任务验证记录；Task 4–9 尚未验收，下一项为 Plugin-owned 共享异步索引与 Watcher。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。
+- 实施已获确认，Task 1–4 证据见各任务验证记录；Task 5–9 尚未验收，下一项为 Local Plugin / Session 完整 Provider 合约。沿用当前会话逐任务执行，不重复请求已获批准的实现权限。

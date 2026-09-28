@@ -72,6 +72,13 @@ set_target_properties(quemusic_local_scanner PROPERTIES POSITION_INDEPENDENT_COD
 target_include_directories(quemusic_local_scanner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(quemusic_local_scanner PRIVATE ${QUEMUSIC_LOCAL_TAGLIB_INCLUDES})
 target_link_libraries(quemusic_local_scanner PUBLIC quemusic_source_sdk quemusic_local_media PRIVATE tag)
+add_library(quemusic_local_library_index STATIC
+    plugins/local-source/LocalLibraryIndex.cpp
+    plugins/local-source/LocalLibraryIndex.h)
+target_compile_features(quemusic_local_library_index PUBLIC cxx_std_17)
+set_target_properties(quemusic_local_library_index PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(quemusic_local_library_index PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(quemusic_local_library_index PUBLIC quemusic_local_scanner Qt6::Core)
 target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
@@ -1480,4 +1487,9 @@ if(BUILD_TESTING)
     target_link_libraries(quemusic_local_source_scanner_test PRIVATE
         quemusic_local_scanner Qt6::Gui Qt6::Test tag)
     add_test(NAME quemusic_local_source_scanner_test COMMAND quemusic_local_source_scanner_test)
+    add_executable(quemusic_local_library_index_test tests/tst_LocalLibraryIndex.cpp)
+    target_include_directories(quemusic_local_library_index_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(quemusic_local_library_index_test PRIVATE
+        quemusic_local_library_index Qt6::Test)
+    add_test(NAME quemusic_local_library_index_test COMMAND quemusic_local_library_index_test)
 endif()
