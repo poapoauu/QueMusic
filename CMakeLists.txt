@@ -1502,4 +1502,13 @@ if(BUILD_TESTING)
         quemusic_local_library_index quemusic_source_content_events Qt6::Test)
     add_dependencies(quemusic_local_source_test quemusic_local_source)
     add_test(NAME quemusic_local_source_test COMMAND quemusic_local_source_test)
+    add_executable(quemusic_local_source_integration_test tests/tst_LocalSourceIntegration.cpp)
+    target_compile_features(quemusic_local_source_integration_test PRIVATE cxx_std_17)
+    target_compile_definitions(quemusic_local_source_integration_test PRIVATE
+        QUEMUSIC_LOCAL_PACKAGE_ROOT="${CMAKE_BINARY_DIR}/plugins")
+    target_link_libraries(quemusic_local_source_integration_test PRIVATE
+        quemusic_playback_coordinator Qt6::Test)
+    add_dependencies(quemusic_local_source_integration_test quemusic_local_source)
+    add_test(NAME quemusic_local_source_integration_test
+        COMMAND quemusic_local_source_integration_test)
 endif()
