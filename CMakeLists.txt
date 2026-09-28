@@ -79,6 +79,13 @@ target_compile_features(quemusic_local_library_index PUBLIC cxx_std_17)
 set_target_properties(quemusic_local_library_index PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(quemusic_local_library_index PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(quemusic_local_library_index PUBLIC quemusic_local_scanner Qt6::Core)
+add_library(quemusic_legacy_local_folder_migration STATIC
+    core/migration/LegacyLocalFolderMigration.cpp
+    core/migration/LegacyLocalFolderMigration.h)
+target_compile_features(quemusic_legacy_local_folder_migration PUBLIC cxx_std_17)
+target_include_directories(quemusic_legacy_local_folder_migration PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(quemusic_legacy_local_folder_migration PUBLIC
+    quemusic_source_account_store Qt6::Sql)
 target_compile_features(quemusic_source_sdk PUBLIC cxx_std_17)
 set_target_properties(quemusic_source_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(quemusic_source_sdk PUBLIC Qt6::Core)
@@ -1480,6 +1487,7 @@ target_link_libraries(quemusic_local_lyrics_test PRIVATE
 add_test(NAME quemusic_local_lyrics_test COMMAND quemusic_local_lyrics_test)
 target_link_libraries(quemusic_local_lyrics_test PRIVATE quemusic_local_media)
 target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_local_media)
+target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_legacy_local_folder_migration)
 
 if(BUILD_TESTING)
     add_executable(quemusic_local_source_scanner_test tests/tst_LocalSourceScanner.cpp)
@@ -1511,4 +1519,12 @@ if(BUILD_TESTING)
     add_dependencies(quemusic_local_source_integration_test quemusic_local_source)
     add_test(NAME quemusic_local_source_integration_test
         COMMAND quemusic_local_source_integration_test)
+    add_executable(quemusic_legacy_local_folder_migration_test
+        tests/tst_LegacyLocalFolderMigration.cpp)
+    target_include_directories(quemusic_legacy_local_folder_migration_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(quemusic_legacy_local_folder_migration_test PRIVATE
+        quemusic_legacy_local_folder_migration Qt6::Test)
+    add_test(NAME quemusic_legacy_local_folder_migration_test
+        COMMAND quemusic_legacy_local_folder_migration_test)
 endif()

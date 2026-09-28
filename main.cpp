@@ -15,6 +15,7 @@
 #include "core/logging/RuntimeLoggingPolicy.h"
 #include "core/media/MacKeychainSecretStore.h"
 #include "core/media/SourceAccountStore.h"
+#include "core/migration/LegacyLocalFolderMigration.h"
 #include "core/music/MusicHub.h"
 #include "core/music/OriginalUiMusicAdapter.h"
 #include "core/music/PlaybackCoordinator.h"
@@ -22,6 +23,7 @@
 #include "core/playback/QtPlaybackController.h"
 #include "core/settings/PluginSettingsController.h"
 #include "core/source/SourceRegistry.h"
+#include "v2/ISourceProvidersV2.h"
 #include "cpp/FolderModel.h"
 #include "cpp/Favorites.h"
 #include "cpp/AccountManager.h"
@@ -173,6 +175,18 @@ int main(int argc, char *argv[])
 #endif
     SourceAccountStore sourceAccountStore(&sourceAccountSettings, sourceSecretStore.get());
     auto sourcePlugins = createAndLoadPluginManager(application);
+    // One-shot compatibility import. The plugin supplies its public schema;
+    // normal browsing and playback never depend on this migration path.
+    if (auto *settingsProvider = qobject_cast<IPluginSettingsProviderV2 *>(
+            sourcePlugins->pluginInstance(QStringLiteral("org.quemusic.source.local")))) {
+        LegacyLocalFolderMigration migration(&sourceAccountStore, &sourceAccountSettings);
+        const QString legacyDatabase = QStandardPaths::writableLocation(
+            QStandardPaths::AppDataLocation) + QStringLiteral("/player_data.db");
+        const auto result = migration.run(legacyDatabase, settingsProvider->settingsSchema());
+        for (const QString &key : result.errorKeys) qWarning().noquote() << key;
+    } else {
+        qWarning().noquote() << "local.migration.pluginUnavailable";
+    }
     SourceRegistry sourceRegistry(sourcePlugins.get(), &sourceAccountStore);
     SourceScopeStore sourceScope(&sourceAccountSettings);
     QtPlaybackController playbackController;

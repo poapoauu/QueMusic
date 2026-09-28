@@ -1,6 +1,6 @@
 # Phase 3：Local Source Plugin 设计规格
 
-> 状态：规格与实施计划已确认；实施中（Task 1–6 通知契约、Host 通用失效、Scanner/资源、Plugin-owned 索引、Local Provider 与 build-tree 动态加载/PlaybackCoordinator 集成已完成，Phase 3-A 已验收；迁移、UI 与发行验收仍待实施）
+> 状态：规格与实施计划已确认；实施中（Task 1–7 通知契约、Host 通用失效、Scanner/资源、Plugin-owned 索引、Local Provider、build-tree 动态加载/PlaybackCoordinator 集成与旧目录非破坏性迁移已完成，Phase 3-A 已验收；目录 UI 与发行验收仍待实施）
 > 设计基线：[最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md)
 > 前置成果：[Phase 2 实施记录](phase-2-plugin-settings-ui-record.md)
 > 代码核对起点：`b95543c`，分支 `codex/plugin-ui-api-v1`
