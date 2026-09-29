@@ -25,5 +25,25 @@ elseif(QUEMUSIC_LOCAL_ARCHITECTURE STREQUAL "aarch64")
 endif()
 set(QUEMUSIC_LOCAL_BUILD_KEY "$<IF:$<CONFIG:Debug>,Debug,Release>")
 configure_file(manifest.json.in "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in" @ONLY)
-file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/plugins/local/manifest.json"
+set(QUEMUSIC_LOCAL_MANIFEST "${CMAKE_BINARY_DIR}/plugins/local/manifest.json")
+file(GENERATE OUTPUT "${QUEMUSIC_LOCAL_MANIFEST}"
     INPUT "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in")
+set(QUEMUSIC_LOCAL_MANIFEST "${QUEMUSIC_LOCAL_MANIFEST}" PARENT_SCOPE)
+
+set(QUEMUSIC_LOCAL_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/quemusic/plugins/local")
+install(TARGETS quemusic_local_source
+    LIBRARY DESTINATION "${QUEMUSIC_LOCAL_INSTALL_DIR}" COMPONENT LocalSource
+    RUNTIME DESTINATION "${QUEMUSIC_LOCAL_INSTALL_DIR}" COMPONENT LocalSource)
+install(FILES "${QUEMUSIC_LOCAL_MANIFEST}"
+    DESTINATION "${QUEMUSIC_LOCAL_INSTALL_DIR}" COMPONENT LocalSource)
+if(APPLE)
+    set_target_properties(quemusic_local_source PROPERTIES
+        BUILD_RPATH "@loader_path/../../../Frameworks"
+        INSTALL_RPATH "@loader_path/../../..")
+elseif(UNIX)
+    set_target_properties(quemusic_local_source PROPERTIES
+        INSTALL_RPATH "\$ORIGIN/../../..")
+elseif(WIN32)
+    install(TARGETS quemusic_source_content_events
+        RUNTIME DESTINATION "${QUEMUSIC_LOCAL_INSTALL_DIR}" COMPONENT LocalSource)
+endif()

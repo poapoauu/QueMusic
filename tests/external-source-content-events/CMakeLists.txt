@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.24)
+project(QueMusicExternalSourceContentEvents LANGUAGES CXX)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Core Test)
+find_package(QueMusicPluginSdk CONFIG REQUIRED)
+add_executable(external_source_content_events main.cpp)
+target_link_libraries(external_source_content_events PRIVATE
+    QueMusic::source_sdk QueMusic::source_content_events Qt6::Test)
+enable_testing()
+add_test(NAME external_source_content_events COMMAND external_source_content_events)

@@ -229,6 +229,8 @@ Home/Search/Playlist/Favourite/File 等旧 QML
 
 出口：Local 可由 SourceRegistry 创建、启停和移除实例；扫描结果产生稳定 MediaRef；主 UI 不再直接依赖路径作为媒体身份。
 
+进展（2026-09-29，当前开发分支）：Phase 3-A 插件/Provider/多实例/播放闭环和 Phase 3-B 本地目录 Adapter 分支、非破坏性旧目录迁移已完成阶段验收；macOS Debug/x86_64 全量构建及 64/64 CTest 通过。详见 [Phase 3 验收记录](phase-3-local-source-plugin-record.md)。但“我的文件夹”自建集合仍是 Legacy 路径，真实应用主题截图和 Windows/Linux 未验收；不得据此把整个 FilePage 或最终架构标为完成。
+
 ### Phase 4：统一 Queue / History 身份与持久化
 
 工作：将旧队列结构迁移为 `MediaRefV2` + 展示快照；定义 schema version、旧数据迁移、插件缺失/实例删除/账号变化后的恢复策略；历史记录使用同一身份模型。

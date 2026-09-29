@@ -677,6 +677,13 @@ if(BUILD_TESTING)
     )
     add_test(NAME quemusic_source_content_events_contract_test
         COMMAND quemusic_source_content_events_contract_test)
+    add_test(NAME quemusic_source_content_events_external_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dbuild_dir=${CMAKE_BINARY_DIR}"
+            "-Dfixture_dir=${CMAKE_CURRENT_SOURCE_DIR}/tests/external-source-content-events"
+            "-Dqt_dir=${Qt6_DIR}"
+            "-Dbuild_config=$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyExternalSourceContentEvents.cmake")
 
     qt_add_executable(quemusic_source_settings_storage_test
         tests/tst_SourceSettingsStorage.cpp
@@ -1301,9 +1308,46 @@ elseif(APPLE)
         DEPENDS quemusic_navidrome_source "${QUEMUSIC_NAVIDROME_MANIFEST}"
         VERBATIM)
     add_dependencies(QueMusic quemusic_navidrome_bundle_plugin)
+
+    set(quemusic_local_bundle_plugin_dir
+        "$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/local")
+    set(quemusic_local_bundle_frameworks_dir
+        "$<TARGET_BUNDLE_DIR:QueMusic>/Contents/Frameworks")
+    add_custom_target(quemusic_local_bundle_plugin
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${quemusic_local_bundle_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${quemusic_local_bundle_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${quemusic_local_bundle_frameworks_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:quemusic_local_source>" "${quemusic_local_bundle_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QUEMUSIC_LOCAL_MANIFEST}" "${quemusic_local_bundle_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:quemusic_source_content_events>"
+            "${quemusic_local_bundle_frameworks_dir}/$<TARGET_SONAME_FILE_NAME:quemusic_source_content_events>"
+        DEPENDS quemusic_local_source quemusic_source_content_events
+            "${QUEMUSIC_LOCAL_MANIFEST}"
+        VERBATIM)
+    add_dependencies(QueMusic quemusic_local_bundle_plugin)
 endif()
 
 if(APPLE)
+    add_test(NAME quemusic_macos_local_bundle_plugin_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dpackage_dir=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/local"
+            "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_local_source>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyBundledPluginPackage.cmake")
+    add_test(NAME quemusic_macos_local_bundle_plugin_incremental_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dbuild_dir=${CMAKE_BINARY_DIR}"
+            "-Dbuild_config=$<CONFIG>"
+            "-Dsource_library=$<TARGET_FILE:quemusic_local_source>"
+            "-Dbundled_library=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/local/$<TARGET_FILE_NAME:quemusic_local_source>"
+            "-Dbuild_target=quemusic_local_bundle_plugin"
+            "-Dsource_manifest=${QUEMUSIC_LOCAL_MANIFEST}"
+            "-Dbundled_manifest=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/local/manifest.json"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyIncrementalBundledPlugin.cmake")
+    set_tests_properties(quemusic_macos_local_bundle_plugin_incremental_test PROPERTIES
+        DEPENDS quemusic_macos_local_bundle_plugin_test RUN_SERIAL TRUE)
     add_test(NAME quemusic_macos_bundle_plugin_test
         COMMAND ${CMAKE_COMMAND}
             "-Dpackage_dir=$<TARGET_BUNDLE_DIR:QueMusic>/Contents/PlugIns/quemusic/navidrome"
@@ -1521,6 +1565,16 @@ if(BUILD_TESTING)
     add_dependencies(quemusic_local_source_integration_test quemusic_local_source)
     add_test(NAME quemusic_local_source_integration_test
         COMMAND quemusic_local_source_integration_test)
+    add_executable(quemusic_local_source_package_probe tests/tst_LocalSourcePackage.cpp)
+    target_link_libraries(quemusic_local_source_package_probe PRIVATE quemusic_plugin_core Qt6::Core)
+    add_dependencies(quemusic_local_source_package_probe quemusic_local_source)
+    add_test(NAME quemusic_local_source_package_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dbuild_dir=${CMAKE_BINARY_DIR}"
+            "-Dbuild_config=$<CONFIG>"
+            "-Dpackage_probe=$<TARGET_FILE:quemusic_local_source_package_probe>"
+            "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_local_source>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyInstalledLocalSourcePackage.cmake")
     add_executable(quemusic_legacy_local_folder_migration_test
         tests/tst_LegacyLocalFolderMigration.cpp)
     target_include_directories(quemusic_legacy_local_folder_migration_test PRIVATE
