@@ -4,7 +4,9 @@
 #include <QFileSystemWatcher>
 #include <QPointer>
 #include <QSet>
+#include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QUuid>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -41,6 +43,52 @@ class LocalLibraryIndexTest : public QObject
 {
     Q_OBJECT
 private slots:
+    void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
+    void publishesStableOpaqueTypedIdsOnlyAfterPersisting()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString track = temp.filePath("one.mp3");
+        QVERIFY(writeFile(track));
+        const QString identityFile = temp.filePath("identity.json");
+        const auto config = configFor(temp.path());
+        QString trackId;
+        QString rootId;
+        {
+            LocalLibraryIndex index("local/home", "fingerprint", config, false,
+                                    nullptr, {}, identityFile);
+            QSignalSpy changed(&index, &LocalLibraryIndex::snapshotChanged);
+            index.requestScan();
+            QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, 5000);
+            const auto snapshot = index.snapshot();
+            const QString path = QFileInfo(track).canonicalFilePath();
+            trackId = snapshot->trackIdByPath.value(path);
+            rootId = snapshot->directoryIdByPath.value(config.canonicalRoot);
+            QVERIFY(!QUuid(trackId).isNull());
+            QVERIFY(!QUuid(rootId).isNull());
+            QVERIFY(trackId != rootId);
+            QCOMPARE(snapshot->trackPathById.value(trackId), path);
+            QCOMPARE(snapshot->directoryPathById.value(rootId), config.canonicalRoot);
+            QVERIFY(!snapshot->directoryPathById.contains(trackId));
+        }
+        LocalLibraryIndex restarted("local/home", "fingerprint", config, false,
+                                    nullptr, {}, identityFile);
+        QSignalSpy changed(&restarted, &LocalLibraryIndex::snapshotChanged);
+        QSignalSpy failed(&restarted, &LocalLibraryIndex::refreshFailed);
+        restarted.requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, 5000);
+        QCOMPARE(restarted.snapshot()->trackPathById.value(trackId),
+                 QFileInfo(track).canonicalFilePath());
+        QCOMPARE(restarted.snapshot()->directoryPathById.value(rootId), config.canonicalRoot);
+        QVERIFY(QFile::remove(identityFile));
+        QVERIFY(QDir().mkdir(identityFile));
+        QVERIFY(writeFile(temp.filePath("two.mp3")));
+        const auto accepted = restarted.snapshot();
+        restarted.requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+        QCOMPARE(restarted.snapshot(), accepted);
+        QCOMPARE(changed.size(), 1);
+    }
     void sameInstanceSharesDifferentInstancesIsolate()
     {
         QTemporaryDir temp;

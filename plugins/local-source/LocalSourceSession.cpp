@@ -241,17 +241,21 @@ void LocalSourceSession::finishPage(const QUuid &id)
     section.layoutHint = query.page == MusicPageKindV2::Category
         ? QStringLiteral("directories") : QString();
     QList<MediaItemV2> items;
-    const auto directoryItem = [this](const QString &path) {
+    const auto directoryItem = [this, &snapshot](const QString &path) {
         MediaItemV2 item;
         item.ref = {QStringLiteral("local"), m_configuration.sourceInstanceId,
-                    m_configuration.accountId, MediaEntityTypeV2::Directory, fileId(path)};
+                    m_configuration.accountId, MediaEntityTypeV2::Directory,
+                    snapshot->directoryIdByPath.value(path)};
         item.title = QFileInfo(path).fileName();
         return item;
     };
     if (rootCard) items.append(directoryItem(root));
     else if (query.page == MusicPageKindV2::Category) {
-        const auto directory = LocalSourceScanner::validatedPath({root, true, {}}, directoryId, true);
-        if (!directory || !snapshot->scan.watchedDirectories.contains(*directory)) {
+        const QString directoryPath = snapshot->directoryPathById.value(directoryId);
+        const auto directory = directoryPath.isEmpty() ? std::optional<QString>()
+            : LocalSourceScanner::validatedPath({root, true, {}}, fileId(directoryPath), true);
+        if (!directory || *directory != directoryPath
+            || !snapshot->scan.watchedDirectories.contains(*directory)) {
             fail(id, failure(SourceErrorKindV2::InvalidRequest, "local.reference.invalid"));
             return;
         }
@@ -262,7 +266,8 @@ void LocalSourceSession::finishPage(const QUuid &id)
             if (QFileInfo(entry.canonicalPath).absolutePath() != *directory) continue;
             auto item = entry.item;
             item.ref = {QStringLiteral("local"), m_configuration.sourceInstanceId,
-                        m_configuration.accountId, MediaEntityTypeV2::Track, entry.entityId};
+                        m_configuration.accountId, MediaEntityTypeV2::Track,
+                        snapshot->trackIdByPath.value(entry.canonicalPath)};
             for (const auto action : {SourceActionV2::Play, SourceActionV2::Artwork,
                                       SourceActionV2::Lyrics})
                 item.availableActions.insert(action, available);
@@ -278,7 +283,8 @@ void LocalSourceSession::finishPage(const QUuid &id)
                 continue;
             auto item = entry.item;
             item.ref = {QStringLiteral("local"), m_configuration.sourceInstanceId,
-                        m_configuration.accountId, MediaEntityTypeV2::Track, entry.entityId};
+                        m_configuration.accountId, MediaEntityTypeV2::Track,
+                        snapshot->trackIdByPath.value(entry.canonicalPath)};
             item.availableActions.insert(SourceActionV2::Play, available);
             items.append(item);
         }
@@ -359,18 +365,15 @@ void LocalSourceSession::finishResource(const QUuid &id)
         fail(id, failure(SourceErrorKindV2::NotFound, "local.reference.invalid"));
         return;
     }
-    const auto found = std::find_if(snapshot->scan.entries.cbegin(), snapshot->scan.entries.cend(),
-                                    [&request](const auto &entry) {
-                                        return entry.entityId == request.media.entityId;
-                                    });
-    if (found == snapshot->scan.entries.cend()) {
+    const QString canonicalPath = snapshot->trackPathById.value(request.media.entityId);
+    if (canonicalPath.isEmpty()) {
         fail(id, failure(SourceErrorKindV2::NotFound, "local.reference.invalid"));
         return;
     }
     const QString root = snapshot->scan.watchedDirectories.value(0);
     const auto path = LocalSourceScanner::validatedPath({root, true, {}},
-                                                         request.media.entityId, false);
-    if (!path || *path != found->canonicalPath) {
+                                                         fileId(canonicalPath), false);
+    if (!path || *path != canonicalPath) {
         fail(id, failure(SourceErrorKindV2::NotFound, "local.reference.invalid"));
         return;
     }

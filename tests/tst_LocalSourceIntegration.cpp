@@ -11,7 +11,9 @@
 #include <QPointer>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QUuid>
 #include <QTest>
 
 namespace {
@@ -74,12 +76,20 @@ struct Harness {
     }
     PageQueryV2 children(const QString &account, const QString &root)
     {
+        Q_UNUSED(root);
         PageQueryV2 query;
         query.page = MusicPageKindV2::Category;
         query.section = PageSectionKindV2::Tracks;
         query.scope.sourceInstanceId = QStringLiteral("local/") + account;
-        query.filters.insert("directoryId", QUrl::fromLocalFile(QFileInfo(root).canonicalFilePath())
-                                             .toString(QUrl::FullyEncoded));
+        auto *session = registry.sessionFor(query.scope.sourceInstanceId);
+        if (!session) return query;
+        QSignalSpy ready(session, &IMusicSourceSessionV2::pageReady);
+        PageQueryV2 rootQuery = query;
+        rootQuery.filters.insert("entityType", int(MediaEntityTypeV2::Directory));
+        qobject_cast<IPageProviderV2 *>(session)->fetchPage(rootQuery);
+        if (ready.isEmpty() && !ready.wait(5000)) return query;
+        const auto result = qvariant_cast<PageResultV2>(ready.last().at(1));
+        query.filters.insert("directoryId", result.sections.first().items.first().ref.entityId);
         return query;
     }
 };
@@ -98,6 +108,7 @@ QVariantMap playbackRow(const MediaItemV2 &item)
 class LocalSourceIntegrationTest final : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
     void dynamicInstancesUseCoordinator()
     {
         Harness h;
@@ -128,6 +139,9 @@ private slots:
         QCOMPARE(firstItem.ref.sourcePluginId, QString("local"));
         QCOMPARE(firstItem.ref.sourceInstanceId, QString("local/one"));
         QCOMPARE(secondItem.ref.sourceInstanceId, QString("local/two"));
+        QVERIFY(!QUuid(firstItem.ref.entityId).isNull());
+        QVERIFY(!QUuid(secondItem.ref.entityId).isNull());
+        QVERIFY(firstItem.ref.entityId != secondItem.ref.entityId);
         QVERIFY(firstItem.ref != secondItem.ref);
         QSignalSpy failed(&h.coordinator, &PlaybackCoordinator::playbackFailed);
         QVERIFY(!h.coordinator.play(playbackRow(firstItem)).isNull());

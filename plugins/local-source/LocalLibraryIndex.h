@@ -14,6 +14,10 @@ struct LocalIndexSnapshot {
     quint64 revision = 0;
     quint64 generation = 0;
     LocalScanResult scan;
+    QHash<QString, QString> trackPathById;
+    QHash<QString, QString> directoryPathById;
+    QHash<QString, QString> trackIdByPath;
+    QHash<QString, QString> directoryIdByPath;
 };
 
 // Plugin-owned and deliberately independent of Host models and the global
@@ -29,7 +33,7 @@ public:
 
     LocalLibraryIndex(QString instanceId, QByteArray configurationFingerprint,
                       LocalScanConfig config, bool watchChanges, QObject *parent = nullptr,
-                      Hooks hooks = {});
+                      Hooks hooks = {}, QString identityFile = {});
     ~LocalLibraryIndex() override;
 
     void requestScan();
@@ -50,6 +54,7 @@ private:
     LocalScanConfig m_config;
     bool m_watchChanges = false;
     Hooks m_hooks;
+    QString m_identityFile;
     QFileSystemWatcher m_watcher;
     QTimer m_debounce;
     std::thread m_worker;
@@ -67,11 +72,12 @@ private:
 class LocalLibraryIndexPool final
 {
 public:
-    explicit LocalLibraryIndexPool(LocalLibraryIndex::Hooks hooks = {});
+    explicit LocalLibraryIndexPool(LocalLibraryIndex::Hooks hooks = {}, QString identityRoot = {});
     ~LocalLibraryIndexPool();
     std::shared_ptr<LocalLibraryIndex> acquire(const SourceConfigurationV2 &configuration,
                                                const LocalScanConfig &scanConfig);
 private:
     LocalLibraryIndex::Hooks m_hooks;
+    QString m_identityRoot;
     QHash<QByteArray, std::weak_ptr<LocalLibraryIndex>> m_indexes;
 };

@@ -1,8 +1,10 @@
 #include "LocalLibraryIndex.h"
+#include "LocalIdentityStore.h"
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QDir>
 #include <QMetaObject>
+#include <QStandardPaths>
 #include <QThread>
 #include <algorithm>
 #include <utility>
@@ -14,6 +16,19 @@ SourceErrorV2 watchFailure()
     error.kind = SourceErrorKindV2::Unavailable;
     error.messageKey = "local.watch.incomplete";
     return error;
+}
+SourceErrorV2 identityFailure(const QString &key)
+{
+    SourceErrorV2 error;
+    error.kind = SourceErrorKindV2::Unavailable;
+    error.messageKey = key;
+    return error;
+}
+QString identityPath(const QString &root, const QString &instanceId)
+{
+    const QString digest = QString::fromLatin1(QCryptographicHash::hash(
+        instanceId.toUtf8(), QCryptographicHash::Sha256).toHex());
+    return QDir(root).filePath(QStringLiteral("local/identities/") + digest + ".json");
 }
 
 QByteArray fingerprint(const SourceConfigurationV2 &source, const LocalScanConfig &scan)
@@ -42,10 +57,13 @@ bool registerPath(QFileSystemWatcher &watcher, const QString &path,
 
 LocalLibraryIndex::LocalLibraryIndex(QString instanceId, QByteArray configurationFingerprint,
                                      LocalScanConfig config, bool watchChanges, QObject *parent,
-                                     Hooks hooks)
+                                     Hooks hooks, QString identityFile)
     : QObject(parent), m_instanceId(std::move(instanceId)),
       m_fingerprint(std::move(configurationFingerprint)), m_config(std::move(config)),
-      m_watchChanges(watchChanges), m_hooks(std::move(hooks)), m_watcher(this), m_debounce(this)
+      m_watchChanges(watchChanges), m_hooks(std::move(hooks)),
+      m_identityFile(identityFile.isEmpty()
+          ? identityPath(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), m_instanceId)
+          : std::move(identityFile)), m_watcher(this), m_debounce(this)
 {
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(200);
@@ -136,12 +154,27 @@ void LocalLibraryIndex::finishWorker(quint64 generation, LocalScanResult result)
             emit refreshFailed(watchFailure());
         } else {
             auto next = std::make_shared<LocalIndexSnapshot>();
-            next->revision = ++m_revision;
-            next->generation = generation;
-            next->scan = std::move(result);
-            std::shared_ptr<const LocalIndexSnapshot> published = std::move(next);
-            std::atomic_store(&m_snapshot, std::move(published));
-            emit snapshotChanged(m_revision);
+            QStringList tracks;
+            for (const auto &entry : result.entries) tracks.append(entry.canonicalPath);
+            LocalIdentitySnapshot identities;
+            QString errorKey;
+            if (!LocalIdentityStore(m_identityFile, m_instanceId)
+                     .reconcile(tracks, result.watchedDirectories, &identities, &errorKey)) {
+                emit refreshFailed(identityFailure(errorKey));
+            } else {
+                next->trackIdByPath = std::move(identities.trackIdsByPath);
+                next->directoryIdByPath = std::move(identities.directoryIdsByPath);
+                for (auto it = next->trackIdByPath.cbegin(); it != next->trackIdByPath.cend(); ++it)
+                    next->trackPathById.insert(it.value(), it.key());
+                for (auto it = next->directoryIdByPath.cbegin(); it != next->directoryIdByPath.cend(); ++it)
+                    next->directoryPathById.insert(it.value(), it.key());
+                next->revision = ++m_revision;
+                next->generation = generation;
+                next->scan = std::move(result);
+                std::shared_ptr<const LocalIndexSnapshot> published = std::move(next);
+                std::atomic_store(&m_snapshot, std::move(published));
+                emit snapshotChanged(m_revision);
+            }
         }
     }
     if (m_pending && !m_stopped) {
@@ -171,8 +204,11 @@ void LocalLibraryIndex::stop()
     if (!paths.isEmpty()) m_watcher.removePaths(paths);
 }
 
-LocalLibraryIndexPool::LocalLibraryIndexPool(LocalLibraryIndex::Hooks hooks)
-    : m_hooks(std::move(hooks)) {}
+LocalLibraryIndexPool::LocalLibraryIndexPool(LocalLibraryIndex::Hooks hooks, QString identityRoot)
+    : m_hooks(std::move(hooks)),
+      m_identityRoot(identityRoot.isEmpty()
+          ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+          : std::move(identityRoot)) {}
 
 LocalLibraryIndexPool::~LocalLibraryIndexPool()
 {
@@ -187,7 +223,8 @@ std::shared_ptr<LocalLibraryIndex> LocalLibraryIndexPool::acquire(
     if (auto existing = m_indexes.value(key).lock()) return existing;
     const bool watch = configuration.parameters.value("watchChanges", false).toBool();
     auto *index = new LocalLibraryIndex(configuration.sourceInstanceId, key, scanConfig,
-                                        watch, nullptr, m_hooks);
+                                        watch, nullptr, m_hooks,
+                                        identityPath(m_identityRoot, configuration.sourceInstanceId));
     std::shared_ptr<LocalLibraryIndex> shared(index, [](LocalLibraryIndex *owned) {
         if (QThread::currentThread() == owned->thread()) {
             owned->stop();
