@@ -84,13 +84,13 @@ bool LocalIdentityStore::reconcile(const QStringList &trackPaths, const QStringL
                 if (errorKey) *errorKey = QStringLiteral("local.identity.instanceMismatch");
                 return false;
             }
-            if (root.value(QStringLiteral("version")).isDouble()
-                && root.value(QStringLiteral("version")).toInt() > kVersion) {
+            const QJsonValue version = root.value(QStringLiteral("version"));
+            if (version.isDouble() && version.toDouble() > kVersion) {
                 if (errorKey) *errorKey = QStringLiteral("local.identity.futureVersion");
                 return false;
             }
             QSet<QString> seen;
-            if (root.value(QStringLiteral("version")).toInt() != kVersion
+            if (version.toInt() != kVersion
                 || root.value(QStringLiteral("sourceInstanceId")).toString() != m_sourceInstanceId
                 || !readIds(root.value(QStringLiteral("tracks")), &previous.trackIdsByPath, &seen)
                 || !readIds(root.value(QStringLiteral("directories")), &previous.directoryIdsByPath, &seen)) {

@@ -146,6 +146,30 @@ private slots:
         QVERIFY(afterCorruption.trackIdsByPath.value(path) != first.trackIdsByPath.value(path));
         QCOMPARE(readIndex(index).value("version").toInt(), 1);
     }
+
+    void largeFutureVersionPreservesIndex()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString index = temp.filePath("index.json");
+        const QByteArray futureIndex =
+            R"({"version":2147483648,"sourceInstanceId":"local/home","tracks":{},"directories":{}})";
+        QFile file(index);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(futureIndex), futureIndex.size());
+        file.close();
+
+        LocalIdentitySnapshot output;
+        output.trackIdsByPath.insert("sentinel", "unchanged");
+        QString error;
+        LocalIdentityStore store(index, "local/home");
+        QVERIFY(!store.reconcile({temp.filePath("song.mp3")}, {}, &output, &error));
+        QCOMPARE(error, QString("local.identity.futureVersion"));
+        QCOMPARE(output.trackIdsByPath.value("sentinel"), QString("unchanged"));
+        QFile after(index);
+        QVERIFY(after.open(QIODevice::ReadOnly));
+        QCOMPARE(after.readAll(), futureIndex);
+    }
 };
 
 QTEST_GUILESS_MAIN(LocalIdentityStoreTest)
