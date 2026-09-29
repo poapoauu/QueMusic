@@ -74,7 +74,9 @@ target_include_directories(quemusic_local_scanner PRIVATE ${QUEMUSIC_LOCAL_TAGLI
 target_link_libraries(quemusic_local_scanner PUBLIC quemusic_source_sdk quemusic_local_media PRIVATE tag)
 add_library(quemusic_local_library_index STATIC
     plugins/local-source/LocalLibraryIndex.cpp
-    plugins/local-source/LocalLibraryIndex.h)
+    plugins/local-source/LocalLibraryIndex.h
+    plugins/local-source/LocalIdentityStore.cpp
+    plugins/local-source/LocalIdentityStore.h)
 target_compile_features(quemusic_local_library_index PUBLIC cxx_std_17)
 set_target_properties(quemusic_local_library_index PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(quemusic_local_library_index PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1547,6 +1549,11 @@ if(BUILD_TESTING)
     target_link_libraries(quemusic_local_library_index_test PRIVATE
         quemusic_local_library_index Qt6::Test)
     add_test(NAME quemusic_local_library_index_test COMMAND quemusic_local_library_index_test)
+    add_executable(quemusic_local_identity_store_test tests/tst_LocalIdentityStore.cpp)
+    target_include_directories(quemusic_local_identity_store_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(quemusic_local_identity_store_test PRIVATE
+        quemusic_local_library_index Qt6::Test)
+    add_test(NAME quemusic_local_identity_store_test COMMAND quemusic_local_identity_store_test)
     add_executable(quemusic_local_source_test tests/tst_LocalSource.cpp)
     target_sources(quemusic_local_source_test PRIVATE
         plugins/local-source/LocalSourcePlugin.cpp plugins/local-source/LocalSourcePlugin.h
