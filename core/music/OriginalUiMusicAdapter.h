@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QHash>
 #include <QPointer>
+#include <QSet>
 #include <QUuid>
 #include <QVariantList>
 #include <QVariantMap>
@@ -24,6 +25,9 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(OnlineListModel *searchLists READ searchLists CONSTANT)
     Q_PROPERTY(OnlineListModel *searchAlbums READ searchAlbums CONSTANT)
     Q_PROPERTY(OnlineListModel *searchLyrics READ searchLyrics CONSTANT)
+    Q_PROPERTY(OnlineListModel *directoryItems READ directoryItems CONSTANT)
+    Q_PROPERTY(QString directoryState READ directoryState NOTIFY directoryChanged)
+    Q_PROPERTY(bool directoryCanNavigateBack READ directoryCanNavigateBack NOTIFY directoryChanged)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
@@ -39,6 +43,9 @@ public:
     OnlineListModel *searchLists() const;
     OnlineListModel *searchAlbums() const;
     OnlineListModel *searchLyrics() const;
+    OnlineListModel *directoryItems() const;
+    QString directoryState() const;
+    bool directoryCanNavigateBack() const;
     QVariantList sourceOptions() const;
     QString selectedSourceInstanceId() const;
     void setSelectedSourceInstanceId(const QString &id);
@@ -55,10 +62,17 @@ public:
     Q_INVOKABLE QUuid play(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &presentationItem, bool favorite);
+    Q_INVOKABLE void activateDirectories();
+    Q_INVOKABLE bool browseDirectory(const QVariantMap &presentationItem);
+    Q_INVOKABLE bool directoryBack();
+    Q_INVOKABLE void refreshDirectories();
+    Q_INVOKABLE void loadMoreDirectories(const QString &sectionId);
+    Q_INVOKABLE bool pluginAvailable(const QString &packageId) const;
 
 signals:
     void sourceOptionsChanged();
     void selectedSourceInstanceIdChanged();
+    void directoryChanged();
 
 private:
     QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
@@ -68,6 +82,7 @@ private:
     QVariantMap presentationItem(const QVariantMap &fullItem, const QVariantMap &sectionState);
     void clearPresentationState();
     void rebuild();
+    void rebuildDirectories();
 
     QPointer<MusicHub> m_hub;
     QPointer<PlaybackCoordinator> m_playback;
@@ -79,6 +94,8 @@ private:
     OnlineListModel *m_searchLists;
     OnlineListModel *m_searchAlbums;
     OnlineListModel *m_searchLyrics;
+    OnlineListModel *m_directoryItems;
     QHash<quint64, QVariantMap> m_fullItems;
+    QSet<quint64> m_directoryKeys;
     quint64 m_nextAdapterKey = 1;
 };

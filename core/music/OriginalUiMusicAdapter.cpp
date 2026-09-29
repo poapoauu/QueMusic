@@ -1,11 +1,13 @@
 #include "OriginalUiMusicAdapter.h"
 
 #include "MusicHub.h"
+#include "DirectoryLibraryController.h"
 #include "MusicPageModel.h"
 #include "PlaybackCoordinator.h"
 #include "OnlineListModel.h"
 
 #include <QRegularExpression>
+#include <utility>
 
 namespace {
 
@@ -44,7 +46,8 @@ QVariantMap browseCapability(const QVariantMap &item)
     const bool supported = entityType == int(MediaEntityTypeV2::Album)
         || entityType == int(MediaEntityTypeV2::Artist)
         || entityType == int(MediaEntityTypeV2::Playlist)
-        || entityType == int(MediaEntityTypeV2::Genre);
+        || entityType == int(MediaEntityTypeV2::Genre)
+        || entityType == int(MediaEntityTypeV2::Directory);
     return supported ? QVariantMap{{QStringLiteral("enabled"), true},
                                    {QStringLiteral("reasonKey"), QString{}}}
                      : unavailable(QStringLiteral("music.browseUnsupported"));
@@ -72,7 +75,8 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
       m_recommendSongs(new OnlineListModel(this)), m_categoryItems(new OnlineListModel(this)),
       m_favoriteSongs(new OnlineListModel(this)), m_favoriteLists(new OnlineListModel(this)),
       m_searchSongs(new OnlineListModel(this)), m_searchLists(new OnlineListModel(this)),
-      m_searchAlbums(new OnlineListModel(this)), m_searchLyrics(new OnlineListModel(this))
+      m_searchAlbums(new OnlineListModel(this)), m_searchLyrics(new OnlineListModel(this)),
+      m_directoryItems(new OnlineListModel(this))
 {
     if (!m_hub) return;
     const auto observe = [this](MusicPageModel *model) {
@@ -85,12 +89,15 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     observe(m_hub->category());
     observe(m_hub->favorites());
     observe(m_hub->searchResults());
+    connect(m_hub->directoryLibrary(), &DirectoryLibraryController::changed,
+            this, [this] { rebuildDirectories(); emit directoryChanged(); });
     connect(m_hub, &MusicHub::sourceOptionsChanged, this, &OriginalUiMusicAdapter::sourceOptionsChanged);
     connect(m_hub, &MusicHub::selectedSourceInstanceIdChanged,
             this, &OriginalUiMusicAdapter::selectedSourceInstanceIdChanged);
     connect(m_hub, &QObject::destroyed, this, [this] {
         m_hub = nullptr;
         clearPresentationState();
+        emit directoryChanged();
         emit sourceOptionsChanged();
         emit selectedSourceInstanceIdChanged();
     });
@@ -105,6 +112,23 @@ OnlineListModel *OriginalUiMusicAdapter::searchSongs() const { return m_searchSo
 OnlineListModel *OriginalUiMusicAdapter::searchLists() const { return m_searchLists; }
 OnlineListModel *OriginalUiMusicAdapter::searchAlbums() const { return m_searchAlbums; }
 OnlineListModel *OriginalUiMusicAdapter::searchLyrics() const { return m_searchLyrics; }
+OnlineListModel *OriginalUiMusicAdapter::directoryItems() const { return m_directoryItems; }
+QString OriginalUiMusicAdapter::directoryState() const
+{
+    if (!m_hub || !m_hub->directoryLibrary()) return QStringLiteral("unavailable");
+    switch (m_hub->directoryLibrary()->model()->state()) {
+    case PageLoadStateV2::Loading: return QStringLiteral("loading");
+    case PageLoadStateV2::Ready: return QStringLiteral("ready");
+    case PageLoadStateV2::Empty: return QStringLiteral("empty");
+    case PageLoadStateV2::Failed: return QStringLiteral("failed");
+    case PageLoadStateV2::Idle: return QStringLiteral("empty");
+    }
+    return QStringLiteral("unavailable");
+}
+bool OriginalUiMusicAdapter::directoryCanNavigateBack() const
+{
+    return m_hub && m_hub->directoryLibrary() && m_hub->directoryLibrary()->canNavigateBack();
+}
 QVariantList OriginalUiMusicAdapter::sourceOptions() const { return m_hub ? m_hub->sourceOptions() : QVariantList{}; }
 QString OriginalUiMusicAdapter::selectedSourceInstanceId() const
 {
@@ -179,6 +203,35 @@ QUuid OriginalUiMusicAdapter::setFavorite(const QVariantMap &row, bool favorite)
     return m_hub && m_hub->actions() && !item.isEmpty()
         && permits(item, favorite ? QStringLiteral("canFavorite") : QStringLiteral("canUnfavorite"))
         ? m_hub->actions()->setFavorite(item, favorite) : QUuid{};
+}
+
+void OriginalUiMusicAdapter::activateDirectories()
+{
+    if (m_hub && m_hub->directoryLibrary()) m_hub->directoryLibrary()->activate();
+}
+bool OriginalUiMusicAdapter::browseDirectory(const QVariantMap &row)
+{
+    bool ok = false;
+    const quint64 key = row.value(QStringLiteral("_adapterKey")).toULongLong(&ok);
+    if (!ok || !m_directoryKeys.contains(key) || !m_hub || !m_hub->directoryLibrary()) return false;
+    const auto item = m_fullItems.value(key);
+    return !item.isEmpty() && m_hub->directoryLibrary()->browse(item);
+}
+bool OriginalUiMusicAdapter::directoryBack()
+{
+    return m_hub && m_hub->directoryLibrary() && m_hub->directoryLibrary()->navigateBack();
+}
+void OriginalUiMusicAdapter::refreshDirectories()
+{
+    if (m_hub && m_hub->directoryLibrary()) m_hub->directoryLibrary()->refresh();
+}
+void OriginalUiMusicAdapter::loadMoreDirectories(const QString &sectionId)
+{
+    if (m_hub && m_hub->directoryLibrary()) m_hub->directoryLibrary()->loadMore(sectionId);
+}
+bool OriginalUiMusicAdapter::pluginAvailable(const QString &packageId) const
+{
+    return m_hub && m_hub->sourcePluginLoaded(packageId);
 }
 
 QVariantMap OriginalUiMusicAdapter::capabilitiesForItem(const QVariantMap &item) const
@@ -271,9 +324,11 @@ void OriginalUiMusicAdapter::clearPresentationState()
     m_searchLists->setItems({});
     m_searchAlbums->setItems({});
     m_searchLyrics->setItems({});
+    m_directoryItems->setItems({});
+    m_directoryKeys.clear();
     for (OnlineListModel *model : {m_recommendSongs, m_categoryItems, m_favoriteSongs,
                                    m_favoriteLists, m_searchSongs, m_searchLists,
-                                   m_searchAlbums, m_searchLyrics})
+                                   m_searchAlbums, m_searchLyrics, m_directoryItems})
         model->setPresentationState({});
 }
 
@@ -288,6 +343,7 @@ void OriginalUiMusicAdapter::rebuild()
     QVariantList searchAlbums;
     QVariantList searchLyrics;
     m_fullItems.clear();
+    m_directoryKeys.clear();
 
     const auto append = [this](MusicPageModel *model, QVariantList *target,
                                QVariantList *tracks = nullptr, QVariantList *playlists = nullptr) {
@@ -366,4 +422,44 @@ void OriginalUiMusicAdapter::rebuild()
         m_searchAlbums->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Albums}));
         m_searchLyrics->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
     }
+    rebuildDirectories();
+}
+
+void OriginalUiMusicAdapter::rebuildDirectories()
+{
+    for (const quint64 key : std::as_const(m_directoryKeys)) m_fullItems.remove(key);
+    m_directoryKeys.clear();
+    QVariantList rows;
+    if (m_hub && m_hub->directoryLibrary()) {
+        auto *controller = m_hub->directoryLibrary();
+        auto *model = controller->model();
+        for (int section = 0; section < model->rowCount(); ++section) {
+            const auto index = model->index(section);
+            const QVariantMap state{
+                {QStringLiteral("sectionId"), model->data(index, MusicPageModel::SectionIdRole)},
+                {QStringLiteral("hasMore"), model->data(index, MusicPageModel::HasMoreRole)},
+                {QStringLiteral("loadingMore"), model->data(index, MusicPageModel::LoadingMoreRole)},
+                {QStringLiteral("error"), model->data(index, MusicPageModel::ErrorRole)}};
+            const QVariantMap error = state.value(QStringLiteral("error")).toMap();
+            if (!error.isEmpty() && model->section(section).items.isEmpty()) {
+                rows.append(QVariantMap{{QStringLiteral("title"), tr("目录加载失败")},
+                                        {QStringLiteral("isError"), true},
+                                        {QStringLiteral("sectionId"), state.value(QStringLiteral("sectionId"))},
+                                        {QStringLiteral("error"), error}});
+            }
+            for (int item = 0; item < model->section(section).items.size(); ++item) {
+                const auto full = model->itemAt(section, item);
+                auto row = presentationItem(full, state);
+                const auto settings = controller->settingsTarget(full);
+                if (!settings.isEmpty()) {
+                    row.insert(QStringLiteral("settingsPackageId"), settings.value("packageId"));
+                    row.insert(QStringLiteral("settingsInstanceId"), settings.value("instanceId"));
+                }
+                m_directoryKeys.insert(row.value(QStringLiteral("_adapterKey")).toULongLong());
+                rows.append(row);
+            }
+        }
+        m_directoryItems->setPresentationState(sectionState(model, {PageSectionKindV2::Tracks}));
+    } else m_directoryItems->setPresentationState({});
+    m_directoryItems->setItems(rows);
 }

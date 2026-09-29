@@ -4,11 +4,31 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
-import Qt.labs.folderlistmodel
 import QueMusic 1.0
 import 'qrc:/QueMusic/components'
 Item {
     id: filePage
+
+    property var musicAdapter: null
+    signal requestPluginSettings(string packageId, string instanceId)
+    function loadMoreDirectorySections(rows) {
+        if (!musicAdapter || !rows) return;
+        var seen = {};
+        for (var i = 0; i < rows.count; ++i) {
+            var row = rows.get(i);
+            if (!row.hasMore || row.loadingMore || !row.sectionId || seen[row.sectionId]) continue;
+            seen[row.sectionId] = true;
+            musicAdapter.loadMoreDirectories(row.sectionId);
+        }
+    }
+    Connections {
+        target: window
+        function onExit() {
+            if (!filePage.musicAdapter) return;
+            for (var depth = 0; depth < 32 && filePage.musicAdapter.directoryCanNavigateBack; ++depth)
+                if (!filePage.musicAdapter.directoryBack()) break;
+        }
+    }
 
     property int folderNumber: 0
     property int setMode: 0
@@ -45,6 +65,7 @@ Item {
         }
 
         QBlurTapBar {
+            objectName: "localDirectoryTabs"
             x: 24
             y: 80
             z: 5
@@ -55,6 +76,8 @@ Item {
             blurSource: fileChildPage
             onTabChange: (index) => {
                 fileChildPage.stack(index);
+                if (index === 1 && filePage.musicAdapter)
+                    filePage.musicAdapter.activateDirectories();
                 filePage.setMode = 0;
                 filePage.chooseIndex = [];
                 filePage.cancelChoose();
@@ -300,35 +323,31 @@ Item {
                 }
             }
 
-            // 本地文件夹
+            // 本地文件夹：数据和操作均由 Source Plugin Adapter 提供。
             Item {
                 id: localFile
                 width: fileChildPage.width
                 height: fileChildPage.height
                 visible: false
-                //用于存储本地文件夹目录
-                //用于存放文件夹内显示音频文件
-                FolderListModel {
-                    id: localFileModel
-                    nameFilters: ["*.mp3","*.wav","*.aac","*.flac","*.ogg","*.eac3","*.wma","*.ac3","*.alac","*.mkv","*.wmv","*.avi","*.mpeg4"]
-                }
 
-                FolderDialog {
-                    id: folderDialog
-                    title: "选择音乐的文件夹"
-                    onAccepted: {
-                        // 获取选中的文件夹URL（file:// 格式）
-                        var folderUrl = folderDialog.selectedFolder;
-                        var folderPath = folderUrl.toString();
-                        var folderName = folderPath.split('/').pop(); // 使用 '/' 分割，取最后一部分
-                        //localFolderModel.append({ name: folderName, path: folderUrl, local: "true" })
-                        localFolderModel.addFolder(folderName, "local", folderPath);
-                        mainWarn.tiped("成功定位一个本地文件夹",1);
-
+                Text {
+                    objectName: "directoryStatus"
+                    anchors.centerIn: parent
+                    visible: !filePage.musicAdapter || filePage.musicAdapter.directoryItems.count === 0
+                    text: {
+                        var state = filePage.musicAdapter
+                                    ? filePage.musicAdapter.directoryState : "unavailable";
+                        var available = filePage.musicAdapter
+                                        && filePage.musicAdapter.pluginAvailable("org.quemusic.source.local");
+                        return !available || state === "unavailable" ? "本地音乐插件不可用"
+                             : state === "loading" ? "正在加载目录…"
+                             : state === "failed" ? "目录加载失败，请重试"
+                             : "暂无目录，点击导入目录进行配置";
                     }
+                    color: Style.themes.fontColor
+                    font.pixelSize: Style.settings.textmain
                 }
 
-                // 右侧操作区
                 Row {
                     x: parent.width - width - 16
                     y: 11
@@ -340,186 +359,94 @@ Item {
                         iconCharacter: "\uf09f"
                         buttonColor: filePage.setMode === 2 ? Style.themes.containColor : Style.themes.fullColor
                         onClicked: {
-                            if(filePage.setMode === 2) {
-                                filePage.setMode = 0;
-                                filePage.chooseIndex = [];
-                                filePage.cancelChoose()
-                            } else {
-                                filePage.setMode = 2;
-                            }
+                            filePage.setMode = filePage.setMode === 2 ? 0 : 2;
+                            filePage.chooseIndex = [];
+                            filePage.cancelChoose();
                         }
                     }
-                    // 添加
                     QButton {
+                        objectName: "importPluginDirectory"
                         height: 38
                         text: "导入目录"
                         iconCharacter: "\uf0f1"
-                        onClicked: {
-                            folderDialog.open();
-                        }
+                        onClicked: filePage.requestPluginSettings("org.quemusic.source.local", "")
                     }
                 }
 
                 QListView {
                     id: localFolderView
+                    objectName: "pluginDirectoryRoots"
                     anchors.fill: parent
-                    model: localFolderModel
                     clip: true
                     topMargin: 60
                     headerModel: ["标题","","","菜单"]
-
-                    rebound: Transition {
-                        NumberAnimation {
-                            properties: "y"
-                            duration: 480
-                            easing.type: Easing.Bezier
-                            easing.bezierCurve: [ 0.32, 0.12, 0.00, 1.00, 1, 1 ]
+                    model: filePage.musicAdapter ? filePage.musicAdapter.directoryItems : null
+                    visible: !filePage.musicAdapter || !filePage.musicAdapter.directoryCanNavigateBack
+                    function activateRow(rowIndex) {
+                        if (!filePage.musicAdapter) return;
+                        var row = model.get(rowIndex);
+                        if (row.isError || row.entityType !== 5) return;
+                        if (filePage.setMode === 2) {
+                            var selected = filePage.chooseIndex.indexOf(rowIndex);
+                            if (selected < 0) filePage.chooseIndex.push(rowIndex);
+                            else filePage.chooseIndex.splice(selected, 1);
+                            filePage.chooseIndexChanged();
+                            return;
+                        }
+                        if (filePage.musicAdapter.browseDirectory(row)) {
+                            window.exitIndex = 1;
+                            localFolderMusic.opened(row.title, "");
                         }
                     }
-                    QAlertDialog {
-                        id: editLocalDialog
-                        title: "重命名"
-                        message: "为文件夹重新命名新名称："
-                        isInput: true
-                        property int index
-                        onConfirm: {
-                            if(input!=="") {
-                                //localFolderModel.setProperty(index, "name", input)
-                                localFolderModel.renameFolder(editLocalDialog.index, input);
-                            } else {
-                                mainWarn.opened("请输入文件名",0);
-                            }
-                        }
+                    function manageRow(rowIndex) {
+                        if (!filePage.musicAdapter) return;
+                        var row = model.get(rowIndex);
+                        if (row.settingsPackageId)
+                            filePage.requestPluginSettings(row.settingsPackageId, row.settingsInstanceId || "");
                     }
+                    function loadMoreVisibleSections() { filePage.loadMoreDirectorySections(model); }
+                    onEnded: loadMoreVisibleSections()
                     delegate: Rectangle {
-                        id: listLocalfolder
                         height: 64
                         width: localFolderView.width - 16
                         radius: Style.settings.labelRadius
-                        color: "#00000000"//index % 2 === 0 ? Style.themes.blurOverlayColor : "transparent"
-                        Connections {
-                            target: filePage
-                            function onCancelChoose() {
-                                listLocalfolder.color = "#00000000"
-                            }
-                        }
-
+                        color: filePage.chooseIndex.indexOf(index) >= 0
+                               ? Style.themes.containColor : "transparent"
                         Rectangle {
                             anchors.fill: parent
-                            radius: Style.settings.labelRadius
+                            radius: parent.radius
                             color: Style.themes.hoverColor
-                            opacity: foldersArea.containsMouse ? 1 : 0
-                            z: 1
-                            Behavior on opacity { NumberAnimation { duration: 80 } }
+                            opacity: rootArea.containsMouse ? 1 : 0
                         }
-
-                        Rectangle {
-                            y: 8
-                            x: 8
-                            z: 4
-                            width: 48
-                            height: 48
-                            color: Style.themes.containColor
-                            radius: 10
-                            Text {
-                                anchors.fill: parent
-                                text: "\uf0f5"
-                                font.family: iconFont.name
-                                font.pixelSize: Style.settings.texticon
-                                color: Style.themes.fontColor
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-
-
-                        Label {
-                            x: 80
-                            y: 0
-                            z: 3
-                            width: 140
-                            height: 64
-                            text: model.name
+                        Text {
+                            x: 20; width: 44; height: parent.height
+                            text: "\uf0f5"
+                            font.family: iconFont.name
                             color: Style.themes.fontColor
-                            font.bold: true
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        Text {
+                            x: 80; width: parent.width - 185; height: parent.height
+                            text: model.title
+                            color: Style.themes.fontColor
                             font.pixelSize: Style.settings.textmain
                             verticalAlignment: Text.AlignVCenter
-                            visible: true
-                            Behavior on color { ColorAnimation { duration: 120 } }
+                            elide: Text.ElideRight
                         }
-
                         MouseArea {
-                            id: foldersArea
+                            id: rootArea
                             anchors.fill: parent
                             hoverEnabled: true
-                            onClicked: {
-                                if(filePage.setMode === 2) {
-                                    var isChoose = false;
-                                    if(listLocalfolder.color == "#00000000") {
-                                        listLocalfolder.color = Style.themes.containColor;
-                                        filePage.chooseIndex.push(model.folderId);
-                                    } else {
-                                        listLocalfolder.color = "#00000000";
-                                        filePage.chooseIndex = filePage.chooseIndex.filter(value => value !== model.folderId);
-                                    }
-                                } else {
-                                    localFileModel.folder = model.path;
-                                    window.exitIndex = 1
-                                    localFolderMusic.opened(model.name,"");
-                                }
-                            }
-
-                            Row {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 20
-                                spacing: 2
-                                z: 2
-                                y: 12
-                                height: 36
-                                SButton {
-                                    iconCharacter: "\uf050"
-                                    width: 36
-                                    height: 36
-                                    radius: 18
-                                    buttonColor: "transparent"
-                                    hoverColor: Qt.rgba(0.5,0.5,0.5,0.2)
-                                    shadowEnabled: false
-                                    onClicked: {
-                                    }
-                                }
-                                SButton {
-                                    iconCharacter: "\uf005"
-                                    width: 36
-                                    height: 36
-                                    radius: 18
-                                    buttonColor: "transparent"
-                                    hoverColor: Qt.rgba(0.5,0.5,0.5,0.2)
-                                    shadowEnabled: false
-
-                                    onClicked: {
-                                        editLocalDialog.input = model.name
-                                        editLocalDialog.index = model.folderId
-                                        editLocalDialog.open()
-                                    }
-                                }
-                                SButton {
-                                    iconCharacter: "\uf08e"
-                                    width: 36
-                                    height: 36
-                                    radius: 18
-                                    buttonColor: "transparent"
-                                    hoverColor: Qt.rgba(1.0,0.5,0.5,0.8)
-                                    shadowEnabled: false
-                                    onClicked: {
-                                        globalDialog.openSimpleDialog("删除", "这将删除本文件夹，无法恢复，是否删除？",
-                                            function() {
-                                                localFolderModel.deleteFolder(model.folderId);
-                                                Style.warned("成功删除一个本地文件夹",1);
-                                            }
-                                        );
-                                    }
-                                }
-                            }
+                            onClicked: localFolderView.activateRow(index)
+                        }
+                        SButton {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 20
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 36; height: 36
+                            iconCharacter: "\\uf005"
+                            visible: !!model.settingsPackageId
+                            onClicked: localFolderView.manageRow(index)
                         }
                     }
                 }
@@ -780,228 +707,115 @@ Item {
         id: localFolderMusic
         mainTarget: fileMain
         winIndex: 1
-
         content: Item {
             anchors.fill: parent
-            // 顶栏
             Row {
                 x: 144
                 y: 76
                 height: 36
                 spacing: 6
                 QButton {
-                    height: 36; width: 96
-                    radius: Style.settings.labelRadius
-                    iconCharacter: "\uf00e"
-                    text: "播放"
-                    shadowEnabled: false
-                    buttonColor: Style.themes.sideColor
+                    objectName: "pluginDirectoryBack"
+                    text: "返回"
+                    iconCharacter: "\uf053"
+                    height: 36
                     onClicked: {
+                        if (!filePage.musicAdapter || !filePage.musicAdapter.directoryBack()) return;
+                        if (!filePage.musicAdapter.directoryCanNavigateBack)
+                            localFolderMusic.closed();
                     }
                 }
-                SButton {
-                    width: 36
+                QButton {
+                    text: "刷新"
                     height: 36
-                    radius: Style.settings.labelRadius
-                    iconCharacter: "\uf095"
-                    shadowEnabled: false
-                    buttonColor: Style.themes.sideColor
-                    onClicked: {
-                    }
-                }
-                SButton {
-                    width: 36
-                    height: 36
-                    radius: Style.settings.labelRadius
-                    iconCharacter: "\uf0c8"
-                    shadowEnabled: false
-                    buttonColor: Style.themes.sideColor
-                    onClicked: {
-                    }
+                    onClicked: if (filePage.musicAdapter) filePage.musicAdapter.refreshDirectories()
                 }
             }
-
             QButton {
                 x: localFolderMusic.width - width - 24
                 y: 44
                 height: 40
-                radius: 20
-                z: 10
-                text: "文件夹中显示"
-                iconCharacter: "\uf0fb"
-                onClicked: {
-                    Qt.openUrlExternally(localFileModel.folder);
-                }
+                text: "文件位置由插件管理"
+                enabled: false
+                ToolTip.visible: hovered
+                ToolTip.text: "目录身份不是文件打开权限，请在插件设置中管理目录"
             }
-
+            Text {
+                anchors.centerIn: parent
+                visible: filePage.musicAdapter && filePage.musicAdapter.directoryItems.count === 0
+                text: filePage.musicAdapter && filePage.musicAdapter.directoryState === "failed"
+                      ? "目录加载失败，请重试" : "目录中没有歌曲"
+                color: Style.themes.fontColor
+                font.pixelSize: Style.settings.textmain
+            }
             QListView {
                 id: localFileView
+                objectName: "pluginDirectoryContents"
                 x: 24
                 y: 128
-                width: folderMusic.width - 32
-                height: folderMusic.height - 128
-                model: localFileModel
+                width: localFolderMusic.width - 32
+                height: localFolderMusic.height - 128
+                model: filePage.musicAdapter ? filePage.musicAdapter.directoryItems : null
                 clip: true
-                //reuseItems: true
                 headerModel: ["标题","","","菜单"]
-                populate: Transition {
-                    id: localFileLoadAnime
-                    SequentialAnimation {
-                        PropertyAction {
-                            property: "opacity"
-                            value: 0
-                        }
-                        PauseAnimation {
-                            duration: localFileLoadAnime.ViewTransition.index * 80
-                        }
-                        ParallelAnimation {
-                            NumberAnimation {
-                                properties: "x"
-                                from: 400
-                                to: 0
-                                duration: 350
-                                easing.type: Easing.OutExpo
-                            }
-                            NumberAnimation {
-                                properties: "opacity"
-                                from: 0
-                                to: 1
-                                duration: 350
-                                easing.type: Easing.OutExpo
-                            }
-                        }
-                    }
+                function activateRow(rowIndex) {
+                    if (!filePage.musicAdapter) return;
+                    var row = model.get(rowIndex);
+                    if (row.entityType === 5)
+                        filePage.musicAdapter.browseDirectory(row);
+                    else if (row.entityType === 0)
+                        filePage.musicAdapter.play(row);
                 }
+                function enqueueRow(rowIndex) {
+                    if (filePage.musicAdapter)
+                        filePage.musicAdapter.enqueue(model.get(rowIndex));
+                }
+                onEnded: filePage.loadMoreDirectorySections(model)
                 delegate: Rectangle {
-                    id: listLocalFile
                     height: 60
                     width: localFileView.width - 16
                     radius: Style.settings.labelRadius
-                    color: mainMedia.source == model.fileUrl ? Style.themes.containColor : "transparent"
-
-                    Behavior on color { ColorAnimation { duration: 120 } }
-
-                    Rectangle {
-                        y: 8
-                        x: 8
-                        z: 4
-                        width: 44
-                        height: 44
-                        color: Style.themes.containColor
-                        radius: 10
-                        Text {
-                            anchors.fill: parent
-                            text: "\uf044"
-                            font.family: iconFont.name
-                            font.pixelSize: Style.settings.texticon
-                            color: Style.themes.fontColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                    }
-
+                    color: "transparent"
                     Rectangle {
                         anchors.fill: parent
-                        radius: Style.settings.labelRadius
+                        radius: parent.radius
                         color: Style.themes.hoverColor
-                        opacity: localFileArea.containsMouse ? 1 : 0
-                        z: 1
-                        Behavior on opacity { NumberAnimation { duration: 80 } }
+                        opacity: contentArea.containsMouse ? 1 : 0
                     }
-
-
-                    Label {
-                        x: 80
-                        y: 0
-                        z: 3
-                        width: 140
-                        height: 60
-                        text: model.fileName
+                    Text {
+                        x: 20; width: 44; height: parent.height
+                        text: model.entityType === 5 ? "\uf0f5" : "\uf044"
+                        font.family: iconFont.name
                         color: Style.themes.fontColor
-                        font.bold: true
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    Text {
+                        x: 80; width: parent.width - 185; height: parent.height
+                        text: model.title
+                        color: Style.themes.fontColor
                         font.pixelSize: Style.settings.textmain
                         verticalAlignment: Text.AlignVCenter
-                        visible: true
-                        Behavior on color { ColorAnimation { duration: 120 } }
+                        elide: Text.ElideRight
                     }
-
                     MouseArea {
-                        id: localFileArea
+                        id: contentArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: {
-                            window.playLocalSong(model.fileUrl.toString(), model.fileName);
-                            var musicName = model.fileName;
-                            var musicPath = model.fileUrl.toString();
-                            var listIndex = listLocalFile.findIndexByValue(playListModel, "name", musicName);
-                            if (listIndex == -1) {
-                                playListModel.append({ name: musicName, path: musicPath, songer: "", source: -1 });
-                                playListModel.playListIndex = playListModel.count - 1;
-                            }
-                        }
-                        Row {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 16
-                            spacing: 2
-                            y: 12
-                            height: 36
-                            SButton {
-                                iconCharacter: "\uf095"
-                                width: 36
-                                height: 36
-                                radius: 18
-                                buttonColor: "transparent"
-                                hoverColor: Qt.rgba(0.5,0.5,0.5,0.2)
-                                shadowEnabled: false
-                                onClicked: {
-                                    var musicName = model.fileName;
-                                    var musicPath = model.fileUrl.toString();
-                                    var listIndex = listLocalFile.findIndexByValue(playListModel, "name", musicName);
-                                    if (listIndex == -1) {
-                                        playListModel.append({ name: musicName, path: musicPath, songer: "", source: -1 });
-                                    }
-                                }
-                            }
-                            SButton {
-                                iconCharacter: "\uf107"
-                                width: 36
-                                height: 36
-                                radius: 18
-                                buttonColor: "transparent"
-                                hoverColor: Qt.rgba(0.5,0.5,0.5,0.2)
-                                shadowEnabled: false
-                                onClicked: {
-                                }
-                            }
-                            SButton {
-                                iconCharacter: "\uf08e"
-                                width: 36
-                                height: 36
-                                radius: 18
-                                buttonColor: "transparent"
-                                hoverColor: Qt.rgba(1.0,0.5,0.5,0.8)
-                                shadowEnabled: false
-                                onClicked: {
-                                    myfileModel.get(filePage.folderNumber).music.remove(index);
-                                }
-                            }
-                        }
+                        onClicked: localFileView.activateRow(index)
                     }
-
-                    function findIndexByValue(model, key, targetValue) {
-                        for (var i = 0; i < model.count; i++) {
-                            var element = model.get(i);
-                            if (element[key] === targetValue) {
-                                return i; // 返回找到的索引
-                            }
-                        }
-                        return -1; // 未找到返回 -1
+                    SButton {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 20
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 36; height: 36
+                        iconCharacter: "\uf095"
+                        visible: model.entityType === 0
+                        onClicked: localFileView.enqueueRow(index)
                     }
                 }
             }
         }
     }
-
     // 选择模式
     Rectangle {
         id: chooseArea
@@ -1049,7 +863,7 @@ Item {
             radius: 20
             buttonColor: "#fa4642"
             textColor: Style.themes.primaryColor
-            text: "删除"
+            text: filePage.setMode === 2 ? "管理" : "删除"
             onClicked: {
                 switch(filePage.setMode) {
                 case 1:
@@ -1064,15 +878,8 @@ Item {
                     );
                     break;
                 case 2:
-                    globalDialog.openSimpleDialog("删除", "这将删除这些文件夹，无法恢复，是否删除？",
-                        function() {
-                            for(var i=0;i<filePage.chooseIndex.length;i++) {
-                                localFolderModel.deleteFolder(localFolderModel[filePage.chooseIndex[i]].folderId);
-                            }
-                            filePage.chooseIndex = [];
-                            Style.warned("成功删除" + filePage.chooseIndex.length + "个本地文件夹",1);
-                        }
-                    );
+                    if (filePage.chooseIndex.length > 0)
+                        localFolderView.manageRow(filePage.chooseIndex[0]);
                     break;
                 default:
                     break;

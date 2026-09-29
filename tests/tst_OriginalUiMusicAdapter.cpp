@@ -279,6 +279,20 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void directoryEntityOffersGenericBrowseCapability()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath("settings.ini"), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        accept(hub.category(), resultWith({makeItem(MediaEntityTypeV2::Directory,
+            "other", "other/one", "opaque-directory")}, "directory"));
+        QCOMPARE(adapter.categoryItems()->rowCount(), 1);
+        const auto capabilities = adapter.capabilities(adapter.categoryItems()->get(0));
+        QVERIFY(capabilities.value("canBrowse").toBool());
+    }
     void flattensSectionsAndKeepsFullItemPrivate()
     {
         QTemporaryDir dir;

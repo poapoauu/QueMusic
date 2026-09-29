@@ -35,11 +35,18 @@ public:
             PageSectionV2 section;
             section.kind = kind; section.sectionId = QString::number(int(kind));
             MediaItemV2 item;
-            item.ref = {"task7", config.sourceInstanceId, config.accountId, MediaEntityTypeV2::Track,
-                        QString::number(requests.size())};
+            const bool rootDirectories = query.filters.value("entityType").toInt() ==
+                int(MediaEntityTypeV2::Directory);
+            const bool insideDirectory = query.filters.contains("directoryId");
+            const auto entityType = rootDirectories || insideDirectory
+                ? MediaEntityTypeV2::Directory : MediaEntityTypeV2::Track;
+            item.ref = {"task7", config.sourceInstanceId, config.accountId, entityType,
+                        rootDirectories ? "root-" + config.accountId
+                                        : insideDirectory ? "child-" + config.accountId
+                                                          : QString::number(requests.size())};
             item.title = query.searchText.isEmpty() ? config.accountId : query.searchText;
             section.items = {item};
-            section.hasMore = query.cursor.isEmpty();
+            section.hasMore = !rootDirectories && query.cursor.isEmpty();
             section.nextCursor = section.hasMore ? "provider-" + section.sectionId : QString{};
             result.sections.append(section);
         }
@@ -126,6 +133,18 @@ static int rowFor(MusicPageModel *model, PageSectionKindV2 kind)
 class MusicHubTest final : public QObject {
     Q_OBJECT
 private slots:
+    void directoryBrowseUsesGenericEntityFilter()
+    {
+        HubHarness h; QVERIFY(h.init());
+        h.hub->setSelectedSourceInstanceId("task7/home");
+        QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Directory, "root-home")));
+        QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+        const auto request = h.requests().last().toMap();
+        QCOMPARE(request.value("filters").toMap().value("directoryId").toString(),
+                 QString("root-home"));
+        QCOMPARE(request.value("scope").toString(), QString("task7/home"));
+        QVERIFY(h.hub->navigateBack());
+    }
     void contentRefreshInvalidatesOnlyMatchingInstance()
     {
         HubHarness h; QVERIFY(h.init());
@@ -297,7 +316,12 @@ private slots:
         QCOMPARE(h.requests().last().toMap()["filters"].toMap(), QVariantMap({{"playlistId", "entity"}}));
         const auto context = h.hub->categoryContext();
         QVERIFY(!h.hub->browse(item(MediaEntityTypeV2::Track)));
-        QVERIFY(!h.hub->browse(item(MediaEntityTypeV2::Directory)));
+        QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Directory)));
+        QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+        QCOMPARE(h.requests().last().toMap()["filters"].toMap(),
+                 QVariantMap({{"directoryId", "entity"}}));
+        QVERIFY(h.hub->navigateBack());
+        QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
         auto foreign = item(MediaEntityTypeV2::Album); auto ref = foreign["ref"].toMap(); ref["accountId"] = "office"; foreign["ref"] = ref;
         QVERIFY(!h.hub->browse(foreign)); QCOMPARE(h.hub->categoryContext(), context);
         h.hub->setSelectedSourceInstanceId("task7/office");

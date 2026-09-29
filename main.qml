@@ -77,6 +77,18 @@ Window {
         }
     }
 
+    function openPluginSettings(packageId, instanceId) {
+        settingsView.pendingPluginPackageId = packageId;
+        settingsView.pendingPluginInstanceId = instanceId;
+        settingsView.active = true;
+        if (settingsView.item) {
+            settingsView.visible = true;
+            settingsView.item.openPluginSettings(packageId, instanceId);
+            settingsView.pendingPluginPackageId = "";
+            settingsView.pendingPluginInstanceId = "";
+        }
+    }
+
     Connections {
         target: MusicApi
         function onLocalLyricsReady(filePath, lyrics) {
@@ -627,6 +639,8 @@ Window {
             z: 1
             id: mainContent
             musicAdapter: window.musicAdapter
+            onRequestPluginSettings: (packageId, instanceId) =>
+                window.openPluginSettings(packageId, instanceId)
             playbackAdapter: window.playbackAdapter
             x: sidebar.width
             y: 0
@@ -794,6 +808,8 @@ Window {
         visible: false
         z: 6
         property bool openNavidromeAccountWhenLoaded: false
+        property string pendingPluginPackageId: ""
+        property string pendingPluginInstanceId: ""
         source: "qrc:/QueMusic/SettingsView.qml"//"qrc:/QueMusic/SettingsView.qml"
         opacity: visible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 120 } }
@@ -803,6 +819,11 @@ Window {
             if (openNavidromeAccountWhenLoaded) {
                 item.editNavidromeAccount(null);
                 openNavidromeAccountWhenLoaded = false;
+            }
+            if (pendingPluginPackageId) {
+                item.openPluginSettings(pendingPluginPackageId, pendingPluginInstanceId);
+                pendingPluginPackageId = "";
+                pendingPluginInstanceId = "";
             }
         }
     }

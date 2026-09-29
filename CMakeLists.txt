@@ -381,7 +381,9 @@ target_include_directories(quemusic_qt_playback_controller PUBLIC
 target_link_libraries(quemusic_qt_playback_controller PUBLIC
     quemusic_playback_coordinator Qt6::Multimedia)
 
-add_library(quemusic_music_hub STATIC core/music/MusicHub.cpp core/music/MusicHub.h)
+add_library(quemusic_music_hub STATIC
+    core/music/MusicHub.cpp core/music/MusicHub.h
+    core/music/DirectoryLibraryController.cpp core/music/DirectoryLibraryController.h)
 target_compile_features(quemusic_music_hub PUBLIC cxx_std_17)
 target_link_libraries(quemusic_music_hub PUBLIC quemusic_music_repository quemusic_music_page_model)
 
@@ -1527,4 +1529,39 @@ if(BUILD_TESTING)
         quemusic_legacy_local_folder_migration Qt6::Test)
     add_test(NAME quemusic_legacy_local_folder_migration_test
         COMMAND quemusic_legacy_local_folder_migration_test)
+    qt_add_executable(quemusic_directory_library_controller_test
+        tests/tst_DirectoryLibraryController.cpp)
+    target_link_libraries(quemusic_directory_library_controller_test PRIVATE
+        quemusic_music_hub Qt6::Test)
+    target_compile_definitions(quemusic_directory_library_controller_test PRIVATE
+        QUEMUSIC_TASK7_PACKAGES="${QUEMUSIC_TASK7_PACKAGE_ROOT}")
+    add_dependencies(quemusic_directory_library_controller_test quemusic_hub_fixture)
+    add_test(NAME quemusic_directory_library_controller_test
+        COMMAND quemusic_directory_library_controller_test)
+    qt_add_executable(quemusic_original_ui_local_directories_test
+        tests/tst_OriginalUiLocalDirectories.cpp)
+    target_link_libraries(quemusic_original_ui_local_directories_test PRIVATE
+        quemusic_original_ui_music_adapter Qt6::Test)
+    target_compile_definitions(quemusic_original_ui_local_directories_test PRIVATE
+        QUEMUSIC_TASK7_PACKAGES="${QUEMUSIC_TASK7_PACKAGE_ROOT}")
+    add_dependencies(quemusic_original_ui_local_directories_test quemusic_hub_fixture)
+    add_test(NAME quemusic_original_ui_local_directories_test
+        COMMAND quemusic_original_ui_local_directories_test)
+    qt_add_executable(quemusic_local_directories_qml_test
+        tests/tst_LocalDirectoriesQml.cpp)
+    qt_add_resources(quemusic_local_directories_qml_test
+        "quemusic_local_directories_qml_test_resources"
+        PREFIX "/QueMusic" FILES
+            ${QML_COMPONENTS}
+            components/PluginSettingsText.js
+            pages/FilePage.qml
+            resources/app/musicpic.png
+            tests/qml/tst_LocalDirectories.qml)
+    target_link_libraries(quemusic_local_directories_qml_test PRIVATE
+        quemusic_original_ui_music_adapter Qt6::Qml Qt6::Quick Qt6::Test)
+    add_test(NAME quemusic_local_directories_qml_test
+        COMMAND quemusic_local_directories_qml_test)
+    set_tests_properties(quemusic_local_directories_qml_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QML_IMPORT_PATH=${CMAKE_CURRENT_BINARY_DIR}")
 endif()

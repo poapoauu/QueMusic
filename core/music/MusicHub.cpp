@@ -1,5 +1,6 @@
 #include "MusicHub.h"
 #include "MediaAssetRepository.h"
+#include "DirectoryLibraryController.h"
 #include "PageRepository.h"
 #include <QDir>
 #include <QSettings>
@@ -92,6 +93,7 @@ struct MusicHub::Impl {
     ArtworkCache artwork;
     std::array<Page, 4> pages;
     std::unique_ptr<PageRepository> repository;
+    std::unique_ptr<DirectoryLibraryController> directory;
     std::unique_ptr<MediaAssetRepository> assets;
     std::unique_ptr<MediaActionRouter> router;
     QHash<QUuid, Pending> pending;
@@ -107,6 +109,7 @@ struct MusicHub::Impl {
         : q(owner), sources(registry), scope(store), artwork(cachePath(settings, "artwork-v2")),
           repository(std::make_unique<PageRepository>(registry, &composer, owner,
                      std::make_shared<PageCache>(cachePath(settings, "pages-v2")))),
+          directory(std::make_unique<DirectoryLibraryController>(registry, repository.get(), owner)),
           assets(std::make_unique<MediaAssetRepository>(registry, &artwork, owner)),
           router(std::make_unique<MediaActionRouter>(registry, owner))
     {
@@ -405,13 +408,19 @@ MusicHub::~MusicHub()
     disconnect(d->repository.get(), nullptr, this, nullptr);
     disconnect(d->assets.get(), nullptr, this, nullptr);
     d->pending.clear(); d->assetRequests.clear();
-    d->router.reset(); d->assets.reset(); d->repository.reset();
+    d->router.reset(); d->assets.reset(); d->directory.reset(); d->repository.reset();
 }
 MusicPageModel *MusicHub::recommendation() const { return d->pages[0].model.get(); }
 MusicPageModel *MusicHub::category() const { return d->pages[1].model.get(); }
 MusicPageModel *MusicHub::favorites() const { return d->pages[2].model.get(); }
 MusicPageModel *MusicHub::searchResults() const { return d->pages[3].model.get(); }
 MediaActionRouter *MusicHub::actions() const { return d->router.get(); }
+DirectoryLibraryController *MusicHub::directoryLibrary() const { return d->directory.get(); }
+bool MusicHub::sourcePluginLoaded(const QString &packageId) const
+{
+    return d->sources && d->sources->pluginManager()
+        && d->sources->pluginManager()->plugin(packageId).state == PluginState::Loaded;
+}
 QVariantList MusicHub::sourceOptions() const { return d->options; }
 QString MusicHub::selectedSourceInstanceId() const { return d->selected(); }
 void MusicHub::setSelectedSourceInstanceId(const QString &id) { if (d->scope) d->scope->setSelectedSourceInstanceId(id); }
@@ -455,6 +464,7 @@ bool MusicHub::browse(const QVariantMap &item)
     case MediaEntityTypeV2::Artist: query.filters = {{"artistId", ref.entityId}}; query.section = PageSectionKindV2::Albums; break;
     case MediaEntityTypeV2::Playlist: query.filters = {{"playlistId", ref.entityId}}; break;
     case MediaEntityTypeV2::Genre: query.filters = {{"genre", ref.entityId}}; break;
+    case MediaEntityTypeV2::Directory: query.filters = {{"directoryId", ref.entityId}}; break;
     default: return false;
     }
     // Preserve the full model item shape through the existing sanitizer, rather

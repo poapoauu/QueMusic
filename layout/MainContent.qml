@@ -9,6 +9,7 @@ Rectangle {
     id: mainContent
     property var musicAdapter: null
     property var playbackAdapter: null
+    signal requestPluginSettings(string packageId, string instanceId)
     color: Style.themes.secondaryColor //Style.themes.blurOverlayColor
     readonly property int pageHeight: height - 60
 
@@ -145,7 +146,16 @@ Rectangle {
         visible: false
         active: false
         source: "qrc:/QueMusic/pages/FilePage.qml"
-        onLoaded: { visible = true; mainContent.finishedLoaderPage(4) }
+        onLoaded: { visible = true;
+            item.musicAdapter = mainContent.musicAdapter;
+            mainContent.finishedLoaderPage(4);
+        }
+        Connections {
+            target: filePage.item
+            function onRequestPluginSettings(packageId, instanceId) {
+                mainContent.requestPluginSettings(packageId, instanceId);
+            }
+        }
     }
 
     // 下载

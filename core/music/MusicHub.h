@@ -6,6 +6,7 @@
 #include <memory>
 
 class QSettings;
+class DirectoryLibraryController;
 
 // Owner-thread QML boundary. Registry/scope/settings are borrowed and must
 // outlive synchronous calls. Owns models, router, repositories and caches;
@@ -33,6 +34,8 @@ public:
     MusicPageModel *favorites() const;
     MusicPageModel *searchResults() const;
     MediaActionRouter *actions() const;
+    DirectoryLibraryController *directoryLibrary() const;
+    bool sourcePluginLoaded(const QString &packageId) const;
     QVariantList sourceOptions() const;
     QString selectedSourceInstanceId() const;
     void setSelectedSourceInstanceId(const QString &id);

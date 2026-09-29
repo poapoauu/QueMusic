@@ -11,6 +11,13 @@ import QueMusic 1.0
 Item {
     id: settingsView
 
+    function openPluginSettings(packageId, instanceId) {
+        navListViewSettings.setChoiceIndex = 5;
+        leftSidebarSettings.index1ed(5);
+        modset.selectPlugin(packageId);
+        modset.selectInstance(instanceId || "");
+    }
+
 
     // 账号登录面板展开状态
     property bool neteaseShowLogin: false
