@@ -140,9 +140,15 @@ void DirectoryLibraryController::receive(const QUuid &id, quint64 generation,
         PageSectionV2 section;
         section.sectionId = request.sectionId;
         section.kind = PageSectionKindV2::Tracks;
-        section.titleKey = QStringLiteral("music.directoryFailed");
-        m_origins.insert(section.sectionId, request.query);
-        m_model->applyQueryFailure(generation, section, *failure);
+        if (failure->kind == SourceErrorKindV2::Unsupported && m_stack.isEmpty()) {
+            PageResultV2 empty;
+            empty.sections.append(section);
+            m_model->applyResult(generation, empty);
+        } else {
+            section.titleKey = QStringLiteral("music.directoryFailed");
+            m_origins.insert(section.sectionId, request.query);
+            m_model->applyQueryFailure(generation, section, *failure);
+        }
     } else {
         PageResultV2 projected = result;
         projected.sections.clear();

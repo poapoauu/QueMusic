@@ -1575,6 +1575,19 @@ if(BUILD_TESTING)
             "-Dpackage_probe=$<TARGET_FILE:quemusic_local_source_package_probe>"
             "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_local_source>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyInstalledLocalSourcePackage.cmake")
+    if(APPLE)
+        add_test(NAME quemusic_macos_local_relocated_bundle_test
+            COMMAND ${CMAKE_COMMAND}
+                "-Dapp_path=$<TARGET_BUNDLE_DIR:QueMusic>"
+                "-Ddeploy_tool=$<TARGET_FILE_DIR:Qt6::qmake>/macdeployqt"
+                "-Dpackage_probe=$<TARGET_FILE:quemusic_local_source_package_probe>"
+                "-Dlibrary_name=$<TARGET_FILE_NAME:quemusic_local_source>"
+                "-Dwork_root=${CMAKE_BINARY_DIR}/phase3-local-relocation"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyDeployedLocalSourceBundle.cmake")
+        set_tests_properties(quemusic_macos_local_relocated_bundle_test PROPERTIES
+            DEPENDS quemusic_macos_local_bundle_plugin_incremental_test
+            RUN_SERIAL TRUE)
+    endif()
     add_executable(quemusic_legacy_local_folder_migration_test
         tests/tst_LegacyLocalFolderMigration.cpp)
     target_include_directories(quemusic_legacy_local_folder_migration_test PRIVATE

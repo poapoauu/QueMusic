@@ -5,6 +5,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QSignalSpy>
+#include <QSet>
 #include <QTest>
 
 class DirectoryQmlApi final : public QObject {
@@ -44,12 +45,18 @@ public:
     Q_INVOKABLE QUuid play(const QVariantMap &) { ++plays; return QUuid::createUuid(); }
     Q_INVOKABLE QUuid enqueue(const QVariantMap &) { ++enqueues; return QUuid::createUuid(); }
     Q_INVOKABLE void refreshDirectories() { ++refreshes; }
-    Q_INVOKABLE void loadMoreDirectories(const QString &) { ++more; }
+    Q_INVOKABLE void loadMoreDirectories(const QString &sectionId) {
+        if (!requestedSections.contains(sectionId)) {
+            requestedSections.insert(sectionId);
+            ++more;
+        }
+    }
     Q_INVOKABLE bool pluginAvailable(const QString &) const { return installed; }
     OnlineListModel rows;
     QString state = "ready";
     bool canBack = false;
     bool installed = true;
+    QSet<QString> requestedSections;
     int activations = 0, browses = 0, backs = 0, plays = 0, enqueues = 0, refreshes = 0, more = 0;
 signals:
     void directoryChanged();
@@ -58,8 +65,10 @@ signals:
 class DirectoryQmlMusicApi final : public QObject {
     Q_OBJECT
     Q_PROPERTY(int songSource MEMBER songSource NOTIFY songSourceChanged)
+    Q_PROPERTY(bool loadState MEMBER loadState)
 public:
     int songSource = 0;
+    bool loadState = false;
 signals:
     void songSourceChanged();
 };
@@ -152,6 +161,19 @@ private slots:
                                            {"sectionId", "directory/b"}, {"hasMore", true}}});
         QVERIFY(QMetaObject::invokeMethod(view, "loadMoreVisibleSections"));
         QCOMPARE(adapter.more, 2);
+        adapter.more = 0;
+        adapter.requestedSections.clear();
+        musicApi.loadState = true; // The legacy list gate must not block Directory pagination.
+        emit adapter.directoryChanged();
+        QTRY_COMPARE(adapter.more, 2);
+        musicApi.loadState = false;
+        adapter.rows.setItems({QVariantMap{{"title", "目录加载失败"}, {"isError", true}}});
+        emit adapter.directoryChanged();
+        auto *retry = filePage->findChild<QObject *>("directoryRetry");
+        QVERIFY(retry);
+        QTRY_VERIFY(retry->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
+        QCOMPARE(adapter.refreshes, 1);
         QCOMPARE(window.legacyPlays, 0);
         myFolders.setItems({QVariantMap{{"name", "Personal collection"}}});
         QCOMPARE(myFolders.rowCount(), 1);

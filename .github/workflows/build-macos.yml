@@ -77,6 +77,8 @@ jobs:
           APP_PATH=$(find build -maxdepth 2 -name "*.app" -type d | head -n1)
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           "$QT_PREFIX/bin/macdeployqt" "$APP_PATH"
+          cmake -Dapp_path="$APP_PATH" -Dlibrary_name=libquemusic_local_source.so \
+            -P cmake/VerifyDeployedLocalSourceBundle.cmake
           codesign --force --deep --sign - "$APP_PATH"
 
       - name: Create DMG

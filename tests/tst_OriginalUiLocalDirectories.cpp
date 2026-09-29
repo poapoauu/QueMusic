@@ -17,6 +17,30 @@ public:
 class OriginalUiLocalDirectoriesTest final : public QObject {
     Q_OBJECT
 private slots:
+    void unsupportedInstanceDoesNotAppearAsBrokenDirectory()
+    {
+        QTemporaryDir files;
+        QVERIFY(files.isValid());
+        QSettings settings(files.filePath("accounts.ini"), QSettings::IniFormat);
+        LocalDirectorySecrets secrets;
+        SourceAccountStore accounts(&settings, &secrets);
+        PluginManager plugins;
+        plugins.addSearchPath(QUEMUSIC_TASK7_PACKAGES);
+        QCOMPARE(plugins.discover(), 1);
+        QVERIFY(plugins.load("org.quemusic.source.task7"));
+        QVERIFY(accounts.saveResolvedV2({"task7", "home", "Home", {}, {}}));
+        QVERIFY(accounts.saveResolvedV2({"task7", "office", "Office", {}, {}}));
+        SourceRegistry registry(&plugins, &accounts);
+        QVERIFY(registry.sessionFor("task7/office"));
+        registry.sessionFor("task7/office")->setProperty("unsupported", true);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(&registry, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        adapter.activateDirectories();
+        QTRY_COMPARE(hub.directoryLibrary()->model()->state(), PageLoadStateV2::Ready);
+        QTRY_COMPARE(adapter.directoryItems()->rowCount(), 1);
+        QVERIFY(!adapter.directoryItems()->get(0).value("isError").toBool());
+    }
     void failingInstanceRemainsVisibleBesideHealthyRoot()
     {
         QTemporaryDir files;

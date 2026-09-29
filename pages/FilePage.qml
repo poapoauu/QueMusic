@@ -16,10 +16,20 @@ Item {
         var seen = {};
         for (var i = 0; i < rows.count; ++i) {
             var row = rows.get(i);
-            if (!row.hasMore || row.loadingMore || !row.sectionId || seen[row.sectionId]) continue;
+            if (!row.hasMore || row.loadingMore || !row.sectionId || seen[row.sectionId]
+                || (row.error && Object.keys(row.error).length > 0)) continue;
             seen[row.sectionId] = true;
             musicAdapter.loadMoreDirectories(row.sectionId);
         }
+    }
+    function directoryHasError() {
+        var rows = musicAdapter ? musicAdapter.directoryItems : null;
+        if (!rows) return false;
+        for (var i = 0; i < rows.count; ++i) {
+            var row = rows.get(i);
+            if (row.isError || (row.error && Object.keys(row.error).length > 0)) return true;
+        }
+        return false;
     }
     Connections {
         target: window
@@ -371,6 +381,13 @@ Item {
                         iconCharacter: "\uf0f1"
                         onClicked: filePage.requestPluginSettings("org.quemusic.source.local", "")
                     }
+                    QButton {
+                        objectName: "directoryRetry"
+                        height: 38
+                        text: "重试"
+                        visible: filePage.directoryHasError()
+                        onClicked: if (filePage.musicAdapter) filePage.musicAdapter.refreshDirectories()
+                    }
                 }
 
                 QListView {
@@ -405,7 +422,14 @@ Item {
                             filePage.requestPluginSettings(row.settingsPackageId, row.settingsInstanceId || "");
                     }
                     function loadMoreVisibleSections() { filePage.loadMoreDirectorySections(model); }
-                    onEnded: loadMoreVisibleSections()
+                    onAtYEndChanged: if (atYEnd) loadMoreVisibleSections()
+                    Connections {
+                        target: filePage.musicAdapter
+                        function onDirectoryChanged() {
+                            if (localFolderView.visible && localFolderView.atYEnd)
+                                Qt.callLater(localFolderView.loadMoreVisibleSections);
+                        }
+                    }
                     delegate: Rectangle {
                         height: 64
                         width: localFolderView.width - 16
@@ -770,7 +794,14 @@ Item {
                     if (filePage.musicAdapter)
                         filePage.musicAdapter.enqueue(model.get(rowIndex));
                 }
-                onEnded: filePage.loadMoreDirectorySections(model)
+                onAtYEndChanged: if (atYEnd) filePage.loadMoreDirectorySections(model)
+                Connections {
+                    target: filePage.musicAdapter
+                    function onDirectoryChanged() {
+                        if (localFileView.visible && localFileView.atYEnd)
+                            Qt.callLater(filePage.loadMoreDirectorySections, localFileView.model);
+                    }
+                }
                 delegate: Rectangle {
                     height: 60
                     width: localFileView.width - 16

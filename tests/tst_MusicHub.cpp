@@ -25,6 +25,7 @@ public:
         setProperty("requests", requests);
         emit requestStarted(id);
         if (property("hold").toBool()) return id;
+        if (property("unsupported").toBool()) { emit requestFailed(id, {SourceErrorKindV2::Unsupported}); return id; }
         if (property("fail").toBool()) { emit requestFailed(id, {SourceErrorKindV2::Network}); return id; }
         QList<PageSectionKindV2> kinds{query.section};
         if (property("bundle").toBool() && query.cursor.isEmpty()
