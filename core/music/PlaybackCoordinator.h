@@ -1,6 +1,7 @@
 #pragma once
 #include "SourceRegistry.h"
 #include "PlaybackSink.h"
+#include "QueueHistoryTypes.h"
 #include <memory>
 
 // Owner-thread API. Registry/plugin manager and borrowed sink must outlive calls.
@@ -20,6 +21,7 @@ public:
     Q_INVOKABLE QUuid play(const QVariantMap &item);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &item);
     Q_INVOKABLE QUuid playQueueEntry(int index);
+    Q_INVOKABLE bool removeOccurrence(const QUuid &id);
     Q_INVOKABLE bool stop();
     Q_INVOKABLE bool reportPosition(QUuid generation, qint64 positionMs);
     Q_INVOKABLE bool reportStopped(QUuid generation);
@@ -28,6 +30,8 @@ public:
     int currentIndex() const;
     QUuid currentGeneration() const;
     QUuid currentOccurrence() const;
+    QList<QueueOccurrence> exportQueue() const;
+    bool restoreQueue(const QList<QueueOccurrence> &items);
 signals:
     void queueChanged();
     void currentChanged();
@@ -47,6 +51,7 @@ private:
     void settle(const std::shared_ptr<Active> &a, const std::shared_ptr<Pending> &p);
     void end(const std::shared_ptr<Active> &a, const QString &error = {});
     void notifyCurrent();
+    QVariantMap publicEntry(const std::shared_ptr<Entry> &entry) const;
     QPointer<SourceRegistry> m_sources;
     QPointer<PlaybackSink> m_sink;
     QList<std::shared_ptr<Entry>> m_queue;

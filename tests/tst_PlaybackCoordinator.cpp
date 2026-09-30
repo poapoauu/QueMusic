@@ -89,6 +89,7 @@ signals:
 #else
 #include "PlaybackCoordinator.h"
 #include "PlaybackSink.h"
+#include "QueueHistoryTypes.h"
 #include "SourceAccountStore.h"
 #include <QSettings>
 #include <QTemporaryDir>
@@ -140,9 +141,104 @@ static QVariantMap item(qint64 duration=10000,QString account="home") {
     return {{"ref",mediaRefV2ToVariantMap({"task12c","task12c/"+account,account,MediaEntityTypeV2::Track,"42"})},
         {"availableActions",actions},{"title","Track"},{"durationMs",duration},{"url","private"},{"headers",QVariantMap{{"secret","private"}}}};
 }
+static QueueOccurrence savedItem(QString account="home") {
+    QueueOccurrence out;
+    out.occurrenceId=QUuid::createUuid();
+    out.ref=mediaRefV2FromVariantMap(item(10000,account).value("ref").toMap());
+    out.title="Restored Track";
+    out.artists={"Artist"};
+    out.album="Album";
+    out.durationMs=10000;
+    out.playableAtEnqueue=true;
+    return out;
+}
 class PlaybackCoordinatorTest : public QObject {
     Q_OBJECT
 private slots:
+    void restoresDuplicateOccurrencesAndRemovesById() {
+        Harness h; QVERIFY(h.init());
+        auto first=savedItem(), second=savedItem();
+        QVERIFY(first.occurrenceId!=second.occurrenceId);
+        QSignalSpy changed(&h.coordinator,&PlaybackCoordinator::queueChanged);
+        QVERIFY(h.coordinator.restoreQueue({first,second}));
+        QTRY_COMPARE(changed.size(),1);
+        const auto exported=h.coordinator.exportQueue();
+        QCOMPARE(exported.size(),2);
+        QCOMPARE(exported.at(0).occurrenceId,first.occurrenceId);
+        QCOMPARE(exported.at(1).occurrenceId,second.occurrenceId);
+        QCOMPARE(exported.at(0).ref,exported.at(1).ref);
+        QVERIFY(h.coordinator.removeOccurrence(first.occurrenceId));
+        QCOMPARE(h.coordinator.exportQueue().size(),1);
+        QCOMPARE(h.coordinator.exportQueue().first().occurrenceId,second.occurrenceId);
+        QVERIFY(!h.coordinator.removeOccurrence(first.occurrenceId));
+    }
+    void restoreNeverAutoplays() {
+        Harness h; QVERIFY(h.init()); auto s=h.session();
+        QSignalSpy started(&h.coordinator,&PlaybackCoordinator::playbackStarted);
+        QVERIFY(h.coordinator.restoreQueue({savedItem()}));
+        QCOMPARE(h.coordinator.currentIndex(),-1);
+        QVERIFY(h.coordinator.currentGeneration().isNull());
+        QCOMPARE(s->property("resolutions").toInt(),0);
+        QCOMPARE(h.sink.prepares,0); QCOMPARE(h.sink.plays,0); QCOMPARE(started.size(),0);
+        auto invalid=savedItem(); invalid.occurrenceId={};
+        QVERIFY(!h.coordinator.restoreQueue({invalid}));
+        QCOMPARE(h.coordinator.queue().size(),1);
+    }
+    void missingInstanceRemainsVisibleAndCannotPlay() {
+        Harness h; QVERIFY(h.init());
+        auto missing=savedItem(); missing.ref.sourceInstanceId="task12c/missing";
+        QSignalSpy failed(&h.coordinator,&PlaybackCoordinator::playbackFailed);
+        QVERIFY(h.coordinator.restoreQueue({missing}));
+        QCOMPARE(h.coordinator.queue().size(),1);
+        QVERIFY(h.coordinator.queue().first().toMap().value("unavailable").toBool());
+        QCOMPARE(h.coordinator.queue().first().toMap().value("sourceLabel").toString(),QString("task12c"));
+        QVERIFY(!h.coordinator.playQueueEntry(0).isNull());
+        QTRY_COMPARE(failed.size(),1);
+        QCOMPARE(h.sink.plays,0);
+        QCOMPARE(h.coordinator.queue().size(),1);
+    }
+    void disabledInstanceCanRetryWithoutRebinding() {
+        Harness h; QVERIFY(h.init());
+        auto saved=savedItem();
+        QVERIFY(h.registry.disableInstance("task12c/home"));
+        QVERIFY(h.coordinator.restoreQueue({saved}));
+        QCOMPARE(h.coordinator.queue().first().toMap().value("unavailable").toBool(),true);
+        QSignalSpy failed(&h.coordinator,&PlaybackCoordinator::playbackFailed);
+        QVERIFY(!h.coordinator.playQueueEntry(0).isNull());
+        QTRY_COMPARE(failed.size(),1);
+        QCOMPARE(h.sink.plays,0);
+        QCOMPARE(h.coordinator.exportQueue().first().occurrenceId,saved.occurrenceId);
+        QVERIFY(h.registry.enableInstance("task12c/home"));
+        QVERIFY(h.session());
+        QTRY_VERIFY(!h.coordinator.queue().first().toMap().value("unavailable").toBool());
+        QCOMPARE(h.coordinator.queue().first().toMap().value("sourceLabel").toString(),QString("Home"));
+        QVERIFY(!h.coordinator.playQueueEntry(0).isNull());
+        QTRY_COMPARE(h.sink.plays,1);
+        QCOMPARE(h.coordinator.currentOccurrence(),saved.occurrenceId);
+    }
+    void sameNameDifferentAccountNeverRebinds() {
+        Harness h; QVERIFY(h.init());
+        auto mismatched=savedItem("bare"); mismatched.ref.accountId="home";
+        QSignalSpy failed(&h.coordinator,&PlaybackCoordinator::playbackFailed);
+        QVERIFY(h.coordinator.restoreQueue({mismatched}));
+        QVERIFY(!h.coordinator.playQueueEntry(0).isNull());
+        QTRY_COMPARE(failed.size(),1);
+        QCOMPARE(h.session("bare")->property("resolutions").toInt(),0);
+        QCOMPARE(h.session("home")->property("resolutions").toInt(),0);
+        QCOMPARE(h.coordinator.queue().size(),1);
+    }
+    void removeEarlierOccurrenceKeepsCurrentIndex() {
+        Harness h; QVERIFY(h.init());
+        auto first=savedItem(), second=savedItem();
+        QVERIFY(h.coordinator.restoreQueue({first,second}));
+        QVERIFY(!h.coordinator.playQueueEntry(1).isNull());
+        QTRY_COMPARE(h.sink.plays,1);
+        QCOMPARE(h.coordinator.currentIndex(),1);
+        QVERIFY(h.coordinator.removeOccurrence(first.occurrenceId));
+        QCOMPARE(h.coordinator.currentIndex(),0);
+        QCOMPARE(h.coordinator.currentOccurrence(),second.occurrenceId);
+        QVERIFY(!h.coordinator.removeOccurrence(second.occurrenceId));
+    }
     void thresholds_data() {
         QTest::addColumn<qint64>("duration"); QTest::addColumn<qint64>("threshold");
         QTest::newRow("half")<<qint64(10000)<<qint64(5000);

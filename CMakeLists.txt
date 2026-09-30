@@ -380,6 +380,7 @@ add_library(quemusic_queue_history_codec STATIC
 target_compile_features(quemusic_queue_history_codec PUBLIC cxx_std_17)
 target_include_directories(quemusic_queue_history_codec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(quemusic_queue_history_codec PUBLIC quemusic_source_sdk Qt6::Core)
+target_link_libraries(quemusic_playback_coordinator PUBLIC quemusic_queue_history_codec)
 
 add_library(quemusic_qt_playback_controller STATIC
     core/playback/QtPlaybackController.cpp

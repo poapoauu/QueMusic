@@ -1,5 +1,6 @@
 #include "PlaybackCoordinator.h"
 #include "CapabilityResolver.h"
+#include "QueueHistoryCodec.h"
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
 #include <QDir>
@@ -133,17 +134,98 @@ PlaybackCoordinator::PlaybackCoordinator(SourceRegistry *sources,PlaybackSink *s
     :QObject(parent),m_sources(sources),m_sink(sink) {
     if(sink)connect(sink,&QObject::destroyed,this,[this] { if(auto a=m_active)end(a,QStringLiteral("music.playbackUnavailable")); });
     if(sources)connect(sources,&QObject::destroyed,this,[this] { if(auto a=m_active)end(a,QStringLiteral("music.playbackUnavailable")); });
+    if(sources)connect(sources,&SourceRegistry::instanceChanged,this,[this](const QString &) {
+        QTimer::singleShot(0,this,[this] { emit queueChanged(); });
+    });
 }
 PlaybackCoordinator::~PlaybackCoordinator() {
     m_destroying=true;
     if(auto a=m_active)end(a);
 }
 void PlaybackCoordinator::notifyCurrent() { QTimer::singleShot(0,this,[this] { emit currentChanged(); }); }
-QVariantList PlaybackCoordinator::queue() const { QVariantList out; for(const auto &e:m_queue)out.append(e->map()); return out; }
-QVariantMap PlaybackCoordinator::currentItem() const { return m_active?m_active->entry->map():QVariantMap{}; }
+QVariantMap PlaybackCoordinator::publicEntry(const std::shared_ptr<Entry> &entry) const {
+    auto out=entry->map();
+    QString label=entry->ref.sourcePluginId;
+    bool available=false;
+    if(m_sources) {
+        int matches=0;
+        for(const auto &source:m_sources->enabledInstances()) {
+            if(source.sourceInstanceId!=entry->ref.sourceInstanceId)continue;
+            ++matches;
+            if(source.sourceId==entry->ref.sourcePluginId && source.accountId==entry->ref.accountId
+                && source.enabled && source.state==SourceSessionStateV2::Ready) {
+                available=true;
+                if(!source.displayName.isEmpty())label=source.displayName;
+            }
+        }
+        if(matches!=1)available=false;
+    }
+    out.insert("sourceLabel",label);
+    out.insert("unavailable",!available
+        || entry->actions.value(SourceActionV2::Play).state!=AvailabilityV2::Available);
+    return out;
+}
+QVariantList PlaybackCoordinator::queue() const { QVariantList out; for(const auto &e:m_queue)out.append(publicEntry(e)); return out; }
+QVariantMap PlaybackCoordinator::currentItem() const { return m_active?publicEntry(m_active->entry):QVariantMap{}; }
 int PlaybackCoordinator::currentIndex() const { return m_active?m_active->index:-1; }
 QUuid PlaybackCoordinator::currentGeneration() const { return m_active?m_active->generation:QUuid{}; }
 QUuid PlaybackCoordinator::currentOccurrence() const { return m_active?m_active->entry->occurrence:QUuid{}; }
+QList<QueueOccurrence> PlaybackCoordinator::exportQueue() const {
+    QList<QueueOccurrence> out;
+    for(const auto &entry:m_queue) {
+        QueueOccurrence item;
+        item.occurrenceId=entry->occurrence;
+        item.ref=copyRef(entry->ref);
+        item.title=entry->presentation.value("title").toString();
+        item.artists=entry->presentation.value("artists").toStringList();
+        item.album=entry->presentation.value("album").toString();
+        item.durationMs=entry->duration;
+        item.playableAtEnqueue=entry->actions.value(SourceActionV2::Play).state==AvailabilityV2::Available;
+        out.append(std::move(item));
+    }
+    return out;
+}
+bool PlaybackCoordinator::restoreQueue(const QList<QueueOccurrence> &items) {
+    if(m_destroying||m_active)return false;
+    QueueHistorySnapshot snapshot;
+    snapshot.queue=items;
+    if(!QueueHistoryCodec::encode(snapshot))return false;
+    QList<std::shared_ptr<Entry>> restored;
+    restored.reserve(items.size());
+    for(const auto &item:items) {
+        auto entry=std::make_shared<Entry>();
+        entry->occurrence=item.occurrenceId;
+        entry->ref=copyRef(item.ref);
+        entry->duration=item.durationMs;
+        entry->presentation.insert("title",owned(item.title));
+        QStringList artists;
+        for(const auto &artist:item.artists)artists.append(owned(artist));
+        entry->presentation.insert("artists",artists);
+        entry->presentation.insert("album",owned(item.album));
+        entry->presentation.insert("durationMs",item.durationMs);
+        if(item.playableAtEnqueue)
+            entry->actions.insert(SourceActionV2::Play,{AvailabilityV2::Available,{},{}});
+        restored.append(std::move(entry));
+    }
+    m_queue=std::move(restored);
+    QTimer::singleShot(0,this,[this] { emit queueChanged(); });
+    return true;
+}
+bool PlaybackCoordinator::removeOccurrence(const QUuid &id) {
+    if(m_destroying||id.isNull())return false;
+    for(int i=0;i<m_queue.size();++i) {
+        if(m_queue.at(i)->occurrence!=id)continue;
+        if(m_active&&m_active->entry==m_queue.at(i))return false;
+        m_queue.removeAt(i);
+        if(m_active&&m_active->index>i) {
+            --m_active->index;
+            notifyCurrent();
+        }
+        QTimer::singleShot(0,this,[this] { emit queueChanged(); });
+        return true;
+    }
+    return false;
+}
 QUuid PlaybackCoordinator::enqueue(const QVariantMap &map) {
     if(m_destroying)return {};
     auto e=std::make_shared<Entry>(); if(!e->parse(map))return {};
