@@ -44,6 +44,87 @@ class LocalLibraryIndexTest : public QObject
     Q_OBJECT
 private slots:
     void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
+    void alternatingRootsKeepPerInstanceIdsAcrossRestartAndPruneRemovedPaths()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QVERIFY(QDir(temp.path()).mkdir("one"));
+        QVERIFY(QDir(temp.path()).mkdir("two"));
+        const QString one = temp.filePath("one/song.mp3");
+        const QString two = temp.filePath("two/song.mp3");
+        QVERIFY(writeFile(one));
+        QVERIFY(writeFile(two));
+        const auto oneConfig = configFor(temp.filePath("one"));
+        const auto twoConfig = configFor(temp.filePath("two"));
+        QString firstId;
+        QString secondId;
+        {
+            LocalLibraryIndexPool pool({}, temp.filePath("identities"));
+            auto first = pool.acquire(sourceConfig(temp.filePath("one"), "home"), oneConfig);
+            auto second = pool.acquire(sourceConfig(temp.filePath("two"), "home"), twoConfig);
+            QSignalSpy firstChanged(first.get(), &LocalLibraryIndex::snapshotChanged);
+            QSignalSpy secondChanged(second.get(), &LocalLibraryIndex::snapshotChanged);
+            first->requestScan();
+            QTRY_COMPARE_WITH_TIMEOUT(firstChanged.size(), 1, 5000);
+            firstId = first->snapshot()->trackIdByPath.value(QFileInfo(one).canonicalFilePath());
+            second->requestScan();
+            QTRY_COMPARE_WITH_TIMEOUT(secondChanged.size(), 1, 5000);
+            secondId = second->snapshot()->trackIdByPath.value(QFileInfo(two).canonicalFilePath());
+            QVERIFY(!firstId.isEmpty() && !secondId.isEmpty());
+            first->requestScan();
+            QTRY_COMPARE_WITH_TIMEOUT(firstChanged.size(), 2, 5000);
+            QCOMPARE(first->snapshot()->trackIdByPath.value(QFileInfo(one).canonicalFilePath()), firstId);
+        }
+        LocalLibraryIndexPool restarted({}, temp.filePath("identities"));
+        auto second = restarted.acquire(sourceConfig(temp.filePath("two"), "home"), twoConfig);
+        auto first = restarted.acquire(sourceConfig(temp.filePath("one"), "home"), oneConfig);
+        QSignalSpy secondChanged(second.get(), &LocalLibraryIndex::snapshotChanged);
+        QSignalSpy firstChanged(first.get(), &LocalLibraryIndex::snapshotChanged);
+        second->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(secondChanged.size(), 1, 5000);
+        QCOMPARE(second->snapshot()->trackIdByPath.value(QFileInfo(two).canonicalFilePath()), secondId);
+        first->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(firstChanged.size(), 1, 5000);
+        QCOMPARE(first->snapshot()->trackIdByPath.value(QFileInfo(one).canonicalFilePath()), firstId);
+        QVERIFY(QFile::remove(one));
+        first->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(firstChanged.size(), 2, 5000);
+        QVERIFY(!first->snapshot()->trackPathById.contains(firstId));
+        QVERIFY(writeFile(one));
+        first->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(firstChanged.size(), 3, 5000);
+        QVERIFY(first->snapshot()->trackIdByPath.value(QFileInfo(one).canonicalFilePath()) != firstId);
+        second->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(secondChanged.size(), 2, 5000);
+        QCOMPARE(second->snapshot()->trackIdByPath.value(QFileInfo(two).canonicalFilePath()), secondId);
+    }
+    void sameScanScopeRetiresMissingPathAcrossConfigurationChanges()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString path = temp.filePath("song.mp3");
+        QVERIFY(writeFile(path));
+        const auto scan = configFor(temp.path());
+        LocalLibraryIndexPool pool({}, temp.filePath("identities"));
+        auto original = pool.acquire(sourceConfig(temp.path(), "home"), scan);
+        auto changedConfig = sourceConfig(temp.path(), "home");
+        changedConfig.displayName = "Renamed library";
+        auto renamed = pool.acquire(changedConfig, scan);
+        QVERIFY(original != renamed);
+        QSignalSpy originalChanged(original.get(), &LocalLibraryIndex::snapshotChanged);
+        QSignalSpy renamedChanged(renamed.get(), &LocalLibraryIndex::snapshotChanged);
+        original->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(originalChanged.size(), 1, 5000);
+        const QString oldId = original->snapshot()->trackIdByPath.value(QFileInfo(path).canonicalFilePath());
+        QVERIFY(!oldId.isEmpty());
+        QVERIFY(QFile::remove(path));
+        renamed->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(renamedChanged.size(), 1, 5000);
+        QVERIFY(writeFile(path));
+        original->requestScan();
+        QTRY_COMPARE_WITH_TIMEOUT(originalChanged.size(), 2, 5000);
+        QVERIFY(original->snapshot()->trackIdByPath.value(QFileInfo(path).canonicalFilePath()) != oldId);
+    }
     void publishesStableOpaqueTypedIdsOnlyAfterPersisting()
     {
         QTemporaryDir temp;

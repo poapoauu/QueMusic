@@ -35,6 +35,7 @@ private slots:
     void unavailableRootsAndLateGeneration();
     void settingsRescanOwnedByPluginIndex();
     void opaqueReferencesAreScopedAndExpire();
+    void retiredIdDoesNotReviveInAnotherLiveConfiguration();
 };
 
 namespace {
@@ -577,6 +578,62 @@ void LocalSourceTest::opaqueReferencesAreScopedAndExpire()
     const auto moved = qvariant_cast<PageResultV2>(ready.last().at(1)).sections.first().items.last().ref;
     QVERIFY(!QUuid(moved.entityId).isNull());
     QVERIFY(moved.entityId != track.entityId);
+    const QString movedPath = root + "/moved.wav";
+    QVERIFY(QFile::remove(movedPath));
+    qobject_cast<ISettingsActionProviderV2 *>(&first)->runSettingsAction("rescan");
+    QTRY_COMPARE(rescanned.size(), 2);
+    expectStreamFailure(moved);
+    QVERIFY(writeFile(movedPath));
+    qobject_cast<ISettingsActionProviderV2 *>(&first)->runSettingsAction("rescan");
+    QTRY_COMPARE(rescanned.size(), 3);
+    page->fetchPage(children);
+    QTRY_COMPARE(ready.size(), 3);
+    const auto recreated = qvariant_cast<PageResultV2>(ready.last().at(1))
+                               .sections.first().items.last().ref;
+    QVERIFY(!QUuid(recreated.entityId).isNull());
+    QVERIFY(recreated.entityId != moved.entityId);
+    expectStreamFailure(moved);
+    playback->resolveStream(recreated);
+    QTRY_COMPARE(streams.size(), 1);
+}
+
+void LocalSourceTest::retiredIdDoesNotReviveInAnotherLiveConfiguration()
+{
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = temp.filePath("song.wav");
+    QVERIFY(writeFile(path));
+    LocalLibraryIndexPool pool({}, temp.filePath("identities"));
+    const auto firstConfig = config(temp.path());
+    auto secondConfig = firstConfig;
+    secondConfig.displayName = "Other view";
+    LocalSourceSession first(firstConfig, &pool);
+    LocalSourceSession second(secondConfig, &pool);
+    first.open();
+    second.open();
+    QTRY_COMPARE(first.state(), SourceSessionStateV2::Ready);
+    QTRY_COMPARE(second.state(), SourceSessionStateV2::Ready);
+    PageQueryV2 children = rootQuery("local/one");
+    children.filters = {{"directoryId", rootId(&second)}};
+    QSignalSpy ready(&second, &IMusicSourceSessionV2::pageReady);
+    qobject_cast<IPageProviderV2 *>(&second)->fetchPage(children);
+    QTRY_COMPARE(ready.size(), 1);
+    const auto oldRef = qvariant_cast<PageResultV2>(ready.last().at(1))
+                            .sections.first().items.first().ref;
+    QVERIFY(!QUuid(oldRef.entityId).isNull());
+    QVERIFY(QFile::remove(path));
+    QSignalSpy rescanned(&first, &IMusicSourceSessionV2::settingsActionCompleted);
+    qobject_cast<ISettingsActionProviderV2 *>(&first)->runSettingsAction("rescan");
+    QTRY_COMPARE(rescanned.size(), 1);
+    QVERIFY(writeFile(path));
+    QSignalSpy streams(&second, &IMusicSourceSessionV2::streamReady);
+    QSignalSpy errors(&second, &IMusicSourceSessionV2::requestFailed);
+    qobject_cast<IPlaybackProviderV2 *>(&second)->resolveStream(oldRef);
+    QTRY_COMPARE(errors.size(), 1);
+    QCOMPARE(streams.size(), 0);
+    qobject_cast<IPageProviderV2 *>(&second)->fetchPage(children);
+    QTRY_COMPARE(ready.size(), 2);
+    QVERIFY(qvariant_cast<PageResultV2>(ready.last().at(1)).sections.first().items.isEmpty());
 }
 QTEST_MAIN(LocalSourceTest)
 #include "tst_LocalSource.moc"

@@ -48,6 +48,16 @@ QByteArray fingerprint(const SourceConfigurationV2 &source, const LocalScanConfi
     return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
 }
 
+QString scanMembershipKey(const LocalScanConfig &scan)
+{
+    QStringList ignored = scan.ignoreDirectories;
+    ignored.sort();
+    QByteArray bytes;
+    QDataStream stream(&bytes, QIODevice::WriteOnly);
+    stream << scan.canonicalRoot << scan.recursive << ignored;
+    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+}
+
 bool registerPath(QFileSystemWatcher &watcher, const QString &path,
                   const LocalLibraryIndex::Hooks &hooks)
 {
@@ -58,13 +68,13 @@ bool registerPath(QFileSystemWatcher &watcher, const QString &path,
 LocalLibraryIndex::LocalLibraryIndex(QString instanceId, QByteArray configurationFingerprint,
                                      LocalScanConfig config, bool watchChanges, QObject *parent,
                                      Hooks hooks, QString identityFile)
-    : QObject(parent), m_instanceId(std::move(instanceId)),
-      m_fingerprint(std::move(configurationFingerprint)), m_config(std::move(config)),
+    : QObject(parent), m_instanceId(std::move(instanceId)), m_config(std::move(config)),
       m_watchChanges(watchChanges), m_hooks(std::move(hooks)),
       m_identityFile(identityFile.isEmpty()
           ? identityPath(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), m_instanceId)
           : std::move(identityFile)), m_watcher(this), m_debounce(this)
 {
+    Q_UNUSED(configurationFingerprint);
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(200);
     connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] {
@@ -158,7 +168,8 @@ void LocalLibraryIndex::finishWorker(quint64 generation, LocalScanResult result)
             for (const auto &entry : result.entries) tracks.append(entry.canonicalPath);
             LocalIdentitySnapshot identities;
             QString errorKey;
-            if (!LocalIdentityStore(m_identityFile, m_instanceId)
+            if (!LocalIdentityStore(m_identityFile, m_instanceId,
+                                    scanMembershipKey(m_config), m_config.canonicalRoot)
                      .reconcile(tracks, result.watchedDirectories, &identities, &errorKey)) {
                 emit refreshFailed(identityFailure(errorKey));
             } else {
@@ -186,6 +197,11 @@ void LocalLibraryIndex::finishWorker(quint64 generation, LocalScanResult result)
 std::shared_ptr<const LocalIndexSnapshot> LocalLibraryIndex::snapshot() const
 {
     return std::atomic_load(&m_snapshot);
+}
+
+bool LocalLibraryIndex::persistedIdentities(LocalIdentitySnapshot *out) const
+{
+    return LocalIdentityStore(m_identityFile, m_instanceId).readCurrent(out);
 }
 
 void LocalLibraryIndex::stop()

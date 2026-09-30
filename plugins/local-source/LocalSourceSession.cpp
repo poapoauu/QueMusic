@@ -217,6 +217,11 @@ void LocalSourceSession::finishPage(const QUuid &id)
     if (!m_requests.contains(id) || !m_index) return;
     const auto snapshot = m_index->snapshot();
     if (!snapshot) return;
+    LocalIdentitySnapshot persisted;
+    if (!m_index->persistedIdentities(&persisted)) {
+        fail(id, failure(SourceErrorKindV2::Unavailable, "local.identity.readFailed"));
+        return;
+    }
     const PageQueryV2 query = m_requests.value(id).query;
     const QString root = snapshot->scan.watchedDirectories.value(0);
     if (root.isEmpty()) {
@@ -249,21 +254,31 @@ void LocalSourceSession::finishPage(const QUuid &id)
         item.title = QFileInfo(path).fileName();
         return item;
     };
-    if (rootCard) items.append(directoryItem(root));
+    if (rootCard) {
+        if (persisted.directoryIdsByPath.value(root) != snapshot->directoryIdByPath.value(root)) {
+            fail(id, failure(SourceErrorKindV2::InvalidRequest, "local.reference.invalid"));
+            return;
+        }
+        items.append(directoryItem(root));
+    }
     else if (query.page == MusicPageKindV2::Category) {
         const QString directoryPath = snapshot->directoryPathById.value(directoryId);
         const auto directory = directoryPath.isEmpty() ? std::optional<QString>()
             : LocalSourceScanner::validatedPath({root, true, {}}, fileId(directoryPath), true);
         if (!directory || *directory != directoryPath
+            || persisted.directoryIdsByPath.value(directoryPath) != directoryId
             || !snapshot->scan.watchedDirectories.contains(*directory)) {
             fail(id, failure(SourceErrorKindV2::InvalidRequest, "local.reference.invalid"));
             return;
         }
         for (const auto &path : snapshot->scan.watchedDirectories)
             if (path != *directory && QFileInfo(path).absolutePath() == *directory)
-                items.append(directoryItem(path));
+                if (persisted.directoryIdsByPath.value(path) == snapshot->directoryIdByPath.value(path))
+                    items.append(directoryItem(path));
         for (const auto &entry : snapshot->scan.entries) {
             if (QFileInfo(entry.canonicalPath).absolutePath() != *directory) continue;
+            if (persisted.trackIdsByPath.value(entry.canonicalPath)
+                != snapshot->trackIdByPath.value(entry.canonicalPath)) continue;
             auto item = entry.item;
             item.ref = {QStringLiteral("local"), m_configuration.sourceInstanceId,
                         m_configuration.accountId, MediaEntityTypeV2::Track,
@@ -275,6 +290,8 @@ void LocalSourceSession::finishPage(const QUuid &id)
         }
     } else {
         for (const auto &entry : snapshot->scan.entries) {
+            if (persisted.trackIdsByPath.value(entry.canonicalPath)
+                != snapshot->trackIdByPath.value(entry.canonicalPath)) continue;
             const QString text = query.searchText;
             if (!entry.item.title.contains(text, Qt::CaseInsensitive)
                 && !entry.item.album.contains(text, Qt::CaseInsensitive)
@@ -367,6 +384,12 @@ void LocalSourceSession::finishResource(const QUuid &id)
     }
     const QString canonicalPath = snapshot->trackPathById.value(request.media.entityId);
     if (canonicalPath.isEmpty()) {
+        fail(id, failure(SourceErrorKindV2::NotFound, "local.reference.invalid"));
+        return;
+    }
+    LocalIdentitySnapshot persisted;
+    if (!m_index->persistedIdentities(&persisted)
+        || persisted.trackIdsByPath.value(canonicalPath) != request.media.entityId) {
         fail(id, failure(SourceErrorKindV2::NotFound, "local.reference.invalid"));
         return;
     }

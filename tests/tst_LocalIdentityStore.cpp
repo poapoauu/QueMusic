@@ -46,7 +46,7 @@ private slots:
         QVERIFY(first.trackIdsByPath.value(track) != first.directoryIdsByPath.value(directory));
         QVERIFY(first.trackIdsByPath.value(track) != first.directoryIdsByPath.value(track));
         const auto data = readIndex(index);
-        QCOMPARE(data.value("version").toInt(), 1);
+        QCOMPARE(data.value("version").toInt(), 2);
         QCOMPARE(data.value("sourceInstanceId").toString(), QString("local/home"));
         LocalIdentitySnapshot second;
         LocalIdentityStore restarted(index, "local/home");
@@ -97,6 +97,56 @@ private slots:
         QVERIFY(first.directoryIdsByPath.value(directory) != recreated.directoryIdsByPath.value(directory));
     }
 
+    void removalObservedByOneConfigurationRetiresSharedPath()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString index = temp.filePath("index.json");
+        const QString path = temp.filePath("song.mp3");
+        QString error;
+        LocalIdentitySnapshot first, second, removed, recreated;
+        LocalIdentityStore configA(index, "local/home", "config-a", temp.path());
+        LocalIdentityStore configB(index, "local/home", "config-b", temp.path());
+        QVERIFY(configA.reconcile({path}, {}, &first, &error));
+        QVERIFY(configB.reconcile({path}, {}, &second, &error));
+        QCOMPARE(second.trackIdsByPath.value(path), first.trackIdsByPath.value(path));
+        QVERIFY(configA.reconcile({}, {}, &removed, &error));
+        QVERIFY(!removed.trackIdsByPath.contains(path));
+        LocalIdentityStore restarted(index, "local/home", "config-b", temp.path());
+        QVERIFY(restarted.reconcile({path}, {}, &recreated, &error));
+        QVERIFY(!recreated.trackIdsByPath.value(path).isEmpty());
+        QVERIFY(recreated.trackIdsByPath.value(path) != first.trackIdsByPath.value(path));
+    }
+
+    void versionOneBindingsSurviveFirstScanOfAnotherRoot()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString index = temp.filePath("index.json");
+        const QString oneRoot = temp.filePath("one");
+        const QString twoRoot = temp.filePath("two");
+        const QString one = oneRoot + "/song.mp3";
+        const QString two = twoRoot + "/song.mp3";
+        const QString oneId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const QString twoId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QJsonObject tracks{{one, oneId}, {two, twoId}};
+        QJsonObject old{{"version", 1}, {"sourceInstanceId", "local/home"},
+                        {"tracks", tracks}, {"directories", QJsonObject{}}};
+        QFile file(index);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write(QJsonDocument(old).toJson()) > 0);
+        file.close();
+        QString error;
+        LocalIdentitySnapshot first, second;
+        LocalIdentityStore configA(index, "local/home", "config-a", oneRoot);
+        LocalIdentityStore configB(index, "local/home", "config-b", twoRoot);
+        QVERIFY(configA.reconcile({one}, {}, &first, &error));
+        QCOMPARE(first.trackIdsByPath.value(one), oneId);
+        QVERIFY(configB.reconcile({two}, {}, &second, &error));
+        QCOMPARE(second.trackIdsByPath.value(one), oneId);
+        QCOMPARE(second.trackIdsByPath.value(two), twoId);
+    }
+
     void failedAtomicWriteDoesNotPublishNewId()
     {
         QTemporaryDir temp;
@@ -144,7 +194,7 @@ private slots:
         QVERIFY(restarted.reconcile({path}, {}, &afterCorruption, &error));
         QVERIFY(isOpaqueUuid(afterCorruption.trackIdsByPath.value(path)));
         QVERIFY(afterCorruption.trackIdsByPath.value(path) != first.trackIdsByPath.value(path));
-        QCOMPARE(readIndex(index).value("version").toInt(), 1);
+        QCOMPARE(readIndex(index).value("version").toInt(), 2);
     }
 
     void largeFutureVersionPreservesIndex()

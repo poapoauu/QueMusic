@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LocalSourceScanner.h"
+#include "LocalIdentityStore.h"
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QObject>
@@ -39,6 +40,7 @@ public:
     void requestScan();
     void stop();
     std::shared_ptr<const LocalIndexSnapshot> snapshot() const;
+    bool persistedIdentities(LocalIdentitySnapshot *out) const;
 
 signals:
     void snapshotChanged(quint64 revision);
@@ -50,7 +52,6 @@ private:
     bool registerWatchPaths(const LocalScanResult &scan);
 
     QString m_instanceId;
-    QByteArray m_fingerprint;
     LocalScanConfig m_config;
     bool m_watchChanges = false;
     Hooks m_hooks;

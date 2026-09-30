@@ -13,11 +13,15 @@ struct LocalIdentitySnapshot {
 class LocalIdentityStore final
 {
 public:
-    LocalIdentityStore(QString filePath, QString sourceInstanceId);
+    LocalIdentityStore(QString filePath, QString sourceInstanceId,
+                       QString configurationKey = {}, QString scanRoot = {});
     bool reconcile(const QStringList &trackPaths, const QStringList &directoryPaths,
                    LocalIdentitySnapshot *out, QString *errorKey);
+    bool readCurrent(LocalIdentitySnapshot *out) const;
 
 private:
     QString m_filePath;
     QString m_sourceInstanceId;
+    QString m_configurationKey;
+    QString m_scanRoot;
 };
