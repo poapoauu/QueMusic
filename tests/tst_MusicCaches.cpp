@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <limits>
 
 class MemorySecrets final : public ISecretStore {
@@ -44,6 +45,82 @@ public:
 class MusicCachesTest : public QObject {
     Q_OBJECT
 private slots:
+    void rejectsPathLocatorCachedPage_data()
+    {
+        QTest::addColumn<QString>("entityId");
+        QTest::newRow("legacy-file-url") << QStringLiteral("file:///tmp/old-track.flac");
+        QTest::newRow("stream-url") << QStringLiteral("https://media.example.test/stream?token=private");
+        QTest::newRow("absolute-path") << QStringLiteral("/tmp/old-track.flac");
+        QTest::newRow("windows-path") << QStringLiteral("C:\\Music\\old-track.flac");
+        QTest::newRow("unc-path") << QStringLiteral("\\\\server\\music\\old-track.flac");
+        QTest::newRow("file-url-single-slash") << QStringLiteral("file:/tmp/old-track.flac");
+    }
+    void rejectsPathLocatorCachedPage()
+    {
+        QFETCH(QString,entityId);
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        PageCacheKeyV2 key; key.sourceInstanceIds={"local/home"};
+        key.query.scope.sourceInstanceId="local/home";
+        const auto now=QDateTime::currentDateTimeUtc();
+        QString path;
+        {
+            PageCache writer(dir.path());
+            MediaItemV2 item;
+            item.ref={"local","local/home","home",MediaEntityTypeV2::Track,"opaque-track"};
+            PageSectionV2 section; section.kind=PageSectionKindV2::Tracks; section.items={item};
+            QVERIFY(writer.store(key,PageResultV2{{section},{},false,true},now));
+            path=writer.filePath(key);
+        }
+        QFile file(path); QVERIFY(file.open(QIODevice::ReadOnly));
+        auto object=QJsonDocument::fromJson(file.readAll()).object(); file.close();
+        auto page=object.value("page").toObject();
+        auto sections=page.value("sections").toArray();
+        auto section=sections[0].toObject(); auto items=section.value("items").toArray();
+        auto item=items[0].toObject(); auto ref=item.value("ref").toObject();
+        ref.insert("entityId",entityId); item.insert("ref",ref); items[0]=item;
+        section.insert("items",items); sections[0]=section; page.insert("sections",sections);
+        object.insert("page",page);
+        QVERIFY(file.open(QIODevice::WriteOnly|QIODevice::Truncate));
+        const auto bytes=QJsonDocument(object).toJson();
+        QCOMPARE(file.write(bytes),qint64(bytes.size()));
+        file.close();
+        PageCache reader(dir.path());
+        QVERIFY(!reader.lookup(key,now,std::chrono::minutes(5)));
+    }
+    void opaqueCacheSurvivesRestart()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        PageCacheKeyV2 key; key.sourceInstanceIds={"navidrome/home"};
+        const auto now=QDateTime::currentDateTimeUtc();
+        {
+            PageCache writer(dir.path());
+            MediaItemV2 item;
+            item.ref={"navidrome","navidrome/home","home",MediaEntityTypeV2::Track,"opaque-42"};
+            item.title="Survives";
+            PageSectionV2 section; section.kind=PageSectionKindV2::Tracks; section.items={item};
+            QVERIFY(writer.store(key,PageResultV2{{section},{},false,true},now));
+        }
+        PageCache reader(dir.path());
+        const auto cached=reader.lookup(key,now,std::chrono::minutes(5));
+        QVERIFY(cached);
+        QCOMPARE(cached->page.sections[0].items[0].ref.entityId,QString("opaque-42"));
+        QCOMPARE(cached->page.sections[0].items[0].title,QString("Survives"));
+    }
+    void oldArtworkOrLyricsKeyIsNotReused()
+    {
+        AssetHarness h; QVERIFY(h.init()); h.session->setProperty("inline",true);
+        auto old=h.ref; old.entityId="file:///tmp/old-track.flac";
+        auto current=h.ref; current.entityId="opaque-track";
+        h.repo.requestArtwork(old); QTRY_COMPARE(h.art.size(),1);
+        QCOMPARE(h.session->property("assetCalls").toInt(),1);
+        h.repo.requestArtwork(current); QTRY_COMPARE(h.art.size(),2);
+        QCOMPARE(h.session->property("assetCalls").toInt(),2);
+        h.repo.requestLyrics(old); QTRY_COMPARE(h.lyrics.size(),1);
+        QCOMPARE(h.session->property("assetCalls").toInt(),3);
+        h.repo.requestLyrics(current); QTRY_COMPARE(h.lyrics.size(),2);
+        QCOMPARE(h.session->property("assetCalls").toInt(),4);
+        QCOMPARE(h.lyrics[1][1].value<MediaRefV2>().entityId,QString("opaque-track"));
+    }
     // Generic numeric sanitization either drops valid occurrence data or accepts fractional indexes.
     void playlistOccurrenceMetadataIsAtomicAndStrictAcrossLiveAndDisk()
     {

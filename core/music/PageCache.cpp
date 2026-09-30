@@ -9,6 +9,7 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QThreadPool>
+#include <QUrl>
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -150,6 +151,15 @@ QJsonObject pageJson(const PageResultV2 &page)
     }
     return {{"sections",sections},{"sourceStates",states}};
 }
+bool isDirectLocator(const QString &id)
+{
+    if (QDir::isAbsolutePath(id) || id.startsWith(QStringLiteral("\\\\"))) return true;
+    if (id.size()>=3 && id[0].isLetter() && id[1]==QLatin1Char(':')
+        && (id[2]==QLatin1Char('/') || id[2]==QLatin1Char('\\'))) return true;
+    const QUrl url(id);
+    return id.contains(QStringLiteral("://")) || (url.isValid() && (url.isLocalFile()
+        || url.scheme().compare(QStringLiteral("file"),Qt::CaseInsensitive)==0));
+}
 std::optional<PageResultV2> readPage(const QJsonObject &object)
 {
     if (!object.value("sections").isArray() || !object.value("sourceStates").isObject()) return {};
@@ -169,6 +179,7 @@ std::optional<PageResultV2> readPage(const QJsonObject &object)
             if (ref.value("entityType").toInt(-1)<0 || ref.value("entityType").toInt()>int(MediaEntityTypeV2::Directory)) return {};
             MediaItemV2 item;
             item.ref=mediaRefV2FromVariantMap(ref.toVariantMap());
+            if (isDirectLocator(item.ref.entityId)) return {};
             item.title=i.value("title").toString(); item.subtitle=i.value("subtitle").toString();
             for (auto artist : i.value("artists").toArray()) if (artist.isString()) item.artists.append(artist.toString());
             item.album=i.value("album").toString(); item.durationMs=i.value("durationMs").toInteger();
