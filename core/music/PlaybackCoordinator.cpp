@@ -153,14 +153,17 @@ QVariantMap PlaybackCoordinator::publicEntry(const std::shared_ptr<Entry> &entry
             if(source.sourceInstanceId!=entry->ref.sourceInstanceId)continue;
             ++matches;
             if(source.sourceId==entry->ref.sourcePluginId && source.accountId==entry->ref.accountId
+                && !source.displayName.isEmpty())label=source.displayName;
+            if(source.sourceId==entry->ref.sourcePluginId && source.accountId==entry->ref.accountId
                 && source.enabled && source.state==SourceSessionStateV2::Ready) {
                 available=true;
-                if(!source.displayName.isEmpty())label=source.displayName;
             }
         }
         if(matches!=1)available=false;
     }
     out.insert("sourceLabel",label);
+    // Presentation only: avoid invoking plugin capability code from a QML
+    // property read. allowed() rechecks current rights before resolving media.
     out.insert("unavailable",!available
         || entry->actions.value(SourceActionV2::Play).state!=AvailabilityV2::Available);
     return out;

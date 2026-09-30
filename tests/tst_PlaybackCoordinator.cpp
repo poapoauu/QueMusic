@@ -203,6 +203,7 @@ private slots:
         QVERIFY(h.registry.disableInstance("task12c/home"));
         QVERIFY(h.coordinator.restoreQueue({saved}));
         QCOMPARE(h.coordinator.queue().first().toMap().value("unavailable").toBool(),true);
+        QCOMPARE(h.coordinator.queue().first().toMap().value("sourceLabel").toString(),QString("Home"));
         QSignalSpy failed(&h.coordinator,&PlaybackCoordinator::playbackFailed);
         QVERIFY(!h.coordinator.playQueueEntry(0).isNull());
         QTRY_COMPARE(failed.size(),1);
@@ -234,6 +235,8 @@ private slots:
         QVERIFY(!h.coordinator.playQueueEntry(1).isNull());
         QTRY_COMPARE(h.sink.plays,1);
         QCOMPARE(h.coordinator.currentIndex(),1);
+        QVERIFY(!h.coordinator.restoreQueue({savedItem()}));
+        QCOMPARE(h.coordinator.queue().size(),2);
         QVERIFY(h.coordinator.removeOccurrence(first.occurrenceId));
         QCOMPARE(h.coordinator.currentIndex(),0);
         QCOMPARE(h.coordinator.currentOccurrence(),second.occurrenceId);
