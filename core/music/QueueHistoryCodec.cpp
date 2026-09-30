@@ -46,10 +46,15 @@ bool directLocator(const QString &id)
         || id.startsWith("../") || id.startsWith(".\\")
         || id.startsWith("..\\") || id.startsWith("~/")
         || id.startsWith("~\\")) return true;
-    // Any URI scheme or Windows drive prefix is a locator, including schemes
-    // the Host does not currently know how to play.
+    // Only a leading URI locator or Windows drive path is direct. Opaque IDs
+    // may contain a colon and even a URI-shaped suffix.
     const int colon = id.indexOf(':');
     if (colon <= 0) return false;
+    if (colon == 1 && id.at(0).isLetter()
+        && ((id.size() > 2 && (id.at(2) == '/' || id.at(2) == '\\'))
+            || id.indexOf(':', 2) < 0))
+        return true; // drive-absolute or drive-relative
+    if (id.mid(colon, 3) != QStringLiteral("://")) return false;
     if (!id.at(0).isLetter()) return false;
     for (int i = 1; i < colon; ++i) {
         const QChar ch = id.at(i);
@@ -286,6 +291,7 @@ LegacyImportResult QueueHistoryCodec::importLegacy(const QByteArray &bytes)
     const auto document = QJsonDocument::fromJson(bytes, &error);
     if (error.error != QJsonParseError::NoError || !document.isObject()) return result;
     const auto root = document.object();
+    if (root.contains("schemaVersion")) return result;
     if (!root.value("queue").isArray()) return result;
     const auto queue = root.value("queue").toArray();
     result.parsed = true;

@@ -118,8 +118,46 @@ private slots:
         item.insert("ref", identity);
         root.insert("queue", QJsonArray{item});
         QCOMPARE(QueueHistoryCodec::decode(bytes(root)).status, QueueHistoryDecodeStatus::Corrupt);
+        identity.insert("entityId", "C:song.mp3");
+        item.insert("ref", identity);
+        root.insert("queue", QJsonArray{item});
+        QCOMPARE(QueueHistoryCodec::decode(bytes(root)).status, QueueHistoryDecodeStatus::Corrupt);
+        identity.insert("entityId", "C:/song:alternate.mp3");
+        item.insert("ref", identity);
+        root.insert("queue", QJsonArray{item});
+        QCOMPARE(QueueHistoryCodec::decode(bytes(root)).status, QueueHistoryDecodeStatus::Corrupt);
         snapshot.queue[0].ref.entityId = "file:///private/song.mp3";
         QVERIFY(!QueueHistoryCodec::encode(snapshot).has_value());
+        snapshot.queue[0].ref.entityId = "https://host/stream?token=secret";
+        QVERIFY(!QueueHistoryCodec::encode(snapshot).has_value());
+    }
+
+    void opaqueColonIdRoundTrips()
+    {
+        QueueHistorySnapshot snapshot;
+        snapshot.queue = {occurrence(ref("navidrome", "song:https://suffix")),
+                          occurrence(ref("navidrome", "x:https://suffix"))};
+        const auto data = QueueHistoryCodec::encode(snapshot);
+        QVERIFY(data.has_value());
+        const auto decoded = QueueHistoryCodec::decode(*data);
+        QCOMPARE(decoded.status, QueueHistoryDecodeStatus::Ok);
+        QCOMPARE(decoded.snapshot.queue.at(0).ref.entityId, QString("song:https://suffix"));
+        QCOMPARE(decoded.snapshot.queue.at(1).ref.entityId, QString("x:https://suffix"));
+    }
+
+    void versionedInputCannotImportAsLegacy()
+    {
+        QueueHistorySnapshot snapshot;
+        snapshot.queue = {occurrence()};
+        auto future = encoded(snapshot);
+        future.insert("schemaVersion", 2);
+        const auto rejectedFuture = QueueHistoryCodec::importLegacy(bytes(future));
+        QVERIFY(!rejectedFuture.parsed);
+        QVERIFY(rejectedFuture.accepted.isEmpty());
+        auto current = encoded(snapshot);
+        const auto rejectedCurrent = QueueHistoryCodec::importLegacy(bytes(current));
+        QVERIFY(!rejectedCurrent.parsed);
+        QVERIFY(rejectedCurrent.accepted.isEmpty());
     }
 
     void enforcesAllSizeLimits()
