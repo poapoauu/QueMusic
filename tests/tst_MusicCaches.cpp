@@ -87,15 +87,23 @@ private slots:
         PageCache reader(dir.path());
         QVERIFY(!reader.lookup(key,now,std::chrono::minutes(5)));
     }
+    void opaqueCacheSurvivesRestart_data()
+    {
+        QTest::addColumn<QString>("entityId");
+        QTest::newRow("plain") << QStringLiteral("opaque-42");
+        QTest::newRow("embedded-stream-delimiter") << QStringLiteral("song:https://suffix");
+        QTest::newRow("embedded-file-delimiter") << QStringLiteral("song:file://suffix");
+    }
     void opaqueCacheSurvivesRestart()
     {
+        QFETCH(QString,entityId);
         QTemporaryDir dir; QVERIFY(dir.isValid());
         PageCacheKeyV2 key; key.sourceInstanceIds={"navidrome/home"};
         const auto now=QDateTime::currentDateTimeUtc();
         {
             PageCache writer(dir.path());
             MediaItemV2 item;
-            item.ref={"navidrome","navidrome/home","home",MediaEntityTypeV2::Track,"opaque-42"};
+            item.ref={"navidrome","navidrome/home","home",MediaEntityTypeV2::Track,entityId};
             item.title="Survives";
             PageSectionV2 section; section.kind=PageSectionKindV2::Tracks; section.items={item};
             QVERIFY(writer.store(key,PageResultV2{{section},{},false,true},now));
@@ -103,7 +111,7 @@ private slots:
         PageCache reader(dir.path());
         const auto cached=reader.lookup(key,now,std::chrono::minutes(5));
         QVERIFY(cached);
-        QCOMPARE(cached->page.sections[0].items[0].ref.entityId,QString("opaque-42"));
+        QCOMPARE(cached->page.sections[0].items[0].ref.entityId,entityId);
         QCOMPARE(cached->page.sections[0].items[0].title,QString("Survives"));
     }
     void oldArtworkOrLyricsKeyIsNotReused()

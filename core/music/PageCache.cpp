@@ -157,8 +157,10 @@ bool isDirectLocator(const QString &id)
     if (id.size()>=3 && id[0].isLetter() && id[1]==QLatin1Char(':')
         && (id[2]==QLatin1Char('/') || id[2]==QLatin1Char('\\'))) return true;
     const QUrl url(id);
-    return id.contains(QStringLiteral("://")) || (url.isValid() && (url.isLocalFile()
-        || url.scheme().compare(QStringLiteral("file"),Qt::CaseInsensitive)==0));
+    return url.isValid() && (url.isLocalFile()
+        || url.scheme().compare(QStringLiteral("file"),Qt::CaseInsensitive)==0
+        || (!url.scheme().isEmpty()
+            && id.startsWith(url.scheme()+QStringLiteral("://"),Qt::CaseInsensitive)));
 }
 std::optional<PageResultV2> readPage(const QJsonObject &object)
 {
