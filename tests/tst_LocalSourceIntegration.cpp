@@ -5,6 +5,7 @@
 #include "SourceRegistry.h"
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
+#include "extensions/legacy-identity/v1/ILegacyMediaIdentityProviderV1.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -210,6 +211,70 @@ private slots:
         QVERIFY(h.registry.disableInstance("local/two"));
         QTRY_VERIFY(h.coordinator.currentGeneration().isNull());
         QCOMPARE(h.sink.stops, 2);
+    }
+
+    void legacyFileClaimOnlyReturnsIndexedPluginIdentity()
+    {
+        Harness h;
+        QVERIFY(h.load());
+        QTemporaryDir root;
+        QTemporaryDir outside;
+        QVERIFY(root.isValid() && outside.isValid());
+        const QString track = root.filePath("song.wav");
+        const QString foreign = outside.filePath("foreign.wav");
+        QVERIFY(writeAudio(track));
+        QVERIFY(writeAudio(foreign));
+        QVERIFY(h.save("one", root.path()));
+        QVERIFY(h.save("two", root.path()));
+        auto *first = h.registry.sessionFor("local/one");
+        auto *second = h.registry.sessionFor("local/two");
+        QVERIFY(first && second);
+        QTRY_COMPARE(first->state(), SourceSessionStateV2::Ready);
+        QTRY_COMPARE(second->state(), SourceSessionStateV2::Ready);
+        auto *firstClaims = qobject_cast<ILegacyMediaIdentityProviderV1 *>(first);
+        auto *secondClaims = qobject_cast<ILegacyMediaIdentityProviderV1 *>(second);
+        QVERIFY(firstClaims && secondClaims);
+        const QUrl fileUrl = QUrl::fromLocalFile(track);
+        QVERIFY(!firstClaims->claimLegacyFile(fileUrl)); // No scanned identity yet.
+        const auto firstQuery = h.children("one", root.path());
+        const auto secondQuery = h.children("two", root.path());
+        QSignalSpy firstReady(first, &IMusicSourceSessionV2::pageReady);
+        QSignalSpy secondReady(second, &IMusicSourceSessionV2::pageReady);
+        qobject_cast<IPageProviderV2 *>(first)->fetchPage(firstQuery);
+        qobject_cast<IPageProviderV2 *>(second)->fetchPage(secondQuery);
+        QTRY_VERIFY_WITH_TIMEOUT(!firstReady.isEmpty() && !secondReady.isEmpty(), 5000);
+        const auto firstItem = qvariant_cast<PageResultV2>(firstReady.last().at(1)).sections.first().items.first();
+        const auto secondItem = qvariant_cast<PageResultV2>(secondReady.last().at(1)).sections.first().items.first();
+        QVERIFY(!firstItem.ref.entityId.isEmpty());
+        QVERIFY(!secondItem.ref.entityId.isEmpty());
+        const auto firstRef = firstClaims->claimLegacyFile(fileUrl);
+        const auto secondRef = secondClaims->claimLegacyFile(fileUrl);
+        QVERIFY(firstRef);
+        QVERIFY(secondRef);
+        QCOMPARE(*firstRef, firstItem.ref);
+        QCOMPARE(*secondRef, secondItem.ref);
+        QCOMPARE(firstRef->sourceInstanceId, QStringLiteral("local/one"));
+        QCOMPARE(secondRef->sourceInstanceId, QStringLiteral("local/two"));
+        QVERIFY(firstRef->entityId != secondRef->entityId);
+        QVERIFY(!QUuid(firstRef->entityId).isNull());
+        QCOMPARE(firstRef->entityType, MediaEntityTypeV2::Track);
+        QVERIFY(!firstClaims->claimLegacyFile(QUrl::fromLocalFile(foreign)));
+        const QString unindexed = root.filePath("unindexed.wav");
+        QVERIFY(writeAudio(unindexed));
+        QVERIFY(!firstClaims->claimLegacyFile(QUrl::fromLocalFile(unindexed)));
+#ifndef Q_OS_WIN
+        const QString escape = root.filePath("escape.wav");
+        QVERIFY(QFile::link(foreign, escape));
+        QVERIFY(!firstClaims->claimLegacyFile(QUrl::fromLocalFile(escape)));
+#endif
+        QVERIFY(!firstClaims->claimLegacyFile(QUrl("https://example.org/song.wav")));
+        QUrl withQuery = fileUrl;
+        withQuery.setQuery(QStringLiteral("token=ignored"));
+        QVERIFY(!firstClaims->claimLegacyFile(withQuery));
+        QVERIFY(QFile::remove(track));
+        QVERIFY(!firstClaims->claimLegacyFile(fileUrl));
+        first->close();
+        QVERIFY(!firstClaims->claimLegacyFile(fileUrl));
     }
 
     void unloadWaitsForWorkersAndLease()

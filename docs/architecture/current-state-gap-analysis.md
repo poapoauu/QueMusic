@@ -245,7 +245,7 @@ Home/Search/Playlist/Favourite/File 等旧 QML
 
 工作：Local Plugin 的 `IPlaybackProviderV2` 解析 `file://` 或受控本地资源；删除 `main.qml`、`FilePage.qml`、`PlayerControl.qml` 的本地直播放分支。
 
-2026-10-03 入口复核：Local Plugin 的不透明 Track ID → 受控 `file://` 解析及 Adapter → Coordinator 路径已经存在，不能重做。遗留入口集中于“我的文件夹”：`FilePage.qml` 仍以路径写入 `{name,path,songer,source:-1}` 队列，`main.qml::playLocalSong()` 直接给 `mainMedia.source` 赋值，`PlayerControl.qml::refreshLegacyMusicPlay()` 会重入该路径；“本地文件夹”插件视图已经调用 Adapter。实施时先确定旧文件夹歌曲的身份迁移方式，再将其点击/加入队列接到插件不透明 Track ref；旧队列只作一次性迁移或明确拒绝，不能以路径作为长期 Host 身份。随后删除本地直播放函数及分支，并保留视觉和交互回归。首个回归增量已覆盖双 Local 实例切歌、非当前实例禁用不影响播放、当前实例禁用立即停止；这不等于 Phase 5 已完成。
+2026-10-03 入口复核：Local Plugin 的不透明 Track ID → 受控 `file://` 解析及 Adapter → Coordinator 路径已经存在，不能重做。遗留入口集中于“我的文件夹”：`FilePage.qml` 仍以路径写入 `{name,path,songer,source:-1}` 队列，`main.qml::playLocalSong()` 直接给 `mainMedia.source` 赋值，`PlayerControl.qml::refreshLegacyMusicPlay()` 会重入该路径；“本地文件夹”插件视图已经调用 Adapter。既有 `LegacyLocalFolderMigration` 只迁移 `folders.type='local'` 目录配置，不迁移 `folders.type='my'` 的 `songs.path`，且后者允许导入插件扫描根目录之外的任意文件。逐项身份认领、未匹配文件处理及退役步骤见 [Phase 5 迁移设计](phase-5-local-playback-migration-design.md)。首个回归增量已覆盖双 Local 实例切歌、非当前实例禁用不影响播放、当前实例禁用立即停止；这不等于 Phase 5 已完成。
 
 出口：在线与本地均只通过 Coordinator -> PlaybackSink；QML 不再直接解析音源或设置媒体 URL；切歌、取消和实例禁用遵守 generation/lifecycle fencing。
 

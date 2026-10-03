@@ -1,0 +1,40 @@
+# Phase 5：旧“我的文件夹”本地播放迁移设计
+
+状态：身份认领扩展及 Local 实现已落地；迁移服务与 QML 接线待实现，Phase 5 尚未完成。以 [最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md) 为基线，不重做 Source SDK v2。
+
+## 当前事实与边界
+
+- Local Source Plugin 已实现 `IPlaybackProviderV2`：插件索引使用实例隔离的 Track UUID，播放时才把它解析为受控 `file://`；`OriginalUiMusicAdapter` 的“本地文件夹”视图已把播放交给 `PlaybackCoordinator`。
+- `LegacyLocalFolderMigration` 只把旧数据库 `folders.type='local'` 的目录配置变成 Local SourceInstance；它**没有**迁移 `folders.type='my'` 下 `songs.path` 的歌曲。
+- “我的文件夹”仍允许文件对话框导入任意音频文件；文件可能位于所有已配置插件目录之外。其点击、加入旧队列和切歌分别通过 `FilePage.qml`、`main.qml::playLocalSong()`、`PlayerControl.qml::refreshLegacyMusicPlay()` 走直播放。不能以文件名、路径或 `file://` 字符串伪造 `MediaRefV2.entityId`，也不能静默把旧歌曲绑定到同名的另一个实例。
+- `LocalLibraryIndex` 内部已有 `trackIdByPath` / `trackPathById`，可作为**插件内部**的精确匹配基础；Host 不应读取插件私有索引或保存反向路径映射。
+
+## 迁移规则
+
+1. 保留“我的文件夹”的布局、目录层次和用户旧数据；迁移过程中旧记录可见，但未认领的记录不可直播放，也不自动加入新队列。
+2. 使用独立版本的、可选的旧身份认领扩展，不更改 Source SDK v2 的现有接口或 ABI。一次性迁移层把明确属于旧 Local 的路径交给候选 SourceInstance 分别认领；插件仅在路径 canonical 化后仍处于已配置根目录、文件确实在当前索引和持久化身份表中时返回本实例的不透明 Track ref。迁移层仅接受**唯一**实例的结果；零个或多个匹配都不能猜测。
+3. 对未配置目录内的旧文件，给出“在本地插件设置中添加目录并重新扫描”的明确入口；旧记录和路径留在迁移区，用户完成设置后可重试。不得由 Host 在后台擅自创建 SourceInstance 或扩大文件访问范围。
+4. 成功认领后，收藏文件夹/队列只保存 `MediaRefV2` 与展示快照；原路径只存在于一次性迁移数据及插件私有索引，不能进入新队列、历史或日志。播放仍经 `OriginalUiMusicAdapter`/`PlaybackCoordinator`，由插件提供 StreamDescriptor，由 Core 播放。
+5. 迁移须幂等、可重试、有备份和逐项失败提示；实例禁用/删除、文件移动或删除时展示不可播放状态，不回退到旧直播放。Phase 6 再清除旧数据模型和全部平台整数 fallback。
+
+## 推荐实施顺序及验收
+
+1. **认领契约和测试**：定义独立版本接口；测试同一文件在不同实例、根目录外路径、符号链接逃逸、旧 ID/已删除文件、零/多匹配、取消与插件卸载。接口只返回身份，不返回 URL 或认证信息。
+2. **旧数据显式迁移**：以只读方式枚举旧 `songs`，做备份与进度记录；用户确认的候选实例认领成功才写入新身份记录。异常重启可继续，原数据不可静默删除。测试已迁移、待配置、失败重试和重复执行。
+3. **QML 入口切换**：保持“我的文件夹”结构，把已认领歌曲的点击/加入队列/切歌接到 Adapter/Coordinator；未认领歌曲显示可操作的设置与重试提示。移除 `playLocalSong()`、`source == -1` 本地分支及 `mainMedia.source = path`，测试原 UI 交互与静态扫描。
+4. **全链路验收**：Local/HTTP/HTTPS 均只经 Coordinator → PlaybackSink；快速切歌、取消、实例禁用/卸载、资源失效均受 generation/lifecycle fencing；完整 CTest、macOS 真实文件 smoke 与脱敏检查通过。此时方可宣告 Phase 5 完成。
+
+## 兼容性风险
+
+- 新扩展单独版本化，不能改变 `IMusicSourceSessionV2` 虚表或既有插件 ABI；不实现扩展的插件保持现状。
+- 路径只是旧数据的迁移输入，不是播放身份。Mac/Windows 的路径大小写、Unicode 规范化、URL 编码和符号链接需由插件侧按真实文件系统规则处理。
+- 旧文件夹可能包含 Local Plugin 尚不支持或没有索引的格式；需要逐项失败提示，不应把其改写成错误的 Track ref。
+- 旧 `FolderModel`/`SongModel` 是 Phase 6 待退役的 UI 数据实现，不应在 Phase 5 为其扩充长期的本地路径业务。
+
+## 已落地切片
+
+`sdk/source/extensions/legacy-identity/v1/ILegacyMediaIdentityProviderV1.h` 提供可选 Qt 接口，独立 IID 为 `org.quemusic.source.extensions.LegacyMediaIdentityProvider/1.0`。调用方在 session 所在线程持有插件 lease，传入旧文件 URL；接口只查询当前已扫描身份，返回 `std::optional<MediaRefV2>`，不触发扫描、不修改配置、不开始播放。
+
+Local session 在插件内部规范化路径，验证配置根目录范围、文件可读性、当前索引和持久化身份表一致性。同一个文件在两个实例中仍返回两个不同 ref，消歧责任保留在后续迁移服务。接口头文件随 PluginSdk 安装，既有 Source SDK v2 文件保持不变。集成测试覆盖扫描前无认领、双实例隔离、目录外文件、未索引文件、符号链接逃逸、非文件 URL、query、文件删除和 session 关闭。
+
+2026-10-03 本机 Qt 6.11.1 / macOS Debug 全量构建成功，CTest 69/69 通过；PluginSdk 临时目录安装验证通过。QML 直播放入口仍待切换，本记录不作为 Phase 5 完成验收。

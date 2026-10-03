@@ -222,6 +222,10 @@ install(DIRECTORY sdk/source/v2/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/v2
     COMPONENT PluginSdk
     FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY sdk/source/extensions/legacy-identity/v1/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/legacy-identity/v1
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY sdk/plugin-ui/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/plugin-ui/v1
     COMPONENT PluginSdk

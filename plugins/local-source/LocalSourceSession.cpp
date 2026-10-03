@@ -352,6 +352,27 @@ QUuid LocalSourceSession::resolveStream(const MediaRefV2 &media)
     QTimer::singleShot(0, this, [this, id] { finishResource(id); });
     return id;
 }
+std::optional<MediaRefV2> LocalSourceSession::claimLegacyFile(const QUrl &fileUrl) const
+{
+    if (m_state != SourceSessionStateV2::Ready || !m_index || !fileUrl.isValid()
+        || !fileUrl.isLocalFile() || !fileUrl.authority().isEmpty()
+        || fileUrl.hasQuery() || fileUrl.hasFragment()) return std::nullopt;
+    const auto snapshot = m_index->snapshot();
+    if (!snapshot) return std::nullopt;
+    const QString root = snapshot->scan.watchedDirectories.value(0);
+    const auto canonical = LocalMediaFiles::boundedPath(fileUrl.toLocalFile(), root);
+    if (!canonical) return std::nullopt;
+    const auto path = LocalSourceScanner::validatedPath({root, true, {}},
+                                                         fileId(*canonical), false);
+    if (!path) return std::nullopt;
+    const QString trackId = snapshot->trackIdByPath.value(*path);
+    if (trackId.isEmpty()) return std::nullopt;
+    LocalIdentitySnapshot persisted;
+    if (!m_index->persistedIdentities(&persisted)
+        || persisted.trackIdsByPath.value(*path) != trackId) return std::nullopt;
+    return MediaRefV2{m_configuration.sourceId, m_configuration.sourceInstanceId,
+                      m_configuration.accountId, MediaEntityTypeV2::Track, trackId};
+}
 QUuid LocalSourceSession::fetchArtwork(const MediaRefV2 &media)
 {
     const QUuid id = start({RequestKind::Artwork, {}, media});
