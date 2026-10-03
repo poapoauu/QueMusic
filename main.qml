@@ -18,10 +18,11 @@ Window {
     PluginThemeBinding { id: pluginThemeBinding }
     property var musicAdapter: originalUiMusic
     property var playbackAdapter: securePlaybackControls
-    readonly property bool securePlaybackActive: playbackCoordinator
+    readonly property bool secureQueueAvailable: playbackCoordinator
         && playbackCoordinator.queue.length > 0
-    readonly property bool securePlaybackCurrent: securePlaybackActive
+    readonly property bool securePlaybackActive: playbackCoordinator
         && playbackCoordinator.currentIndex >= 0
+    readonly property bool securePlaybackCurrent: securePlaybackActive
     width: 1140
     height: 720
     minimumWidth: 810
@@ -46,6 +47,9 @@ Window {
         // 更新设置项
         Style.changeUi();
         Style.changeTheme();
+        if (queueHistoryStore && queueHistoryStore.warningKey)
+            mainWarn.tiped(queueHistoryStore.warningKey
+                + (queueHistoryStore.backupPath ? " · 备份：" + queueHistoryStore.backupPath : ""), 2);
     }
 
     Connections {
@@ -959,6 +963,15 @@ Window {
         }
     }
 
+    Connections {
+        target: queueHistoryStore
+        function onWarningChanged() {
+            if (queueHistoryStore.warningKey)
+                mainWarn.tiped(queueHistoryStore.warningKey
+                    + (queueHistoryStore.backupPath ? " · 备份：" + queueHistoryStore.backupPath : ""), 2);
+        }
+    }
+
 
     AudioOutput { id: volumeValue; volume: Options.settings.musicVolume; device: Options.settings.useDefaultDevice ? musicDevices.defaultAudioOutput : musicDevices.audioOutputs[Options.settings.audioDevice] }
     MediaDevices { id: musicDevices }
@@ -1276,6 +1289,40 @@ Window {
             function onWarned(text,type) {
                 mainWarn.tiped(text,type);
             }
+        }
+    }
+    Rectangle {
+        id: queueHistoryWarning
+        z: 150
+        visible: queueHistoryStore && queueHistoryStore.warningKey.length > 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 90
+        width: Math.min(parent.width - 32, 720)
+        height: warningText.implicitHeight + 24
+        radius: Style.settings.labelRadius
+        color: Style.themes.containColor
+        border.color: Style.themes.themeColor
+        Text {
+            id: warningText
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.right: retryQueueSave.visible ? retryQueueSave.left : parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            wrapMode: Text.WrapAnywhere
+            color: Style.themes.fontColor
+            text: "播放队列恢复提示：" + queueHistoryStore.warningKey
+                + (queueHistoryStore.backupPath ? "\n备份：" + queueHistoryStore.backupPath : "")
+        }
+        Button {
+            id: retryQueueSave
+            visible: queueHistoryStore.warningKey === "music.queueHistoryWriteFailed"
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            text: "重试保存"
+            onClicked: queueHistoryStore.retrySave()
         }
     }
     QMessage {

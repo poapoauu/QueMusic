@@ -690,7 +690,8 @@ Rectangle {
     PlayList {
         id: playList
         model: playListModel
-        secureMode: window.securePlaybackActive
+        secureMode: window.securePlaybackActive || playList.showRestoredQueue
+        secureAvailable: window.secureQueueAvailable
         secureModel: playbackCoordinator ? playbackCoordinator.queue : []
     }
 

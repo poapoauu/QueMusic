@@ -19,6 +19,7 @@
 #include "core/music/MusicHub.h"
 #include "core/music/OriginalUiMusicAdapter.h"
 #include "core/music/PlaybackCoordinator.h"
+#include "core/music/QueueHistoryStore.h"
 #include "core/music/SourceScopeStore.h"
 #include "core/playback/QtPlaybackController.h"
 #include "core/settings/PluginSettingsController.h"
@@ -192,6 +193,10 @@ int main(int argc, char *argv[])
     QtPlaybackController playbackController;
     PlaybackCoordinator playbackCoordinator(&sourceRegistry, &playbackController);
     playbackController.setCoordinator(&playbackCoordinator);
+    const QString queueHistoryPath = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation) + QStringLiteral("/queue-history.json");
+    QueueHistoryStore queueHistoryStore(&playbackCoordinator, queueHistoryPath);
+    queueHistoryStore.loadAndAttach();
     MusicHub musicHub(&sourceRegistry, &sourceScope, &sourceAccountSettings);
     OriginalUiMusicAdapter originalUiMusic(&musicHub, &playbackCoordinator);
     PluginSettingsController pluginSettings(sourcePlugins.get(), &sourceRegistry,
@@ -202,6 +207,8 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("originalUiMusic"),
                                              &originalUiMusic);
+    engine.rootContext()->setContextProperty(QStringLiteral("queueHistoryStore"),
+                                             &queueHistoryStore);
     // Register generated QML types after constructing the engine, matching
     // Qt's module initialization order and avoiding a root-module ambiguity.
     qml_register_types_MeshGradientItem();

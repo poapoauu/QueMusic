@@ -1512,6 +1512,7 @@ target_link_libraries(${PROJECT_NAME}
         quemusic_music_hub
         quemusic_original_ui_music_adapter
         quemusic_playback_coordinator
+        quemusic_queue_history_store
         quemusic_qt_playback_controller
         z
         quemusic_plugin_settings

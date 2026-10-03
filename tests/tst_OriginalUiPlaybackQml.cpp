@@ -83,6 +83,7 @@ class OriginalUiPlaybackQmlTest final : public QObject {
     Q_OBJECT
 private slots:
     void secureQueueSelectionStopsUsingLegacyPlayer();
+    void restoredQueueDoesNotSeizeLegacyPlayback();
     void transportAdapterForwardsOnlyTypedControls();
     void mainWiringKeepsSecurePlaybackBelowTheOriginalUi();
 };
@@ -136,6 +137,25 @@ void OriginalUiPlaybackQmlTest::secureQueueSelectionStopsUsingLegacyPlayer()
     QCOMPARE(legacy.refreshCalls, 0);
 }
 
+void OriginalUiPlaybackQmlTest::restoredQueueDoesNotSeizeLegacyPlayback()
+{
+    QQmlEngine engine;
+    QueueModelDouble legacyQueue(1);
+    QueueModelDouble restoredQueue(1);
+    LegacyPlayerDouble legacy;
+    CoordinatorDouble coordinator;
+    const auto controller = createQueueController(engine, &legacyQueue, &restoredQueue,
+                                                  &legacy, &coordinator);
+    QVERIFY(controller);
+    QVERIFY(controller->setProperty("useCoordinator", false));
+    QVERIFY(QMetaObject::invokeMethod(controller.get(), "playQueueEntry", Q_ARG(QVariant, 0)));
+    QCOMPARE(legacy.refreshCalls, 1);
+    QCOMPARE(coordinator.playQueueCalls, 0);
+    QVERIFY(controller->setProperty("useCoordinator", true));
+    QVERIFY(QMetaObject::invokeMethod(controller.get(), "playQueueEntry", Q_ARG(QVariant, 0)));
+    QCOMPARE(coordinator.playQueueCalls, 1);
+}
+
 void OriginalUiPlaybackQmlTest::transportAdapterForwardsOnlyTypedControls()
 {
     QQmlEngine engine;
@@ -163,6 +183,10 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QVERIFY(source.contains(QStringLiteral("PlaybackControlsAdapter")));
     QVERIFY(source.contains(QStringLiteral("property var playbackAdapter: securePlaybackControls")));
     QVERIFY(source.contains(QStringLiteral("property bool securePlaybackActive")));
+    QVERIFY(source.contains(QStringLiteral("property bool secureQueueAvailable")));
+    QVERIFY(source.contains(QStringLiteral("playbackCoordinator.currentIndex >= 0")));
+    QVERIFY(source.contains(QStringLiteral("queueHistoryStore.warningKey")));
+    QVERIFY(source.contains(QStringLiteral("queueHistoryStore.retrySave()")));
     QVERIFY(source.contains(QStringLiteral("window.togglePlayback()")));
     QVERIFY(source.contains(QStringLiteral("LegacyQueueController")));
 
@@ -170,6 +194,18 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QVERIFY(queueFile.open(QIODevice::ReadOnly | QIODevice::Text));
     const QString queueSource = QString::fromUtf8(queueFile.readAll());
     QVERIFY(queueSource.contains(QStringLiteral("playbackCoordinator.playQueueEntry")));
+
+    QFile popupFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/components/PlayList.qml"));
+    QVERIFY(popupFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString popupSource = QString::fromUtf8(popupFile.readAll());
+    QVERIFY(popupSource.contains(QStringLiteral("playbackCoordinator.playQueueEntry(index)")));
+    QVERIFY(popupSource.contains(QStringLiteral("playbackCoordinator.removeOccurrence")));
+
+    QFile startupFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.cpp"));
+    QVERIFY(startupFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString startupSource = QString::fromUtf8(startupFile.readAll());
+    QVERIFY(startupSource.contains(QStringLiteral("queueHistoryStore.loadAndAttach()")));
+    QVERIFY(startupSource.contains(QStringLiteral("setContextProperty(QStringLiteral(\"queueHistoryStore\")")));
 }
 
 QTEST_MAIN(OriginalUiPlaybackQmlTest)

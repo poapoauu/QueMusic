@@ -12,6 +12,9 @@ Popup {
     property alias model: playListView.model
     property var secureModel: []
     property bool secureMode: false
+    property bool secureAvailable: false
+    property bool showRestoredQueue: false
+    onClosed: showRestoredQueue = false
 
     function activeIndex() {
         return secureMode ? playbackCoordinator.currentIndex : playListModel.playListIndex;
@@ -29,7 +32,7 @@ Popup {
 
     function displaySource(index) {
         const value = secureMode ? secureModel[index] : playListModel.get(index);
-        return secureMode ? (value.source || "在线") : (value.source == -1 ? "本地" : "在线");
+        return secureMode ? (value.sourceLabel || "在线") : (value.source == -1 ? "本地" : "在线");
     }
 
     onSecureModeChanged: playListView.model = secureMode ? secureModel : playListModel
@@ -72,6 +75,19 @@ Popup {
             font.pixelSize: Style.settings.textH2
             verticalAlignment: Text.AlignVCenter
             color: Style.themes.fontColor
+        }
+        Label {
+            x: 125
+            y: 10
+            height: 40
+            visible: playList.secureAvailable && !window.securePlaybackActive
+            text: playList.showRestoredQueue ? "旧队列" : "恢复队列"
+            verticalAlignment: Text.AlignVCenter
+            color: Style.themes.fontColor
+            MouseArea {
+                anchors.fill: parent
+                onClicked: playList.showRestoredQueue = !playList.showRestoredQueue
+            }
         }
         SButton {
             iconCharacter: "\uf08e"
@@ -229,9 +245,13 @@ Popup {
                     onEntered: listHover.opacity = 1
                     onExited: listHover.opacity = 0
                     onClicked: {
-                        if (!playList.secureMode)
+                        if (playList.secureMode) {
+                            mainMedia.stop();
+                            playbackCoordinator.playQueueEntry(index);
+                        } else {
                             playListModel.playListIndex = index;
-                        window.playQueueEntry(index);
+                            window.playQueueEntry(index);
+                        }
                     }
                     Rectangle {
                         id: listHover
@@ -269,7 +289,11 @@ Popup {
                             hoverColor: Qt.rgba(1.0,0.5,0.5,0.8)
                             shadowEnabled: false
                             onClicked: {
-                                if(playListModel.playListIndex !== index) {
+                                if (playList.secureMode) {
+                                    const value = playList.secureModel[index];
+                                    if (value && value.occurrenceId)
+                                        playbackCoordinator.removeOccurrence(value.occurrenceId);
+                                } else if(playListModel.playListIndex !== index) {
                                     if(playListModel.playListIndex > index) playListModel.playListIndex -= 1;
                                     playListModel.remove( index, 1 );
                                 }
