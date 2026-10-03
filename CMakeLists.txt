@@ -382,6 +382,12 @@ target_include_directories(quemusic_queue_history_codec PUBLIC ${CMAKE_CURRENT_S
 target_link_libraries(quemusic_queue_history_codec PUBLIC quemusic_source_sdk Qt6::Core)
 target_link_libraries(quemusic_playback_coordinator PUBLIC quemusic_queue_history_codec)
 
+add_library(quemusic_queue_history_store STATIC
+    core/music/QueueHistoryStore.cpp core/music/QueueHistoryStore.h)
+target_compile_features(quemusic_queue_history_store PUBLIC cxx_std_17)
+target_include_directories(quemusic_queue_history_store PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(quemusic_queue_history_store PUBLIC quemusic_playback_coordinator)
+
 add_library(quemusic_qt_playback_controller STATIC
     core/playback/QtPlaybackController.cpp
     core/playback/QtPlaybackController.h)
@@ -1550,6 +1556,11 @@ if(BUILD_TESTING)
     target_include_directories(quemusic_queue_history_codec_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(quemusic_queue_history_codec_test PRIVATE quemusic_queue_history_codec Qt6::Test)
     add_test(NAME quemusic_queue_history_codec_test COMMAND quemusic_queue_history_codec_test)
+    qt_add_executable(quemusic_queue_history_store_test tests/tst_QueueHistoryStore.cpp)
+    target_link_libraries(quemusic_queue_history_store_test PRIVATE quemusic_queue_history_store Qt6::Test)
+    target_compile_definitions(quemusic_queue_history_store_test PRIVATE QUEMUSIC_TASK12C_PACKAGES="${QUEMUSIC_TASK12C_PACKAGE_ROOT}")
+    add_dependencies(quemusic_queue_history_store_test quemusic_playback_fixture)
+    add_test(NAME quemusic_queue_history_store_test COMMAND quemusic_queue_history_store_test)
     add_executable(quemusic_local_source_scanner_test tests/tst_LocalSourceScanner.cpp)
     target_include_directories(quemusic_local_source_scanner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_include_directories(quemusic_local_source_scanner_test PRIVATE ${QUEMUSIC_LOCAL_TAGLIB_INCLUDES})
