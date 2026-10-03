@@ -34,6 +34,7 @@ bool writeAudio(const QString &path)
 struct Sink final : PlaybackSink {
     int prepares = 0;
     int plays = 0;
+    int stops = 0;
     StreamDescriptorV2 stream;
     bool prepare(StreamDescriptorV2 next, QUuid) override
     {
@@ -42,7 +43,7 @@ struct Sink final : PlaybackSink {
         return true;
     }
     void play(QUuid) override { ++plays; }
-    void stop(QUuid) override {}
+    void stop(QUuid) override { ++stops; }
 };
 struct Harness {
     QTemporaryDir storage;
@@ -157,6 +158,58 @@ private slots:
         h.coordinator.play(playbackRow(firstItem));
         QTRY_VERIFY(failed.size() >= 2);
         QCOMPARE(h.sink.plays, 1);
+    }
+
+    void switchingInstancesAndDisablingCurrentStopsPlayback()
+    {
+        Harness h;
+        QVERIFY(h.load());
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        QVERIFY(writeAudio(root.filePath("song.wav")));
+        QVERIFY(h.save("one", root.path()));
+        QVERIFY(h.save("two", root.path()));
+
+        auto trackFor = [&](const QString &account) {
+            auto *session = h.registry.sessionFor(QStringLiteral("local/") + account);
+            if (!session || session->state() != SourceSessionStateV2::Ready)
+                return MediaItemV2{};
+            const auto query = h.children(account, root.path());
+            QSignalSpy ready(session, &IMusicSourceSessionV2::pageReady);
+            qobject_cast<IPageProviderV2 *>(session)->fetchPage(query);
+            if (ready.isEmpty() && !ready.wait(5000))
+                return MediaItemV2{};
+            const auto result = qvariant_cast<PageResultV2>(ready.last().at(1));
+            return result.sections.first().items.first();
+        };
+        auto *firstSession = h.registry.sessionFor("local/one");
+        auto *secondSession = h.registry.sessionFor("local/two");
+        QVERIFY(firstSession && secondSession);
+        QTRY_COMPARE(firstSession->state(), SourceSessionStateV2::Ready);
+        QTRY_COMPARE(secondSession->state(), SourceSessionStateV2::Ready);
+        const auto first = trackFor("one");
+        const auto second = trackFor("two");
+        QVERIFY(!first.ref.entityId.isEmpty());
+        QVERIFY(!second.ref.entityId.isEmpty());
+
+        const auto firstGeneration = h.coordinator.play(playbackRow(first));
+        QVERIFY(!firstGeneration.isNull());
+        QTRY_COMPARE(h.sink.plays, 1);
+        QCOMPARE(h.sink.stream.media, first.ref);
+        const auto secondGeneration = h.coordinator.play(playbackRow(second));
+        QVERIFY(!secondGeneration.isNull());
+        QVERIFY(secondGeneration != firstGeneration);
+        QTRY_COMPARE(h.sink.plays, 2);
+        QCOMPARE(h.sink.stream.media, second.ref);
+        QCOMPARE(h.sink.stream.url.scheme(), QStringLiteral("file"));
+        QCOMPARE(h.sink.stops, 1);
+
+        QVERIFY(h.registry.disableInstance("local/one"));
+        QCOMPARE(h.coordinator.currentGeneration(), secondGeneration);
+        QCOMPARE(h.sink.stops, 1);
+        QVERIFY(h.registry.disableInstance("local/two"));
+        QTRY_VERIFY(h.coordinator.currentGeneration().isNull());
+        QCOMPARE(h.sink.stops, 2);
     }
 
     void unloadWaitsForWorkersAndLease()
