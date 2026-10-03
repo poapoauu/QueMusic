@@ -1,6 +1,6 @@
 # Phase 5：旧“我的文件夹”本地播放迁移设计
 
-状态：身份认领扩展及 Local 实现已落地；迁移服务与 QML 接线待实现，Phase 5 尚未完成。以 [最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md) 为基线，不重做 Source SDK v2。
+状态：身份认领扩展、Local 实现与候选实例消歧服务已落地；旧歌曲持久化迁移与 QML 接线待实现，Phase 5 尚未完成。以 [最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md) 为基线，不重做 Source SDK v2。
 
 ## 当前事实与边界
 
@@ -37,4 +37,8 @@
 
 Local session 在插件内部规范化路径，验证配置根目录范围、文件可读性、当前索引和持久化身份表一致性。同一个文件在两个实例中仍返回两个不同 ref，消歧责任保留在后续迁移服务。接口头文件随 PluginSdk 安装，既有 Source SDK v2 文件保持不变。集成测试覆盖扫描前无认领、双实例隔离、目录外文件、未索引文件、符号链接逃逸、非文件 URL、query、文件删除和 session 关闭。
 
+`LegacyMediaIdentityResolver` 接收旧文件 URL 与明确的候选 SourceInstance ID，逐个持有插件租约查询可选接口。只有全部候选可检查且唯一认领时才返回不透明 Track ref；零匹配、多匹配、实例不可用及请求无效分别返回 `NoMatch`、`Ambiguous`、`Unavailable`、`InvalidRequest`。查询前后重新核对实例身份和 session 对象，插件卸载/禁用与租约获取期间的状态变化不能产生误认领。它不扫描文件、不新建实例、不写数据库。后续迁移步骤必须把这些状态呈现给用户，不能把 `Unavailable` 当成零匹配，也不能把旧路径写入新队列。
+
 2026-10-03 本机 Qt 6.11.1 / macOS Debug 全量构建成功，CTest 69/69 通过；PluginSdk 临时目录安装验证通过。QML 直播放入口仍待切换，本记录不作为 Phase 5 完成验收。
+
+消歧服务切片再次完成 Debug 全量构建；`quemusic_local_source_integration_test`、`quemusic_local_source_test`、`quemusic_source_registry_v2_test`、`quemusic_plugin_manager_test` 共 4/4 通过。新增集成断言覆盖候选去重、零匹配、多匹配、禁用/缺失实例、租约获取期间实例失效，以及认领后不泄露旧路径。迁移服务尚未读取或写入旧 `songs` 数据，QML 仍保留旧本地直播放；下一步须实现可备份、可重试的逐项数据迁移及用户提示。

@@ -1,4 +1,5 @@
 #include "PlaybackCoordinator.h"
+#include "LegacyMediaIdentityResolver.h"
 #include "PlaybackSink.h"
 #include "PluginManager.h"
 #include "SourceAccountStore.h"
@@ -275,6 +276,60 @@ private slots:
         QVERIFY(!firstClaims->claimLegacyFile(fileUrl));
         first->close();
         QVERIFY(!firstClaims->claimLegacyFile(fileUrl));
+    }
+
+    void migrationResolverRequiresOneAvailableOwner()
+    {
+        Harness h;
+        QVERIFY(h.load());
+        QTemporaryDir root;
+        QTemporaryDir outside;
+        QVERIFY(root.isValid() && outside.isValid());
+        const QString track = root.filePath("legacy track.wav");
+        const QString foreign = outside.filePath("foreign.wav");
+        QVERIFY(writeAudio(track));
+        QVERIFY(writeAudio(foreign));
+        QVERIFY(h.save("one", root.path()));
+        QVERIFY(h.save("two", root.path()));
+        auto *one = h.registry.sessionFor("local/one");
+        auto *two = h.registry.sessionFor("local/two");
+        QVERIFY(one && two);
+        QTRY_COMPARE(one->state(), SourceSessionStateV2::Ready);
+        QTRY_COMPARE(two->state(), SourceSessionStateV2::Ready);
+        h.children("one", root.path());
+        h.children("two", root.path());
+        LegacyMediaIdentityResolver resolver(&h.registry);
+        using Status = LegacyMediaIdentityResolver::Status;
+        const QUrl fileUrl = QUrl::fromLocalFile(track);
+        QCOMPARE(resolver.resolve(fileUrl, {}).status, Status::InvalidRequest);
+        QCOMPARE(resolver.resolve(QUrl("https://example.org/song"), {"local/one"}).status,
+                 Status::InvalidRequest);
+        QCOMPARE(resolver.resolve(QUrl::fromLocalFile(foreign), {"local/one", "local/two"}).status,
+                 Status::NoMatch);
+        const auto unique = resolver.resolve(fileUrl, {"local/one", "local/one"});
+        QCOMPARE(unique.status, Status::Matched);
+        QCOMPARE(unique.ref.sourceInstanceId, QStringLiteral("local/one"));
+        QVERIFY(!QUuid(unique.ref.entityId).isNull());
+        QVERIFY(!unique.ref.entityId.contains(track));
+        QCOMPARE(resolver.resolve(fileUrl, {"local/one", "local/two"}).status,
+                 Status::Ambiguous);
+        QCOMPARE(h.plugins.plugin(packageId).activeLeases, 2);
+
+        QVERIFY(h.registry.disableInstance("local/two"));
+        QCOMPARE(resolver.resolve(fileUrl, {"local/one", "local/two"}).status,
+                 Status::Unavailable);
+        QCOMPARE(resolver.resolve(fileUrl, {"local/one"}).status, Status::Matched);
+        QVERIFY(QFile::remove(track));
+        QCOMPARE(resolver.resolve(fileUrl, {"local/one"}).status, Status::NoMatch);
+        QCOMPARE(resolver.resolve(fileUrl, {"local/one", "missing/instance"}).status,
+                 Status::Unavailable);
+        QObject::connect(&h.plugins, &PluginManager::pluginChanged, &h.registry,
+                         [&](const QString &changed) {
+                             if (changed == packageId)
+                                 h.registry.disableInstance("local/one");
+                         }, Qt::SingleShotConnection);
+        QCOMPARE(resolver.resolve(fileUrl, {"local/one"}).status, Status::Unavailable);
+        QVERIFY(!h.registry.sessionFor("local/one"));
     }
 
     void unloadWaitsForWorkersAndLease()

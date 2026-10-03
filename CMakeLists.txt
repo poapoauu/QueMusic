@@ -340,6 +340,15 @@ target_include_directories(quemusic_source_registry PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/source
 )
 
+add_library(quemusic_legacy_media_identity_resolver STATIC
+    core/migration/LegacyMediaIdentityResolver.cpp
+    core/migration/LegacyMediaIdentityResolver.h)
+target_compile_features(quemusic_legacy_media_identity_resolver PUBLIC cxx_std_17)
+target_include_directories(quemusic_legacy_media_identity_resolver PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/migration)
+target_link_libraries(quemusic_legacy_media_identity_resolver PUBLIC
+    quemusic_source_registry)
+
 add_library(quemusic_plugin_settings STATIC
     core/settings/PluginSettingsController.h
     core/settings/PluginSettingsController.cpp
@@ -1607,7 +1616,7 @@ if(BUILD_TESTING)
     target_compile_definitions(quemusic_local_source_integration_test PRIVATE
         QUEMUSIC_LOCAL_PACKAGE_ROOT="${CMAKE_BINARY_DIR}/plugins")
     target_link_libraries(quemusic_local_source_integration_test PRIVATE
-        quemusic_playback_coordinator Qt6::Test)
+        quemusic_playback_coordinator quemusic_legacy_media_identity_resolver Qt6::Test)
     add_dependencies(quemusic_local_source_integration_test quemusic_local_source)
     add_test(NAME quemusic_local_source_integration_test
         COMMAND quemusic_local_source_integration_test)
