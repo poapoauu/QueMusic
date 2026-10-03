@@ -1562,6 +1562,17 @@ if(BUILD_TESTING)
     target_compile_definitions(quemusic_queue_history_store_test PRIVATE QUEMUSIC_TASK12C_PACKAGES="${QUEMUSIC_TASK12C_PACKAGE_ROOT}")
     add_dependencies(quemusic_queue_history_store_test quemusic_playback_fixture)
     add_test(NAME quemusic_queue_history_store_test COMMAND quemusic_queue_history_store_test)
+    qt_add_executable(quemusic_queue_history_integration_test tests/tst_QueueHistoryIntegration.cpp)
+    target_link_libraries(quemusic_queue_history_integration_test PRIVATE
+        quemusic_queue_history_store Qt6::Test)
+    target_compile_definitions(quemusic_queue_history_integration_test PRIVATE
+        QUEMUSIC_PHASE4_PACKAGES="${CMAKE_BINARY_DIR}/plugins")
+    add_dependencies(quemusic_queue_history_integration_test
+        quemusic_local_source quemusic_navidrome_source)
+    add_test(NAME quemusic_queue_history_integration_test
+        COMMAND quemusic_queue_history_integration_test)
+    set_tests_properties(quemusic_queue_history_integration_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     add_executable(quemusic_local_source_scanner_test tests/tst_LocalSourceScanner.cpp)
     target_include_directories(quemusic_local_source_scanner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_include_directories(quemusic_local_source_scanner_test PRIVATE ${QUEMUSIC_LOCAL_TAGLIB_INCLUDES})

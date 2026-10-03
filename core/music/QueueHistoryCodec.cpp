@@ -80,8 +80,7 @@ bool validRef(const MediaRefV2 &ref)
         && validUnicode(ref.accountId, maxIdentity)
         && validUnicode(ref.entityId, maxIdentity)
         && !directLocator(ref.entityId)
-        && static_cast<int>(ref.entityType) >= static_cast<int>(MediaEntityTypeV2::Track)
-        && static_cast<int>(ref.entityType) <= static_cast<int>(MediaEntityTypeV2::Directory);
+        && ref.entityType == MediaEntityTypeV2::Track;
 }
 
 QJsonObject writeRef(const MediaRefV2 &ref)
@@ -108,8 +107,8 @@ Status readRef(const QJsonValue &value, MediaRefV2 *out)
     status = textField(object.value("entityId"), &out->entityId, maxIdentity, true);
     if (status != Status::Ok) return status;
     const auto type = object.value("entityType");
-    if (!type.isDouble() || type.toInteger(-1) < 0
-        || type.toInteger(-1) > static_cast<int>(MediaEntityTypeV2::Directory)) return Status::Corrupt;
+    if (!type.isDouble() || type.toInteger(-1) != static_cast<int>(MediaEntityTypeV2::Track))
+        return Status::Corrupt;
     out->entityType = static_cast<MediaEntityTypeV2>(type.toInteger());
     return directLocator(out->entityId) ? Status::Corrupt : Status::Ok;
 }

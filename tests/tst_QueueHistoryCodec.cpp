@@ -136,6 +136,17 @@ private slots:
         QVERIFY(!QueueHistoryCodec::encode(snapshot).has_value());
         snapshot.queue[0].ref.entityId = "C:song:alternate.mp3";
         QVERIFY(!QueueHistoryCodec::encode(snapshot).has_value());
+        snapshot.queue[0].ref = ref();
+        snapshot.queue[0].ref.entityType = MediaEntityTypeV2::Directory;
+        QVERIFY(!QueueHistoryCodec::encode(snapshot).has_value());
+        snapshot.queue[0].ref = ref();
+        root = encoded(snapshot);
+        item = root.value("queue").toArray().at(0).toObject();
+        identity = item.value("ref").toObject();
+        identity.insert("entityType", int(MediaEntityTypeV2::Directory));
+        item.insert("ref", identity);
+        root.insert("queue", QJsonArray{item});
+        QCOMPARE(QueueHistoryCodec::decode(bytes(root)).status, QueueHistoryDecodeStatus::Corrupt);
     }
 
     void opaqueColonIdRoundTrips()

@@ -1,8 +1,10 @@
 # QueMusic 当前状态与最终插件架构差距分析
 
-> 状态：等待实施顺序确认，尚未进入编码阶段
-> 审计日期：2026-09-17
+> 状态：原始审计保留如下；实施顺序已确认，隔离开发分支已完成 Phase 1–4 的阶段实现与本机验收，尚未合并
+> 原始审计日期：2026-09-17；进展复核：2026-10-03
 > 设计基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
+
+当前进展说明：本文件第 1–4 节的分支拓扑和 40/40 测试数是 **2026-09-17 的历史快照**，不再代表当前开发分支。`codex/plugin-ui-api-v1` 在原有 v2 上完成 Plugin UI API、Plugin Settings、Local Source Plugin，以及 Phase 4 的不透明身份、统一队列/历史持久化和恢复。2026-10-03 本机 Debug 全量构建及 CTest **69/69** 通过；Phase 4 证据见[验收记录](phase-4-queue-history-identity-record.md)。Phase 5/6、其余平台迁移及跨平台发行验证仍未完成，不能将此视为最终架构完成。
 
 ## 1. 结论摘要
 
@@ -236,6 +238,8 @@ Home/Search/Playlist/Favourite/File 等旧 QML
 工作：将旧队列结构迁移为 `MediaRefV2` + 展示快照；定义 schema version、旧数据迁移、插件缺失/实例删除/账号变化后的恢复策略；历史记录使用同一身份模型。
 
 出口：队列持久化中没有长期保存的可过期 URL；重启后可恢复；缺失 SourceInstance 显示为不可播放而不崩溃；旧队列可迁移或安全丢弃并告知用户。
+
+进展（2026-10-03，隔离开发分支）：不透明 Local ID、旧缓存隔离、Host Codec/Store、Coordinator 恢复、启动与原 UI 队列模式拆分均已落地；包含真实 Local 插件与 Navidrome 身份夹具的阶段集成测试及全量 CTest 69/69 通过。旧 QML 内存队列没有可自动扫描的生产 JSON 来源，因此只提供显式旧文件导入、备份和拒绝项提示，不伪造路径到 SourceInstance 的映射。见 [Phase 4 验收记录](phase-4-queue-history-identity-record.md)。Phase 5/6 仍未完成。
 
 ### Phase 5：本地播放全部进入 PlaybackCoordinator
 
