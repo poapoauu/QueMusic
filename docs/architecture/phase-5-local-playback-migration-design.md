@@ -1,6 +1,6 @@
 # Phase 5：旧“我的文件夹”本地播放迁移设计
 
-状态：身份认领扩展、Local 实现、候选实例消歧服务、显式旧歌曲数据迁移、用户确认入口、逐首状态提示及已认领旧歌曲的插件播放接线已落地；未迁移旧入口仍待退役，Phase 5 尚未完成。以 [最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md) 为基线，不重做 Source SDK v2。
+状态：身份认领扩展、Local 实现、候选实例消歧服务、显式旧歌曲数据迁移、用户确认入口、逐首状态提示及已认领旧歌曲的插件播放接线已落地；QML 本地文件路径直播放已移除，Phase 5 全链路验收仍未完成。以 [最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md) 为基线，不重做 Source SDK v2。
 
 ## 当前事实与边界
 
@@ -58,3 +58,5 @@ Local session 在插件内部规范化路径，验证配置根目录范围、文
 为补齐可信逐项动作，新增独立版本的可选 `IItemLookupProviderV1`；Local Plugin 按不透明 ref 检查实例、当前索引、持久化身份及根目录范围，返回插件自身的 `MediaItemV2`（含 `availableActions`），不返回路径或流地址。Host 的旧歌曲桥接层只对状态为 `matched` 的记录持插件 lease 查询该接口，再把插件媒体项交给 `PlaybackCoordinator`；身份再次核对失败、实例变化、插件不可用或缺失动作时拒绝播放/入队。`FilePage.qml` 的已认领歌曲点击/入队不再写旧路径队列，未迁移状态的旧直播放仍保留作兼容；完整 Phase 5 退役还需移除 `notMigrated` 路径和其它旧队列切歌入口。
 
 本轮 Debug 应用构建、完整 CTest 69/69 和 PluginSdk 临时安装验证通过；集成测试确认插件按 ref 返回 Play 动作、跨实例/未知/删除 ref 被拒绝、已认领歌曲经 Coordinator 播放及入队且新队列无旧路径、歧义/目录外符号链接不进入播放。未迁移旧队列与主程序直播放仍是明确的后续清理项。
+
+随后已删除 `main.qml::playLocalSong()` 及其仅服务于旧直播放的歌词回调；“我的文件夹”未迁移歌曲继续可见，但在认领前不能播放或加入队列，已认领歌曲继续经插件查找媒体项并交给 Coordinator。旧内存队列中 `source == -1` 的条目切歌时明确拒绝直播放。下载管理仍保留已下载文件列表与“在文件夹中显示”，但其点击播放/入队不再写入路径队列；用户须先在 Local 插件中导入下载目录，再从“本地文件夹”操作。这里刻意不把下载文件静默绑定到任何 SourceInstance。旧在线平台的 `MusicApi` fallback 属 Phase 6，尚未移除。完整构建、测试和真实用户数据库验证结果应单独记录，不因静态入口清理就宣告 Phase 5 完成。

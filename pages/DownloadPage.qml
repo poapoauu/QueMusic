@@ -370,21 +370,7 @@ Item {
                     var item = downloadedModel.get(index);
                     if (!item || !item.fileUrl)
                         return;
-                    window.playLocalSong(item.fileUrl, item.fileName);
-
-                    var listIndex = -1;
-                    for (var i = 0; i < playListModel.count; i++) {
-                        if (playListModel.get(i).path === item.fileUrl) {
-                            listIndex = i;
-                            break;
-                        }
-                    }
-                    if (listIndex === -1) {
-                        playListModel.append({ name: item.title || item.fileName, path: item.fileUrl, songer: item.artist || "", source: -1 });
-                        playListModel.playListIndex = playListModel.count - 1;
-                    } else {
-                        playListModel.playListIndex = listIndex;
-                    }
+                    mainWarn.tiped("请先在本地音乐插件中导入下载目录，再从本地文件夹播放", 0);
                 }
 
                 onToolClicked: (index,tool) => {
@@ -392,17 +378,7 @@ Item {
                         var item = downloadedModel.get(index);
                         if (!item || !item.fileUrl)
                             return;
-                        var listIndex = -1;
-                        for (var i = 0; i < playListModel.count; i++) {
-                            if (playListModel.get(i).path === item.fileUrl) {
-                                listIndex = i;
-                                break;
-                            }
-                        }
-                        if (listIndex === -1) {
-                            playListModel.append({ name: item.title || item.fileName, path: item.fileUrl, songer: item.artist || "", source: -1 });
-                            mainWarn.tiped("成功加入播放列表", 1);
-                        }
+                        mainWarn.tiped("请先在本地音乐插件中导入下载目录，再从本地文件夹加入队列", 0);
                     }
                 }
             }

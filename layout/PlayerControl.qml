@@ -633,9 +633,8 @@ Rectangle {
     function refreshLegacyMusicPlay() {
         var source = playListModel.get(playListModel.playListIndex).source;
         if(source == -1) {
-            var sourcePath = playListModel.get(playListModel.playListIndex).path;
-            var sourcename = playListModel.get(playListModel.playListIndex).name;
-            window.playLocalSong(sourcePath, sourcename);
+            mainWarn.tiped("旧本地队列歌曲已停止直播放；请在本地音乐插件中导入目录并重新加入队列", 0);
+            return;
         } else {
             mainMedia.urlLocal = false;
             var sourcePath = playListModel.get(playListModel.playListIndex).path;

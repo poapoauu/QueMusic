@@ -18,7 +18,7 @@ Item {
         return legacyCollectionMigration.songStatus(folderId, songId);
     }
     function legacySongBlocked(status) {
-        return status !== "notMigrated" && status !== "matched";
+        return status !== "matched";
     }
     signal requestPluginSettings(string packageId, string instanceId)
     function loadMoreDirectorySections(rows) {
@@ -743,7 +743,7 @@ Item {
                             : listfile.migrationStatus === "ambiguous" ? "多个实例匹配：请重新选择"
                             : listfile.migrationStatus === "invalidPath" ? "旧路径无效"
                             : listfile.migrationStatus === "stale" ? "旧记录已变化：请重试迁移"
-                            : listfile.migrationStatus === "notMigrated" ? ""
+                            : listfile.migrationStatus === "notMigrated" ? "待迁移：请先认领"
                             : "暂不可用：请重试迁移"
                     }
 
@@ -756,19 +756,8 @@ Item {
                                 Style.warned("这首旧歌曲尚未认领，不能直接播放；请配置本地插件并重试迁移", 0);
                                 return;
                             }
-                            if (listfile.migrationStatus === "matched") {
-                                if (!legacyCollectionMigration.playSong(songModel.folderId, model.songId))
-                                    Style.warned("插件暂无法播放这首歌，请检查目录后重试", 0);
-                                return;
-                            }
-                            window.playLocalSong(model.path, model.name);
-                            var musicName = model.name;
-                            var musicPath = model.path;
-                            var listIndex = listfile.findIndexByValue(playListModel, "name", musicName);
-                            if (listIndex == -1) {
-                                playListModel.append({ name: musicName, path: musicPath, songer: "", source: -1 });
-                                playListModel.playListIndex = playListModel.count - 1;
-                            }
+                            if (!legacyCollectionMigration.playSong(songModel.folderId, model.songId))
+                                Style.warned("插件暂无法播放这首歌，请检查目录后重试", 0);
                         }
                         Row {
                             anchors.right: parent.right
@@ -790,20 +779,10 @@ Item {
                                         Style.warned("这首旧歌曲尚未认领，不能加入播放列表", 0);
                                         return;
                                     }
-                                    if (listfile.migrationStatus === "matched") {
-                                        if (legacyCollectionMigration.enqueueSong(songModel.folderId, model.songId))
-                                            Style.warned("成功加入播放列表", 1);
-                                        else
-                                            Style.warned("插件暂无法加入这首歌，请检查目录后重试", 0);
-                                        return;
-                                    }
-                                    var musicName = model.name;
-                                    var musicPath = model.path;
-                                    var listIndex = listfile.findIndexByValue(playListModel, "name", musicName);
-                                    if (listIndex == -1) {
-                                        playListModel.append({ name: musicName, path: musicPath, songer: "", source: -1 });
-                                        Style.warned("成功加入播放列表",1);
-                                    }
+                                    if (legacyCollectionMigration.enqueueSong(songModel.folderId, model.songId))
+                                        Style.warned("成功加入播放列表", 1);
+                                    else
+                                        Style.warned("插件暂无法加入这首歌，请检查目录后重试", 0);
                                 }
                             }
                             SButton {

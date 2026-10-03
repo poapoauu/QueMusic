@@ -69,8 +69,6 @@ Window {
         controller: playbackController
     }
 
-    property string localLyricsRequestPath: ""
-
     function openNavidromeAccountEditor() {
         settingsView.openNavidromeAccountWhenLoaded = true;
         settingsView.active = true;
@@ -91,55 +89,6 @@ Window {
             settingsView.pendingPluginPackageId = "";
             settingsView.pendingPluginInstanceId = "";
         }
-    }
-
-    Connections {
-        target: MusicApi
-        function onLocalLyricsReady(filePath, lyrics) {
-            if (filePath !== window.localLyricsRequestPath)
-                return;
-            MusicApi.lyricsData = lyrics;
-            MusicApi.lyricsTranslate = [];
-        }
-        function onLocalLyricsFailed(filePath) {
-            if (filePath !== window.localLyricsRequestPath)
-                return;
-            MusicApi.setLocalLyrics();
-        }
-    }
-
-    // 播放本地歌曲：同名 .lrc → 内嵌歌词 → 在线匹配 → 占位歌词
-    function playLocalSong(path, name) {
-        var meta = MusicApi.readLocalMetadata(path) || {};
-        var hasMeta = Object.keys(meta).length > 0;
-        var localLyrics = MusicApi.readLocalLyrics(path) || {};
-        var hasLocalLyrics = localLyrics.found === true && localLyrics.lyrics && localLyrics.lyrics.length > 0;
-        var title = meta.title || name;
-        var artist = meta.artist || "";
-        window.localLyricsRequestPath = path;
-        if (hasMeta) {
-            mainMedia.urlLocal = false;
-            mainMedia.noTitle = title;
-            mainMedia.urlStr = meta.cover || "qrc:/QueMusic/resources/app/musicpic.png";
-            window.musicTitle = title;
-            window.musicArtist = artist;
-            MusicApi.lyricsData = hasLocalLyrics ? localLyrics.lyrics : (meta.lyrics || []);
-            MusicApi.lyricsTranslate = hasLocalLyrics ? [] : (meta.translate || []);
-            colorExtractor.extractColorsFromUrl(meta.cover);
-        } else {
-            mainMedia.urlLocal = true;
-            mainMedia.noTitle = name;
-            window.musicTitle = name;
-            window.musicArtist = "";
-            MusicApi.lyricsData = hasLocalLyrics ? localLyrics.lyrics : [];
-            MusicApi.lyricsTranslate = [];
-        }
-        if (!hasLocalLyrics && (!hasMeta || !meta.lyrics || meta.lyrics.length === 0)) {
-            MusicApi.setLocalLyrics();
-            MusicApi.findLocalLyrics(path, title, artist, meta.duration || 0);
-        }
-        mainMedia.source = path;
-        mainMedia.play();
     }
 
     function copyQueueEntry(entry) {

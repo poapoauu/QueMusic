@@ -107,6 +107,26 @@ private slots:
         QVERIFY(list.contains(QStringLiteral("visible: parent.tool0.length > 0")));
         QVERIFY(list.contains(QStringLiteral("visible: parent.tool1.length > 0")));
     }
+
+    void localPlaybackHasNoQmlPathBypass()
+    {
+        const QString main = readSource(QStringLiteral("main.qml"));
+        const QString files = readSource(QStringLiteral("pages/FilePage.qml"));
+        const QString downloads = readSource(QStringLiteral("pages/DownloadPage.qml"));
+        const QString player = readSource(QStringLiteral("layout/PlayerControl.qml"));
+        QVERIFY(!main.isEmpty() && !files.isEmpty() && !downloads.isEmpty() && !player.isEmpty());
+        for (const QString &source : {main, files, downloads, player}) {
+            QVERIFY(!source.contains(QStringLiteral("playLocalSong(")));
+            QVERIFY(!source.contains(QStringLiteral("mainMedia.source = path")));
+            QVERIFY(!source.contains(QStringLiteral("source: -1")));
+        }
+        QVERIFY(files.contains(QStringLiteral("return status !== \"matched\";")));
+        QVERIFY(files.contains(QStringLiteral("legacyCollectionMigration.playSong(")));
+        QVERIFY(files.contains(QStringLiteral("legacyCollectionMigration.enqueueSong(")));
+        QVERIFY(player.contains(QStringLiteral("if(source == -1)")));
+        QVERIFY(player.contains(QStringLiteral("旧本地队列歌曲已停止直播放")));
+        QVERIFY(downloads.contains(QStringLiteral("请先在本地音乐插件中导入下载目录")));
+    }
 };
 
 QTEST_GUILESS_MAIN(OriginalUiStructureTest)
