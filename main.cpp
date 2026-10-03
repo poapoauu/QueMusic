@@ -190,15 +190,16 @@ int main(int argc, char *argv[])
         qWarning().noquote() << "local.migration.pluginUnavailable";
     }
     SourceRegistry sourceRegistry(sourcePlugins.get(), &sourceAccountStore);
-    const QString legacyDataDirectory = QStandardPaths::writableLocation(
-        QStandardPaths::AppDataLocation);
-    LegacyCollectionMigrationController legacyCollectionMigration(
-        &sourceRegistry, legacyDataDirectory + QStringLiteral("/player_data.db"),
-        legacyDataDirectory + QStringLiteral("/legacy-my-collections.sqlite"),
-        legacyDataDirectory + QStringLiteral("/player_data.phase5-backup.sqlite"));
     SourceScopeStore sourceScope(&sourceAccountSettings);
     QtPlaybackController playbackController;
     PlaybackCoordinator playbackCoordinator(&sourceRegistry, &playbackController);
+    const QString legacyDataDirectory = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation);
+    LegacyCollectionMigrationController legacyCollectionMigration(
+        &sourceRegistry, &playbackCoordinator,
+        legacyDataDirectory + QStringLiteral("/player_data.db"),
+        legacyDataDirectory + QStringLiteral("/legacy-my-collections.sqlite"),
+        legacyDataDirectory + QStringLiteral("/player_data.phase5-backup.sqlite"));
     playbackController.setCoordinator(&playbackCoordinator);
     const QString queueHistoryPath = QStandardPaths::writableLocation(
         QStandardPaths::AppDataLocation) + QStringLiteral("/queue-history.json");

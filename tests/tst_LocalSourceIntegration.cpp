@@ -9,9 +9,11 @@
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/legacy-identity/v1/ILegacyMediaIdentityProviderV1.h"
+#include "extensions/item-lookup/v1/IItemLookupProviderV1.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QPointer>
 #include <QSettings>
 #include <QSignalSpy>
@@ -239,8 +241,14 @@ private slots:
         auto *firstClaims = qobject_cast<ILegacyMediaIdentityProviderV1 *>(first);
         auto *secondClaims = qobject_cast<ILegacyMediaIdentityProviderV1 *>(second);
         QVERIFY(firstClaims && secondClaims);
+        auto *firstLookup = qobject_cast<IItemLookupProviderV1 *>(first);
+        auto *secondLookup = qobject_cast<IItemLookupProviderV1 *>(second);
+        QVERIFY(firstLookup && secondLookup);
         const QUrl fileUrl = QUrl::fromLocalFile(track);
         QVERIFY(!firstClaims->claimLegacyFile(fileUrl)); // No scanned identity yet.
+        QVERIFY(!firstLookup->lookupItem({QStringLiteral("local"), QStringLiteral("local/one"),
+                                         QStringLiteral("one"), MediaEntityTypeV2::Track,
+                                         QStringLiteral("not-scanned")}));
         const auto firstQuery = h.children("one", root.path());
         const auto secondQuery = h.children("two", root.path());
         QSignalSpy firstReady(first, &IMusicSourceSessionV2::pageReady);
@@ -263,6 +271,16 @@ private slots:
         QVERIFY(firstRef->entityId != secondRef->entityId);
         QVERIFY(!QUuid(firstRef->entityId).isNull());
         QCOMPARE(firstRef->entityType, MediaEntityTypeV2::Track);
+        const auto lookedUp = firstLookup->lookupItem(*firstRef);
+        QVERIFY(lookedUp);
+        QCOMPARE(lookedUp->ref, firstItem.ref);
+        QCOMPARE(lookedUp->title, firstItem.title);
+        QCOMPARE(lookedUp->availableActions.value(SourceActionV2::Play).state,
+                 AvailabilityV2::Available);
+        QVERIFY(!secondLookup->lookupItem(*firstRef));
+        QVERIFY(!firstLookup->lookupItem({firstRef->sourcePluginId,
+            firstRef->sourceInstanceId, firstRef->accountId,
+            MediaEntityTypeV2::Track, QStringLiteral("unknown")}));
         QVERIFY(!firstClaims->claimLegacyFile(QUrl::fromLocalFile(foreign)));
         const QString unindexed = root.filePath("unindexed.wav");
         QVERIFY(writeAudio(unindexed));
@@ -278,8 +296,14 @@ private slots:
         QVERIFY(!firstClaims->claimLegacyFile(withQuery));
         QVERIFY(QFile::remove(track));
         QVERIFY(!firstClaims->claimLegacyFile(fileUrl));
+        QVERIFY(!firstLookup->lookupItem(*firstRef));
+#ifndef Q_OS_WIN
+        QVERIFY(QFile::link(foreign, track));
+        QVERIFY(!firstLookup->lookupItem(*firstRef));
+#endif
         first->close();
         QVERIFY(!firstClaims->claimLegacyFile(fileUrl));
+        QVERIFY(!firstLookup->lookupItem(*firstRef));
     }
 
     void migrationResolverRequiresOneAvailableOwner()
@@ -388,7 +412,8 @@ private slots:
 
         LegacyMediaIdentityResolver resolver(&h.registry);
         LegacyCollectionMigration migration(&resolver);
-        LegacyCollectionMigrationController controller(&h.registry, oldDb, newDb, backup);
+        LegacyCollectionMigrationController controller(&h.registry, &h.coordinator,
+                                                        oldDb, newDb, backup);
         QCOMPARE(controller.songStatus(1, 1), QStringLiteral("notMigrated"));
         QCOMPARE(controller.preview().value(QStringLiteral("folderCount")).toInt(), 1);
         QCOMPARE(controller.preview().value(QStringLiteral("songCount")).toInt(), 3);
@@ -415,6 +440,8 @@ private slots:
         QCOMPARE(first.ambiguous, 1);
         QCOMPARE(first.noMatch, 1);
         QCOMPARE(first.invalidPath, 1);
+        QVERIFY(!controller.playSong(1, 1));
+        QVERIFY(!controller.enqueueSong(1, 2));
         QCOMPARE(controller.songStatus(1, 1), QStringLiteral("ambiguous"));
         QCOMPARE(controller.songStatus(1, 2), QStringLiteral("noMatch"));
         QCOMPARE(controller.songStatus(1, 3), QStringLiteral("invalidPath"));
@@ -434,9 +461,17 @@ private slots:
         QCOMPARE(second.value(QStringLiteral("invalidPath")).toInt(), 1);
         QCOMPARE(controller.revision(), quint64(1));
         QCOMPARE(controller.songStatus(1, 1), QStringLiteral("matched"));
+        QVERIFY(controller.playSong(1, 1));
+        QTRY_COMPARE(h.sink.plays, 1);
+        QCOMPARE(h.sink.stream.media.sourceInstanceId, QStringLiteral("local/one"));
+        QVERIFY(controller.enqueueSong(1, 1));
+        QCOMPARE(h.coordinator.queue().size(), 2);
+        QVERIFY(!QString::fromUtf8(QJsonDocument::fromVariant(h.coordinator.queue())
+            .toJson(QJsonDocument::Compact)).contains(track));
         QVERIFY(QFile::remove(track));
         QVERIFY(QFile::link(foreign, track));
         QCOMPARE(controller.songStatus(1, 1), QStringLiteral("unavailable"));
+        QVERIFY(!controller.playSong(1, 1));
         QVERIFY(h.registry.disableInstance("local/one"));
         QCOMPARE(controller.songStatus(1, 1), QStringLiteral("unavailable"));
         QCOMPARE(controller.candidates().size(), 1);

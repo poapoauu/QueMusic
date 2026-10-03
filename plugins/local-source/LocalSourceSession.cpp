@@ -373,6 +373,33 @@ std::optional<MediaRefV2> LocalSourceSession::claimLegacyFile(const QUrl &fileUr
     return MediaRefV2{m_configuration.sourceId, m_configuration.sourceInstanceId,
                       m_configuration.accountId, MediaEntityTypeV2::Track, trackId};
 }
+std::optional<MediaItemV2> LocalSourceSession::lookupItem(const MediaRefV2 &ref) const
+{
+    if (m_state != SourceSessionStateV2::Ready || !m_index || !validMedia(ref)
+        || ref.entityType != MediaEntityTypeV2::Track) return std::nullopt;
+    const auto snapshot = m_index->snapshot();
+    if (!snapshot) return std::nullopt;
+    const QString canonicalPath = snapshot->trackPathById.value(ref.entityId);
+    if (canonicalPath.isEmpty()) return std::nullopt;
+    LocalIdentitySnapshot persisted;
+    if (!m_index->persistedIdentities(&persisted)
+        || persisted.trackIdsByPath.value(canonicalPath) != ref.entityId)
+        return std::nullopt;
+    const QString root = snapshot->scan.watchedDirectories.value(0);
+    const auto path = LocalSourceScanner::validatedPath({root, true, {}},
+                                                         fileId(canonicalPath), false);
+    if (!path || *path != canonicalPath) return std::nullopt;
+    for (const auto &entry : snapshot->scan.entries) {
+        if (entry.canonicalPath != canonicalPath) continue;
+        MediaItemV2 item = entry.item;
+        item.ref = ref;
+        for (const auto action : {SourceActionV2::Play, SourceActionV2::Artwork,
+                                  SourceActionV2::Lyrics})
+            item.availableActions.insert(action, available);
+        return item;
+    }
+    return std::nullopt;
+}
 QUuid LocalSourceSession::fetchArtwork(const MediaRefV2 &media)
 {
     const QUuid id = start({RequestKind::Artwork, {}, media});

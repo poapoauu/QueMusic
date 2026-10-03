@@ -1,6 +1,9 @@
 #include "LegacyCollectionMigrationController.h"
 
 #include "SourceRegistry.h"
+#include "PlaybackCoordinator.h"
+#include "PluginManager.h"
+#include "extensions/item-lookup/v1/IItemLookupProviderV1.h"
 #include <QCryptographicHash>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -8,6 +11,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUuid>
+#include <QThread>
 
 namespace {
 QString pathDigest(const QString &path)
@@ -23,9 +27,11 @@ QString connectionName()
 }
 
 LegacyCollectionMigrationController::LegacyCollectionMigrationController(
-    SourceRegistry *registry, QString sourceDatabase, QString destinationDatabase,
+    SourceRegistry *registry, PlaybackCoordinator *playback, QString sourceDatabase,
+    QString destinationDatabase,
     QString backupDatabase, QObject *parent)
-    : QObject(parent), m_registry(registry), m_sourceDatabase(std::move(sourceDatabase)),
+    : QObject(parent), m_registry(registry), m_playback(playback),
+      m_sourceDatabase(std::move(sourceDatabase)),
       m_destinationDatabase(std::move(destinationDatabase)),
       m_backupDatabase(std::move(backupDatabase)), m_resolver(registry),
       m_migration(&m_resolver) {}
@@ -211,4 +217,81 @@ QString LegacyCollectionMigrationController::songStatus(int folderId, int songId
     return claimed.status == LegacyMediaIdentityResolver::Status::Matched
         && mediaRefV2ToVariantMap(claimed.ref) == storedRef
         ? status : QStringLiteral("unavailable");
+}
+
+bool LegacyCollectionMigrationController::playSong(int folderId, int songId)
+{
+    return submitSong(folderId, songId, true);
+}
+
+bool LegacyCollectionMigrationController::enqueueSong(int folderId, int songId)
+{
+    return submitSong(folderId, songId, false);
+}
+
+bool LegacyCollectionMigrationController::submitSong(int folderId, int songId, bool play)
+{
+    if (!m_registry || !m_playback || QThread::currentThread() != m_registry->thread()
+        || songStatus(folderId, songId) != QLatin1String("matched")) return false;
+    const QString connection = connectionName();
+    QVariantMap storedRef;
+    {
+        auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
+        db.setDatabaseName(m_destinationDatabase);
+        db.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
+        if (db.open()) {
+            QSqlQuery query(db);
+            query.prepare(QStringLiteral("SELECT ref_json FROM members WHERE folder_id=? "
+                                         "AND legacy_song_id=? AND status='matched'"));
+            query.addBindValue(folderId);
+            query.addBindValue(songId);
+            if (query.exec() && query.next())
+                storedRef = QJsonDocument::fromJson(query.value(0).toByteArray())
+                    .object().toVariantMap();
+            query.finish();
+            db.close();
+        }
+    }
+    QSqlDatabase::removeDatabase(connection);
+    if (storedRef.value(QStringLiteral("sourcePluginId")).toString() != QLatin1String("local")
+        || storedRef.value(QStringLiteral("entityId")).toString().isEmpty()
+        || storedRef.value(QStringLiteral("entityType")).toInt() != int(MediaEntityTypeV2::Track))
+        return false;
+    const MediaRefV2 ref = mediaRefV2FromVariantMap(storedRef);
+    SourceInstanceDescriptorV2 owner;
+    int matches = 0;
+    for (const auto &instance : m_registry->enabledInstances()) {
+        if (instance.sourceInstanceId != ref.sourceInstanceId) continue;
+        owner = instance;
+        ++matches;
+    }
+    if (matches != 1 || !owner.enabled || owner.state != SourceSessionStateV2::Ready
+        || owner.pluginPackageId != QLatin1String("org.quemusic.source.local")
+        || owner.sourceId != ref.sourcePluginId || owner.accountId != ref.accountId)
+        return false;
+    QPointer<PluginManager> plugins = m_registry->pluginManager();
+    if (!plugins) return false;
+    const auto lease = plugins->acquire(owner.pluginPackageId);
+    if (!lease.isValid() || !m_registry || !m_playback || !plugins) return false;
+    QPointer<IMusicSourceSessionV2> session = m_registry->sessionFor(ref.sourceInstanceId);
+    if (!session || session->state() != SourceSessionStateV2::Ready) return false;
+    auto *lookup = qobject_cast<IItemLookupProviderV1 *>(session.data());
+    if (!lookup) return false;
+    const auto item = lookup->lookupItem(ref);
+    if (!m_registry || !m_playback || !plugins || !session
+        || m_registry->sessionFor(ref.sourceInstanceId) != session.data()
+        || songStatus(folderId, songId) != QLatin1String("matched")
+        || !item || item->ref != ref
+        || item->availableActions.value(SourceActionV2::Play).state
+            != AvailabilityV2::Available) return false;
+    QVariantMap actions;
+    for (auto it = item->availableActions.cbegin(); it != item->availableActions.cend(); ++it)
+        actions.insert(QString::number(int(it.key())),
+                       actionAvailabilityV2ToJson(it.value()).toVariantMap());
+    const QVariantMap row{{QStringLiteral("ref"), mediaRefV2ToVariantMap(item->ref)},
+                          {QStringLiteral("title"), item->title},
+                          {QStringLiteral("artists"), item->artists},
+                          {QStringLiteral("durationMs"), item->durationMs},
+                          {QStringLiteral("availableActions"), actions}};
+    return !(play ? m_playback->play(row) : m_playback->enqueue(row)).isNull();
 }

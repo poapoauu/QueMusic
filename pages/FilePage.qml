@@ -738,7 +738,7 @@ Item {
                         z: 3
                         color: Style.themes.fontColor
                         font.pixelSize: 11
-                        text: listfile.migrationStatus === "matched" ? "已认领"
+                        text: listfile.migrationStatus === "matched" ? "已认领 · 插件播放"
                             : listfile.migrationStatus === "noMatch" ? "未匹配：请配置目录并重试"
                             : listfile.migrationStatus === "ambiguous" ? "多个实例匹配：请重新选择"
                             : listfile.migrationStatus === "invalidPath" ? "旧路径无效"
@@ -754,6 +754,11 @@ Item {
                         onClicked: {
                             if (filePage.legacySongBlocked(listfile.migrationStatus)) {
                                 Style.warned("这首旧歌曲尚未认领，不能直接播放；请配置本地插件并重试迁移", 0);
+                                return;
+                            }
+                            if (listfile.migrationStatus === "matched") {
+                                if (!legacyCollectionMigration.playSong(songModel.folderId, model.songId))
+                                    Style.warned("插件暂无法播放这首歌，请检查目录后重试", 0);
                                 return;
                             }
                             window.playLocalSong(model.path, model.name);
@@ -783,6 +788,13 @@ Item {
                                 onClicked: {
                                     if (filePage.legacySongBlocked(listfile.migrationStatus)) {
                                         Style.warned("这首旧歌曲尚未认领，不能加入播放列表", 0);
+                                        return;
+                                    }
+                                    if (listfile.migrationStatus === "matched") {
+                                        if (legacyCollectionMigration.enqueueSong(songModel.folderId, model.songId))
+                                            Style.warned("成功加入播放列表", 1);
+                                        else
+                                            Style.warned("插件暂无法加入这首歌，请检查目录后重试", 0);
                                         return;
                                     }
                                     var musicName = model.name;

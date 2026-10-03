@@ -226,6 +226,10 @@ install(DIRECTORY sdk/source/extensions/legacy-identity/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/legacy-identity/v1
     COMPONENT PluginSdk
     FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY sdk/source/extensions/item-lookup/v1/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/item-lookup/v1
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY sdk/plugin-ui/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/plugin-ui/v1
     COMPONENT PluginSdk
@@ -398,6 +402,8 @@ target_compile_features(quemusic_queue_history_codec PUBLIC cxx_std_17)
 target_include_directories(quemusic_queue_history_codec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(quemusic_queue_history_codec PUBLIC quemusic_source_sdk Qt6::Core)
 target_link_libraries(quemusic_playback_coordinator PUBLIC quemusic_queue_history_codec)
+target_link_libraries(quemusic_legacy_media_identity_resolver PUBLIC
+    quemusic_playback_coordinator)
 
 add_library(quemusic_queue_history_store STATIC
     core/music/QueueHistoryStore.cpp core/music/QueueHistoryStore.h)
