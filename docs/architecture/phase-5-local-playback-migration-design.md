@@ -1,6 +1,6 @@
 # Phase 5：旧“我的文件夹”本地播放迁移设计
 
-状态：身份认领扩展、Local 实现与候选实例消歧服务已落地；旧歌曲持久化迁移与 QML 接线待实现，Phase 5 尚未完成。以 [最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md) 为基线，不重做 Source SDK v2。
+状态：身份认领扩展、Local 实现、候选实例消歧服务与显式旧歌曲数据迁移已落地；用户确认入口和 QML 播放接线待实现，Phase 5 尚未完成。以 [最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md) 为基线，不重做 Source SDK v2。
 
 ## 当前事实与边界
 
@@ -41,4 +41,10 @@ Local session 在插件内部规范化路径，验证配置根目录范围、文
 
 2026-10-03 本机 Qt 6.11.1 / macOS Debug 全量构建成功，CTest 69/69 通过；PluginSdk 临时目录安装验证通过。QML 直播放入口仍待切换，本记录不作为 Phase 5 完成验收。
 
-消歧服务切片再次完成 Debug 全量构建；`quemusic_local_source_integration_test`、`quemusic_local_source_test`、`quemusic_source_registry_v2_test`、`quemusic_plugin_manager_test` 共 4/4 通过。新增集成断言覆盖候选去重、零匹配、多匹配、禁用/缺失实例、租约获取期间实例失效，以及认领后不泄露旧路径。迁移服务尚未读取或写入旧 `songs` 数据，QML 仍保留旧本地直播放；下一步须实现可备份、可重试的逐项数据迁移及用户提示。
+消歧服务切片再次完成 Debug 全量构建；`quemusic_local_source_integration_test`、`quemusic_local_source_test`、`quemusic_source_registry_v2_test`、`quemusic_plugin_manager_test` 共 4/4 通过。新增集成断言覆盖候选去重、零匹配、多匹配、禁用/缺失实例、租约获取期间实例失效，以及认领后不泄露旧路径。
+
+`LegacyCollectionMigration` 已提供显式调用的迁移服务：只读旧 `folders.type='my'` 及关联 `songs`，先用 SQLite 在线备份制作不可覆盖的旧库备份，再把文件夹展示信息与逐首歌曲的认领状态写入单独的 schema v1 SQLite 库。新库只保存不透明 `MediaRefV2`、展示快照与旧路径摘要（仅用于判断旧记录是否变化），不保存原始路径。首次发布通过临时文件改名，后续重试通过事务更新；已匹配且旧路径未变的歌曲保留原 ref，待处理歌曲可重试。原始路径仍保留在旧数据库及其备份中。输出与其他数据库或源库冲突时拒绝写入。该服务目前只在测试中调用，尚未自动读取用户真实数据库，也未切换 QML。
+
+临时数据库集成测试覆盖备份失败不发布新库、双实例歧义、缩小候选后重试成功、实例离线保留已提交身份、旧路径变化撤销过期认领、备份保持原记录，以及拒绝无关或伪装成迁移库的输出。用户确认入口和 UI 提示仍未实现，不能以测试数据库中的成功认领推断实际用户数据已经迁移。
+
+该迁移存储切片完成本机 Debug 全量构建，完整 CTest 69/69 通过。

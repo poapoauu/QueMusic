@@ -342,12 +342,14 @@ target_include_directories(quemusic_source_registry PUBLIC
 
 add_library(quemusic_legacy_media_identity_resolver STATIC
     core/migration/LegacyMediaIdentityResolver.cpp
-    core/migration/LegacyMediaIdentityResolver.h)
+    core/migration/LegacyMediaIdentityResolver.h
+    core/migration/LegacyCollectionMigration.cpp
+    core/migration/LegacyCollectionMigration.h)
 target_compile_features(quemusic_legacy_media_identity_resolver PUBLIC cxx_std_17)
 target_include_directories(quemusic_legacy_media_identity_resolver PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/migration)
 target_link_libraries(quemusic_legacy_media_identity_resolver PUBLIC
-    quemusic_source_registry)
+    quemusic_source_registry Qt6::Sql)
 
 add_library(quemusic_plugin_settings STATIC
     core/settings/PluginSettingsController.h

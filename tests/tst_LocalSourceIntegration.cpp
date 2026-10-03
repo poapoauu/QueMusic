@@ -1,5 +1,6 @@
 #include "PlaybackCoordinator.h"
 #include "LegacyMediaIdentityResolver.h"
+#include "LegacyCollectionMigration.h"
 #include "PlaybackSink.h"
 #include "PluginManager.h"
 #include "SourceAccountStore.h"
@@ -13,6 +14,8 @@
 #include <QPointer>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QUuid>
@@ -330,6 +333,167 @@ private slots:
                          }, Qt::SingleShotConnection);
         QCOMPARE(resolver.resolve(fileUrl, {"local/one"}).status, Status::Unavailable);
         QVERIFY(!h.registry.sessionFor("local/one"));
+    }
+
+    void legacyCollectionsMigrateWithBackupAndRetry()
+    {
+        Harness h;
+        QVERIFY(h.load());
+        QTemporaryDir root;
+        QTemporaryDir outside;
+        QVERIFY(root.isValid() && outside.isValid());
+        const QString track = root.filePath("known.wav");
+        const QString foreign = outside.filePath("foreign.wav");
+        QVERIFY(writeAudio(track));
+        QVERIFY(writeAudio(foreign));
+        QVERIFY(h.save("one", root.path()));
+        QVERIFY(h.save("two", root.path()));
+        auto *one = h.registry.sessionFor("local/one");
+        auto *two = h.registry.sessionFor("local/two");
+        QVERIFY(one && two);
+        QTRY_COMPARE(one->state(), SourceSessionStateV2::Ready);
+        QTRY_COMPARE(two->state(), SourceSessionStateV2::Ready);
+        h.children("one", root.path());
+        h.children("two", root.path());
+
+        const QString oldDb = h.storage.filePath("old.sqlite");
+        const QString newDb = h.storage.filePath("collections.sqlite");
+        const QString backup = h.storage.filePath("old.backup.sqlite");
+        const QString connection = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+            db.setDatabaseName(oldDb);
+            QVERIFY(db.open());
+            QSqlQuery query(db);
+            QVERIFY(query.exec("CREATE TABLE folders(id INTEGER PRIMARY KEY,name TEXT,type TEXT)"));
+            QVERIFY(query.exec("CREATE TABLE songs(id INTEGER PRIMARY KEY,folder_id INTEGER,name TEXT,"
+                               "path TEXT,singer TEXT,duration INTEGER)"));
+            QVERIFY(query.exec("INSERT INTO folders VALUES(1,'Favorites','my')"));
+            QVERIFY(query.exec("INSERT INTO folders VALUES(2,'Legacy local','local')"));
+            query.prepare("INSERT INTO songs VALUES(?,?,?,?,?,?)");
+            const QList<QString> paths{track, foreign, QStringLiteral("relative.wav"), track};
+            for (int i = 0; i < paths.size(); ++i) {
+                query.bindValue(0, i + 1);
+                query.bindValue(1, i == 3 ? 2 : 1);
+                query.bindValue(2, QStringLiteral("Track %1").arg(i + 1));
+                query.bindValue(3, paths[i]);
+                query.bindValue(4, QStringLiteral("Artist"));
+                query.bindValue(5, 42);
+                QVERIFY(query.exec());
+            }
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connection);
+
+        LegacyMediaIdentityResolver resolver(&h.registry);
+        LegacyCollectionMigration migration(&resolver);
+        const QString backupDirectory = h.storage.filePath("backup-directory");
+        QVERIFY(QDir().mkpath(backupDirectory));
+        const auto noBackup = migration.run(oldDb, newDb, backupDirectory, {"local/one"});
+        QVERIFY(!noBackup.committed);
+        QCOMPARE(noBackup.errorKey, QStringLiteral("local.collectionMigration.backupFailed"));
+        QVERIFY(!QFileInfo::exists(newDb));
+        const auto first = migration.run(oldDb, newDb, backup, {"local/one", "local/two"});
+        QVERIFY2(first.committed, qPrintable(first.errorKey));
+        QCOMPARE(first.ambiguous, 1);
+        QCOMPARE(first.noMatch, 1);
+        QCOMPARE(first.invalidPath, 1);
+        QVERIFY(QFileInfo::exists(backup));
+        QFile output(newDb);
+        QVERIFY(output.open(QIODevice::ReadOnly));
+        const QByteArray raw = output.readAll();
+        QVERIFY(!raw.contains(track.toUtf8()));
+        QVERIFY(!raw.contains(foreign.toUtf8()));
+
+        const auto second = migration.run(oldDb, newDb, backup, {"local/one"});
+        QVERIFY2(second.committed, qPrintable(second.errorKey));
+        QCOMPARE(second.matched, 1);
+        QCOMPARE(second.noMatch, 1);
+        QCOMPARE(second.invalidPath, 1);
+        QVERIFY(h.registry.disableInstance("local/one"));
+        const auto retry = migration.run(oldDb, newDb, backup, {"local/one"});
+        QVERIFY2(retry.committed, qPrintable(retry.errorKey));
+        QCOMPARE(retry.matched, 1); // Keep the committed identity when the instance is offline.
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+            db.setDatabaseName(newDb);
+            db.setConnectOptions("QSQLITE_OPEN_READONLY");
+            QVERIFY(db.open());
+            QSqlQuery query(db);
+            QVERIFY(query.exec("SELECT COUNT(*) FROM members"));
+            QVERIFY(query.next());
+            QCOMPARE(query.value(0).toInt(), 3);
+            QVERIFY(query.exec("SELECT status,ref_json FROM members WHERE legacy_song_id=1"));
+            QVERIFY(query.next());
+            QCOMPARE(query.value(0).toString(), QStringLiteral("matched"));
+            QVERIFY(query.value(1).toString().contains("local/one"));
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connection);
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+            db.setDatabaseName(oldDb);
+            QVERIFY(db.open());
+            QSqlQuery query(db);
+            query.prepare("UPDATE songs SET path=? WHERE id=1");
+            query.addBindValue(QStringLiteral("relative.wav"));
+            QVERIFY(query.exec());
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connection);
+        const auto changed = migration.run(oldDb, newDb, backup, {"local/one"});
+        QVERIFY2(changed.committed, qPrintable(changed.errorKey));
+        QCOMPARE(changed.matched, 0);
+        QCOMPARE(changed.invalidPath, 2);
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+            db.setDatabaseName(backup);
+            db.setConnectOptions("QSQLITE_OPEN_READONLY");
+            QVERIFY(db.open());
+            QSqlQuery query(db);
+            QVERIFY(query.exec("SELECT path FROM songs WHERE id=1"));
+            QVERIFY(query.next());
+            QCOMPARE(query.value(0).toString(), track);
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connection);
+        const QString unrelatedPath = h.storage.filePath("unrelated.sqlite");
+        QFile unrelated(unrelatedPath);
+        QVERIFY(unrelated.open(QIODevice::WriteOnly));
+        QCOMPARE(unrelated.write("unrelated user data"), qint64(19));
+        unrelated.close();
+        const auto rejected = migration.run(oldDb, unrelatedPath, backup, {"local/one"});
+        QVERIFY(!rejected.committed);
+        QVERIFY(unrelated.open(QIODevice::ReadOnly));
+        QCOMPARE(unrelated.readAll(), QByteArray("unrelated user data"));
+        unrelated.close();
+        const QString lookalikePath = h.storage.filePath("lookalike.sqlite");
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+            db.setDatabaseName(lookalikePath);
+            QVERIFY(db.open());
+            QSqlQuery query(db);
+            QVERIFY(query.exec("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)"));
+            QVERIFY(query.exec("CREATE TABLE folders(legacy_id INTEGER PRIMARY KEY,title TEXT NOT NULL)"));
+            QVERIFY(query.exec("CREATE TABLE members(folder_id INTEGER,legacy_song_id INTEGER)"));
+            QVERIFY(query.exec("INSERT INTO folders VALUES(99,'unrelated')"));
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connection);
+        const auto lookalike = migration.run(oldDb, lookalikePath, backup, {"local/one"});
+        QVERIFY(!lookalike.committed);
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+            db.setDatabaseName(lookalikePath);
+            db.setConnectOptions("QSQLITE_OPEN_READONLY");
+            QVERIFY(db.open());
+            QSqlQuery query(db);
+            QVERIFY(query.exec("SELECT title FROM folders WHERE legacy_id=99"));
+            QVERIFY(query.next());
+            QCOMPARE(query.value(0).toString(), QStringLiteral("unrelated"));
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connection);
     }
 
     void unloadWaitsForWorkersAndLease()
