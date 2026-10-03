@@ -133,6 +133,13 @@ private slots:
         QTRY_VERIFY(preview.isVisible());
         auto *filePage = page->findChild<QObject *>("filePageUnderTest");
         QVERIFY(filePage);
+        QVariant blocked;
+        QVERIFY(QMetaObject::invokeMethod(filePage, "legacySongBlocked",
+            Q_RETURN_ARG(QVariant, blocked), Q_ARG(QVariant, QVariant(QStringLiteral("noMatch")))));
+        QVERIFY(blocked.toBool());
+        QVERIFY(QMetaObject::invokeMethod(filePage, "legacySongBlocked",
+            Q_RETURN_ARG(QVariant, blocked), Q_ARG(QVariant, QVariant(QStringLiteral("matched")))));
+        QVERIFY(!blocked.toBool());
         auto *migrationButton = filePage->findChild<QObject *>("legacyCollectionMigrationOpen");
         auto *migrationDialog = filePage->findChild<QObject *>("legacyCollectionMigrationConfirm");
         auto *migrationChoice = filePage->findChild<QObject *>("legacyCollectionMigrationInstance");

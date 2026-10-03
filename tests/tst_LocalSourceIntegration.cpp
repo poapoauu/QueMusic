@@ -389,6 +389,7 @@ private slots:
         LegacyMediaIdentityResolver resolver(&h.registry);
         LegacyCollectionMigration migration(&resolver);
         LegacyCollectionMigrationController controller(&h.registry, oldDb, newDb, backup);
+        QCOMPARE(controller.songStatus(1, 1), QStringLiteral("notMigrated"));
         QCOMPARE(controller.preview().value(QStringLiteral("folderCount")).toInt(), 1);
         QCOMPARE(controller.preview().value(QStringLiteral("songCount")).toInt(), 3);
         QCOMPARE(controller.candidates().size(), 2);
@@ -414,6 +415,10 @@ private slots:
         QCOMPARE(first.ambiguous, 1);
         QCOMPARE(first.noMatch, 1);
         QCOMPARE(first.invalidPath, 1);
+        QCOMPARE(controller.songStatus(1, 1), QStringLiteral("ambiguous"));
+        QCOMPARE(controller.songStatus(1, 2), QStringLiteral("noMatch"));
+        QCOMPARE(controller.songStatus(1, 3), QStringLiteral("invalidPath"));
+        QCOMPARE(controller.songStatus(1, 99), QStringLiteral("pending"));
         QVERIFY(QFileInfo::exists(backup));
         QFile output(newDb);
         QVERIFY(output.open(QIODevice::ReadOnly));
@@ -427,7 +432,13 @@ private slots:
         QCOMPARE(second.value(QStringLiteral("matched")).toInt(), 1);
         QCOMPARE(second.value(QStringLiteral("noMatch")).toInt(), 1);
         QCOMPARE(second.value(QStringLiteral("invalidPath")).toInt(), 1);
+        QCOMPARE(controller.revision(), quint64(1));
+        QCOMPARE(controller.songStatus(1, 1), QStringLiteral("matched"));
+        QVERIFY(QFile::remove(track));
+        QVERIFY(QFile::link(foreign, track));
+        QCOMPARE(controller.songStatus(1, 1), QStringLiteral("unavailable"));
         QVERIFY(h.registry.disableInstance("local/one"));
+        QCOMPARE(controller.songStatus(1, 1), QStringLiteral("unavailable"));
         QCOMPARE(controller.candidates().size(), 1);
         QVERIFY(!controller.run(QStringLiteral("local/one"))
                     .value(QStringLiteral("committed")).toBool());
@@ -461,10 +472,12 @@ private slots:
             db.close();
         }
         QSqlDatabase::removeDatabase(connection);
+        QCOMPARE(controller.songStatus(1, 1), QStringLiteral("stale"));
         const auto changed = migration.run(oldDb, newDb, backup, {"local/one"});
         QVERIFY2(changed.committed, qPrintable(changed.errorKey));
         QCOMPARE(changed.matched, 0);
         QCOMPARE(changed.invalidPath, 2);
+        QCOMPARE(controller.songStatus(1, 1), QStringLiteral("invalidPath"));
         {
             auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
             db.setDatabaseName(backup);

@@ -12,6 +12,14 @@ Item {
     property var musicAdapter: null
     property var legacyMigrationCandidates: []
     property var legacyMigrationPreview: ({})
+    function legacySongStatus(folderId, songId) {
+        if (typeof legacyCollectionMigration === "undefined") return "notMigrated";
+        var revision = legacyCollectionMigration.revision;
+        return legacyCollectionMigration.songStatus(folderId, songId);
+    }
+    function legacySongBlocked(status) {
+        return status !== "notMigrated" && status !== "matched";
+    }
     signal requestPluginSettings(string packageId, string instanceId)
     function loadMoreDirectorySections(rows) {
         if (!musicAdapter || !rows) return;
@@ -672,6 +680,7 @@ Item {
                 headerModel: ["标题","","","菜单"]
                 delegate: Rectangle {
                     id: listfile
+                    property string migrationStatus: filePage.legacySongStatus(songModel.folderId, model.songId)
                     height: 60
                     width: fileView.width - 16
                     radius: Style.settings.labelRadius
@@ -723,11 +732,30 @@ Item {
                         Behavior on color { ColorAnimation { duration: 120 } }
                     }
 
+                    Text {
+                        x: 80
+                        y: 38
+                        z: 3
+                        color: Style.themes.fontColor
+                        font.pixelSize: 11
+                        text: listfile.migrationStatus === "matched" ? "已认领"
+                            : listfile.migrationStatus === "noMatch" ? "未匹配：请配置目录并重试"
+                            : listfile.migrationStatus === "ambiguous" ? "多个实例匹配：请重新选择"
+                            : listfile.migrationStatus === "invalidPath" ? "旧路径无效"
+                            : listfile.migrationStatus === "stale" ? "旧记录已变化：请重试迁移"
+                            : listfile.migrationStatus === "notMigrated" ? ""
+                            : "暂不可用：请重试迁移"
+                    }
+
                     MouseArea {
                         id: fileArea
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: {
+                            if (filePage.legacySongBlocked(listfile.migrationStatus)) {
+                                Style.warned("这首旧歌曲尚未认领，不能直接播放；请配置本地插件并重试迁移", 0);
+                                return;
+                            }
                             window.playLocalSong(model.path, model.name);
                             var musicName = model.name;
                             var musicPath = model.path;
@@ -753,6 +781,10 @@ Item {
                                 hoverColor: Qt.rgba(0.5,0.5,0.5,0.2)
                                 shadowEnabled: false
                                 onClicked: {
+                                    if (filePage.legacySongBlocked(listfile.migrationStatus)) {
+                                        Style.warned("这首旧歌曲尚未认领，不能加入播放列表", 0);
+                                        return;
+                                    }
                                     var musicName = model.name;
                                     var musicPath = model.path;
                                     var listIndex = listfile.findIndexByValue(playListModel, "name", musicName);
