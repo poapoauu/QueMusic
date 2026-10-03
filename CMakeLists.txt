@@ -344,7 +344,9 @@ add_library(quemusic_legacy_media_identity_resolver STATIC
     core/migration/LegacyMediaIdentityResolver.cpp
     core/migration/LegacyMediaIdentityResolver.h
     core/migration/LegacyCollectionMigration.cpp
-    core/migration/LegacyCollectionMigration.h)
+    core/migration/LegacyCollectionMigration.h
+    core/migration/LegacyCollectionMigrationController.cpp
+    core/migration/LegacyCollectionMigrationController.h)
 target_compile_features(quemusic_legacy_media_identity_resolver PUBLIC cxx_std_17)
 target_include_directories(quemusic_legacy_media_identity_resolver PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/migration)
@@ -1293,7 +1295,8 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     $<$<PLATFORM_ID:Windows>:icon.rc>
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_plugin_ui)
+target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_plugin_ui
+    quemusic_legacy_media_identity_resolver)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core/plugin-ui

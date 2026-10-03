@@ -84,6 +84,18 @@ signals:
     void exit();
 };
 
+class FakeLegacyCollectionMigration final : public QObject {
+    Q_OBJECT
+public:
+    int runs = 0;
+    Q_INVOKABLE QVariantMap preview() const { return {{"folderCount", 1}, {"songCount", 3}}; }
+    Q_INVOKABLE QVariantList candidates() const {
+        return {QVariantMap{{"instanceId", "local/one"}, {"displayName", "One"}},
+                QVariantMap{{"instanceId", "local/two"}, {"displayName", "Two"}}};
+    }
+    Q_INVOKABLE QVariantMap run(const QString &) { ++runs; return {{"committed", true}}; }
+};
+
 class LocalDirectoriesQmlTest final : public QObject {
     Q_OBJECT
 private slots:
@@ -93,6 +105,7 @@ private slots:
         DirectoryQmlApi adapter;
         DirectoryQmlMusicApi musicApi;
         DirectoryQmlWindow window;
+        FakeLegacyCollectionMigration migration;
         QQuickItem mainLayout;
         OnlineListModel myFolders;
         auto *context = engine.rootContext();
@@ -100,6 +113,7 @@ private slots:
         context->setContextProperty("window", &window);
         context->setContextProperty("mainLayout", &mainLayout);
         context->setContextProperty("myFolderModel", &myFolders);
+        context->setContextProperty("legacyCollectionMigration", &migration);
         context->setContextProperty("Style", QVariantMap{
             {"themes", QVariantMap{{"fontColor", "#202020"}, {"containColor", "#eeeeee"},
                                      {"fullColor", "#ffffff"}, {"sideColor", "#eeeeee"},
@@ -108,12 +122,26 @@ private slots:
             {"settings", QVariantMap{{"pageTitle", 20}, {"labelRadius", 10},
                                       {"textmain", 14}, {"texticon", 16}}}});
         context->setContextProperty("iconFont", QVariantMap{{"name", QString{}}});
+        QQuickWindow preview;
+        preview.resize(900, 600);
         QQmlComponent component(&engine, QUrl("qrc:/QueMusic/tests/qml/tst_LocalDirectories.qml"));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         std::unique_ptr<QObject> page(component.createWithInitialProperties({{"directoryAdapter", QVariant::fromValue(&adapter)}}));
         QVERIFY2(page, qPrintable(component.errorString()));
+        qobject_cast<QQuickItem *>(page.get())->setParentItem(preview.contentItem());
+        preview.show();
+        QTRY_VERIFY(preview.isVisible());
         auto *filePage = page->findChild<QObject *>("filePageUnderTest");
         QVERIFY(filePage);
+        auto *migrationButton = filePage->findChild<QObject *>("legacyCollectionMigrationOpen");
+        auto *migrationDialog = filePage->findChild<QObject *>("legacyCollectionMigrationConfirm");
+        auto *migrationChoice = filePage->findChild<QObject *>("legacyCollectionMigrationInstance");
+        QVERIFY(migrationButton && migrationDialog && migrationChoice);
+        QVERIFY(QMetaObject::invokeMethod(migrationButton, "clicked"));
+        QTRY_VERIFY(migrationDialog->property("visible").toBool());
+        QCOMPARE(migrationChoice->property("currentIndex").toInt(), -1);
+        QCOMPARE(migration.runs, 0);
+        QVERIFY(QMetaObject::invokeMethod(migrationDialog, "close"));
         auto *tabs = filePage->findChild<QObject *>("localDirectoryTabs");
         QVERIFY(tabs);
         QVERIFY(QMetaObject::invokeMethod(tabs, "tabChange", Q_ARG(int, 1)));
@@ -201,11 +229,6 @@ private slots:
                                                 {"settingsInstanceId", "local/home"},
                                                 {"_adapterKey", 1ULL}}});
             emit adapter.directoryChanged();
-            QQuickWindow preview;
-            preview.resize(900, 600);
-            qobject_cast<QQuickItem *>(page.get())->setParentItem(preview.contentItem());
-            preview.show();
-            QTRY_VERIFY(preview.isVisible());
             const QImage image = preview.grabWindow();
             QVERIFY(!image.isNull());
             QVERIFY(image.save(qEnvironmentVariable("QUEMUSIC_TASK8_SCREENSHOT_PATH")));

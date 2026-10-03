@@ -10,6 +10,8 @@ Item {
     id: filePage
 
     property var musicAdapter: null
+    property var legacyMigrationCandidates: []
+    property var legacyMigrationPreview: ({})
     signal requestPluginSettings(string packageId, string instanceId)
     function loadMoreDirectorySections(rows) {
         if (!musicAdapter || !rows) return;
@@ -150,6 +152,83 @@ Item {
                             }
                         }
                         onClicked: dialog.open()
+                    }
+                    QButton {
+                        objectName: "legacyCollectionMigrationOpen"
+                        height: 38
+                        text: "迁移旧歌曲"
+                        iconCharacter: "\uf0f1"
+                        onClicked: {
+                            if (typeof legacyCollectionMigration === "undefined") return;
+                            filePage.legacyMigrationPreview = legacyCollectionMigration.preview();
+                            if (filePage.legacyMigrationPreview.errorKey) {
+                                Style.warned("无法读取旧歌曲数据库，请保留原文件并重试", 0);
+                                return;
+                            }
+                            if (filePage.legacyMigrationPreview.songCount === 0) {
+                                Style.warned("我的文件夹中没有待迁移的旧歌曲", 0);
+                                return;
+                            }
+                            filePage.legacyMigrationCandidates = legacyCollectionMigration.candidates();
+                            if (filePage.legacyMigrationCandidates.length === 0) {
+                                Style.warned("请先在本地音乐插件设置中配置并启用目录", 0);
+                                filePage.requestPluginSettings("org.quemusic.source.local", "");
+                                return;
+                            }
+                            legacyMigrationDialog.open();
+                        }
+                    }
+                }
+
+                Dialog {
+                    id: legacyMigrationDialog
+                    objectName: "legacyCollectionMigrationConfirm"
+                    parent: myFile
+                    x: (parent.width - width) / 2
+                    y: (parent.height - height) / 2
+                    width: 420
+                    modal: true
+                    focus: true
+                    title: "确认迁移旧歌曲"
+                    standardButtons: Dialog.Ok | Dialog.Cancel
+                    onOpened: migrationInstanceChoice.currentIndex = filePage.legacyMigrationCandidates.length === 1 ? 0 : -1
+                    onAccepted: {
+                        if (migrationInstanceChoice.currentIndex < 0) {
+                            Style.warned("请先选择要认领歌曲的本地音乐实例", 0);
+                            return;
+                        }
+                        var result = legacyCollectionMigration.run(migrationInstanceChoice.currentValue);
+                        if (!result.committed) {
+                            Style.warned("迁移未完成；旧歌曲未被删除，请检查本地插件设置后重试", 0);
+                            return;
+                        }
+                        var pending = result.noMatch + result.ambiguous + result.unavailable + result.invalidPath;
+                        Style.warned("已认领 " + result.matched + " 首，待处理 " + pending
+                                     + " 首；旧数据库已备份且原记录保留", pending === 0 ? 1 : 0);
+                    }
+                    contentItem: Column {
+                        spacing: 12
+                        Text {
+                            width: legacyMigrationDialog.availableWidth
+                            wrapMode: Text.WordWrap
+                            color: Style.themes.fontColor
+                            text: "发现 " + filePage.legacyMigrationPreview.songCount
+                                  + " 首旧歌曲。请选择本地音乐实例；仅该实例已扫描的文件可被认领。"
+                        }
+                        ComboBox {
+                            id: migrationInstanceChoice
+                            objectName: "legacyCollectionMigrationInstance"
+                            width: legacyMigrationDialog.availableWidth
+                            model: filePage.legacyMigrationCandidates
+                            textRole: "displayName"
+                            valueRole: "instanceId"
+                        }
+                        Text {
+                            width: legacyMigrationDialog.availableWidth
+                            wrapMode: Text.WordWrap
+                            color: Style.themes.fontColor
+                            text: "确认后先备份旧数据库，再保存逐首认领结果。未认领歌曲不会自动播放或删除，可配置目录并重试。"
+                        }
                     }
                 }
 

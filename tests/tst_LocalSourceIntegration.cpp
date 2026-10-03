@@ -1,6 +1,7 @@
 #include "PlaybackCoordinator.h"
 #include "LegacyMediaIdentityResolver.h"
 #include "LegacyCollectionMigration.h"
+#include "LegacyCollectionMigrationController.h"
 #include "PlaybackSink.h"
 #include "PluginManager.h"
 #include "SourceAccountStore.h"
@@ -387,6 +388,21 @@ private slots:
 
         LegacyMediaIdentityResolver resolver(&h.registry);
         LegacyCollectionMigration migration(&resolver);
+        LegacyCollectionMigrationController controller(&h.registry, oldDb, newDb, backup);
+        QCOMPARE(controller.preview().value(QStringLiteral("folderCount")).toInt(), 1);
+        QCOMPARE(controller.preview().value(QStringLiteral("songCount")).toInt(), 3);
+        QCOMPARE(controller.candidates().size(), 2);
+        for (const auto &candidate : controller.candidates()) {
+            const auto row = candidate.toMap();
+            QVERIFY(row.value(QStringLiteral("displayName")).toString().contains(
+                row.value(QStringLiteral("instanceId")).toString()));
+        }
+        const auto invalidCandidate = controller.run(QStringLiteral("local/not-configured"));
+        QVERIFY(!invalidCandidate.value(QStringLiteral("committed")).toBool());
+        QCOMPARE(invalidCandidate.value(QStringLiteral("errorKey")).toString(),
+                 QStringLiteral("local.collectionMigration.invalidCandidate"));
+        QVERIFY(!QFileInfo::exists(newDb));
+        QVERIFY(!QFileInfo::exists(backup));
         const QString backupDirectory = h.storage.filePath("backup-directory");
         QVERIFY(QDir().mkpath(backupDirectory));
         const auto noBackup = migration.run(oldDb, newDb, backupDirectory, {"local/one"});
@@ -405,12 +421,16 @@ private slots:
         QVERIFY(!raw.contains(track.toUtf8()));
         QVERIFY(!raw.contains(foreign.toUtf8()));
 
-        const auto second = migration.run(oldDb, newDb, backup, {"local/one"});
-        QVERIFY2(second.committed, qPrintable(second.errorKey));
-        QCOMPARE(second.matched, 1);
-        QCOMPARE(second.noMatch, 1);
-        QCOMPARE(second.invalidPath, 1);
+        const auto second = controller.run(QStringLiteral("local/one"));
+        QVERIFY2(second.value(QStringLiteral("committed")).toBool(),
+                 qPrintable(second.value(QStringLiteral("errorKey")).toString()));
+        QCOMPARE(second.value(QStringLiteral("matched")).toInt(), 1);
+        QCOMPARE(second.value(QStringLiteral("noMatch")).toInt(), 1);
+        QCOMPARE(second.value(QStringLiteral("invalidPath")).toInt(), 1);
         QVERIFY(h.registry.disableInstance("local/one"));
+        QCOMPARE(controller.candidates().size(), 1);
+        QVERIFY(!controller.run(QStringLiteral("local/one"))
+                    .value(QStringLiteral("committed")).toBool());
         const auto retry = migration.run(oldDb, newDb, backup, {"local/one"});
         QVERIFY2(retry.committed, qPrintable(retry.errorKey));
         QCOMPARE(retry.matched, 1); // Keep the committed identity when the instance is offline.

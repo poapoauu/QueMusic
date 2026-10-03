@@ -16,6 +16,7 @@
 #include "core/media/MacKeychainSecretStore.h"
 #include "core/media/SourceAccountStore.h"
 #include "core/migration/LegacyLocalFolderMigration.h"
+#include "core/migration/LegacyCollectionMigrationController.h"
 #include "core/music/MusicHub.h"
 #include "core/music/OriginalUiMusicAdapter.h"
 #include "core/music/PlaybackCoordinator.h"
@@ -189,6 +190,12 @@ int main(int argc, char *argv[])
         qWarning().noquote() << "local.migration.pluginUnavailable";
     }
     SourceRegistry sourceRegistry(sourcePlugins.get(), &sourceAccountStore);
+    const QString legacyDataDirectory = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation);
+    LegacyCollectionMigrationController legacyCollectionMigration(
+        &sourceRegistry, legacyDataDirectory + QStringLiteral("/player_data.db"),
+        legacyDataDirectory + QStringLiteral("/legacy-my-collections.sqlite"),
+        legacyDataDirectory + QStringLiteral("/player_data.phase5-backup.sqlite"));
     SourceScopeStore sourceScope(&sourceAccountSettings);
     QtPlaybackController playbackController;
     PlaybackCoordinator playbackCoordinator(&sourceRegistry, &playbackController);
@@ -209,6 +216,8 @@ int main(int argc, char *argv[])
                                              &originalUiMusic);
     engine.rootContext()->setContextProperty(QStringLiteral("queueHistoryStore"),
                                              &queueHistoryStore);
+    engine.rootContext()->setContextProperty(QStringLiteral("legacyCollectionMigration"),
+                                             &legacyCollectionMigration);
     // Register generated QML types after constructing the engine, matching
     // Qt's module initialization order and avoiding a root-module ambiguity.
     qml_register_types_MeshGradientItem();
