@@ -82,6 +82,11 @@ private slots:
         QVERIFY(home.contains(QStringLiteral("queueHistoryStore.latest")));
         QVERIFY(home.contains(QStringLiteral("queueHistoryStore.playLatest()")));
         QVERIFY(!home.contains(QStringLiteral("Options.lastSongs")));
+        QVERIFY(home.contains(QStringLiteral("musicAdapter.favoriteLists.count")));
+        QVERIFY(!home.contains(QStringLiteral("favoritesList.count")));
+        QVERIFY(home.contains(QStringLiteral("objectName: \"homeCategoryDetailList\"")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi.musicPlaylists")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi.getMusicPlaylists(")));
 
         for (const QString &page : {QStringLiteral("pages/PlaylistPage.qml"),
                                     QStringLiteral("pages/FavouritePage.qml"),

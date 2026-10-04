@@ -259,6 +259,8 @@ Home/Search/Playlist/Favourite/File 等旧 QML
 
 “上次听到”现已改用统一队列历史的展示快照；仅当原 occurrence 仍在队列且来源可用时允许通过 Coordinator 重播，移除或禁用后保持可见但不可重播。Home 不再读取 `Options.lastSongs` 或用旧平台 hash/source 入队。私人漫游/雷达、热门歌单及其详情仍待迁移；全页/全阶段验收尚未完成。
 
+Home 的“我的收藏歌单”现显示 Adapter 已加载的歌单数并激活收藏页；分类详情弹窗删除了不可达的旧 `MusicApi.musicPlaylists` 回退，浏览需通过 Adapter Capability。私人漫游/雷达与热门歌单仍是旧平台入口，后续需可信的插件推荐/歌单来源，不能复用不相符的分类数据冒充。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

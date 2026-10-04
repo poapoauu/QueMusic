@@ -73,6 +73,7 @@ class FakeOriginalUiMusic final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
+    Q_PROPERTY(QObject *favoriteLists READ favoriteLists CONSTANT)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
@@ -81,6 +82,7 @@ public:
 
     QObject *recommendSongs() { return &recommend; }
     QObject *categoryItems() { return &category; }
+    QObject *favoriteLists() { return &favorites; }
     QVariantList sourceOptions() const
     {
         if (!customSourceOptions.isEmpty()) return customSourceOptions;
@@ -120,6 +122,7 @@ public:
 
     FakeListModel recommend;
     FakeListModel category;
+    FakeListModel favorites;
     QList<int> activatedPages;
     QList<QPair<int, QString>> moreRequests;
     QList<QVariantMap> browsedRows;
@@ -140,11 +143,13 @@ class FakeOriginalUiMusicNoPagination final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
+    Q_PROPERTY(QObject *favoriteLists READ favoriteLists CONSTANT)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions CONSTANT)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId CONSTANT)
 public:
     QObject *recommendSongs() { return &recommend; }
     QObject *categoryItems() { return &category; }
+    QObject *favoriteLists() { return &favorites; }
     QVariantList sourceOptions() const
     {
         return {QVariantMap{{QStringLiteral("sourceInstanceId"), QString{}},
@@ -160,6 +165,7 @@ public:
 
     FakeListModel recommend;
     FakeListModel category;
+    FakeListModel favorites;
     QList<int> activatedPages;
     QList<QVariantMap> browsedRows;
     QList<QVariantMap> playedRows;
@@ -352,6 +358,22 @@ std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, QObje
 class OriginalUiRecommendationQmlTest final : public QObject {
     Q_OBJECT
 private slots:
+    void homeFavoriteCountUsesLoadedPluginLists()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        context.legacyLists()->setRows({QVariantMap{{"title", "Legacy list"}}});
+        adapter.favorites.setRows({QVariantMap{{"title", "Plugin list A"}},
+                                   QVariantMap{{"title", "Plugin list B"}}});
+        auto home = loadPage(engine, QStringLiteral("pages/HomePage.qml"), &adapter, &error);
+        QVERIFY2(home, qPrintable(error));
+        QVERIFY(adapter.activatedPages.contains(2));
+        QObject *count = home->findChild<QObject *>(QStringLiteral("homeFavoritePlaylistCount"));
+        QVERIFY(count);
+        QCOMPARE(count->property("text").toString(), QStringLiteral("已加载 2 个歌单"));
+        adapter.favorites.setRows({QVariantMap{{"title", "Plugin list A"}}});
+        QTRY_COMPARE(count->property("text").toString(), QStringLiteral("已加载 1 个歌单"));
+    }
+
     void latestCardReplaysOnlyAvailableQueueHistory()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
@@ -377,7 +399,7 @@ private slots:
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
         auto home = loadPage(engine, QStringLiteral("pages/HomePage.qml"), &adapter, &error);
-        QVERIFY2(home, qPrintable(error)); QTRY_COMPARE(adapter.activatedPages, (QList<int>{0, 1}));
+        QVERIFY2(home, qPrintable(error)); QTRY_COMPARE(adapter.activatedPages, (QList<int>{0, 1, 2}));
         QObject *scope = home->findChild<QObject *>(QStringLiteral("recommendationSourceScope"));
         QVERIFY(scope); QVERIFY(QMetaObject::invokeMethod(scope, "transformed", Q_ARG(int, 1)));
         QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("source-b"));
@@ -459,6 +481,15 @@ private slots:
         QObject *homeDetail = home->findChild<QObject *>(QStringLiteral("recommendationDetailWindow"));
         QVERIFY(homeDetail);
         QTRY_VERIFY(homeDetail->property("visible").toBool());
+        QObject *detailList = homeDetail->findChild<QObject *>(QStringLiteral("homeCategoryDetailList"));
+        QVERIFY(detailList);
+        QCOMPARE(detailList->property("model").value<QObject *>(), adapter.categoryItems());
+        adapter.category.setRows({QVariantMap{{"title", "Unavailable category"},
+                                              {"_adapterKey", 74ULL}, {"canBrowse", false}}});
+        QCoreApplication::processEvents();
+        QVERIFY(QMetaObject::invokeMethod(detailList, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.browsedRows.size(), 1);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
         QCOMPARE(context.windowObject()->exitIndex, 1);
     }
 

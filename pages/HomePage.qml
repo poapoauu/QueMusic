@@ -73,6 +73,7 @@ Item {
         if (musicAdapter) {
             musicAdapter.activatePage(0)
             musicAdapter.activatePage(1)
+            musicAdapter.activatePage(2)
         }
         const hour = new Date().getHours()
         if (hour > 3 && hour < 9) homeText.text = "早上好"
@@ -403,7 +404,10 @@ Item {
                                     color: Style.themes.fontColor
                                 }
                                 Text {
-                                    text: favoritesList.count + " 个歌单"
+                                    objectName: "homeFavoritePlaylistCount"
+                                    text: musicAdapter && musicAdapter.favoriteLists
+                                          ? "已加载 " + musicAdapter.favoriteLists.count + " 个歌单"
+                                          : "已加载 0 个歌单"
                                     font.pixelSize: Style.settings.textmain
                                     color: Style.themes.textColor
                                 }
@@ -932,11 +936,12 @@ Item {
         haveControl: false
         content: QListView {
             id: recomView
+            objectName: "homeCategoryDetailList"
             x: 24
             y: 128
             width: recommendWindow.width - 32
             height: recommendWindow.height - 128
-            model: musicAdapter ? musicAdapter.categoryItems : MusicApi.musicPlaylists
+            model: musicAdapter ? musicAdapter.categoryItems : null
             clip: true
             //reuseItems: true
             topMargin: 8
@@ -944,38 +949,20 @@ Item {
             isList: true
 
             onEnded: {
-                if (musicAdapter) {
-                    if (typeof musicAdapter.loadMore === "function") {
-                        musicAdapter.loadMore(1, "")
-                        isEnd = false
-                    } else {
-                        isEnd = true
-                    }
-                } else if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
-                    MusicApi.getMusicPlaylists(MusicApi.globaltagid,MusicApi.musicPlaylists.count / 20 + 1,20);
-                    isEnd = false;
-                } else {
-                    if(MusicApi.musicPlaylists.count !== 0) {
-                        isEnd = true;
-                    }
-                }
+                if (musicAdapter && typeof musicAdapter.loadMore === "function") {
+                    musicAdapter.loadMore(1, "")
+                    isEnd = false
+                } else isEnd = true
             }
 
             onClicked: (index) => {
-                if (musicAdapter) {
-                    const row = model.get(index)
-                    if (!row || !musicAdapter.browse(row))
-                        return
-                    recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
-                    window.exitIndex = 1
+                if (!musicAdapter || !model)
                     return
-                }
-                hotlistsWindow.mainTarget = recommendWindow;
-                MusicApi.playlistSong.clear();
-                MusicApi.globalid = model.get(index).hash;
-                MusicApi.getPlaylistSongs(model.get(index).hash,1,20);
-                hotlistsWindow.opened(model.get(index));
-                window.exitIndex = 2;
+                const row = model.get(index)
+                if (!row || !homePage.capabilitiesFor(row).canBrowse || !musicAdapter.browse(row))
+                    return
+                recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
+                window.exitIndex = 1
             }
             onToolClicked: (index,tool) => {
                 switch(tool) {
