@@ -6,7 +6,7 @@
 
 - Local Source Plugin 已实现 `IPlaybackProviderV2`：插件索引使用实例隔离的 Track UUID，播放时才把它解析为受控 `file://`；`OriginalUiMusicAdapter` 的“本地文件夹”视图已把播放交给 `PlaybackCoordinator`。
 - `LegacyLocalFolderMigration` 只把旧数据库 `folders.type='local'` 的目录配置变成 Local SourceInstance；它**没有**迁移 `folders.type='my'` 下 `songs.path` 的歌曲。
-- “我的文件夹”仍允许文件对话框导入任意音频文件；文件可能位于所有已配置插件目录之外。其点击、加入旧队列和切歌分别通过 `FilePage.qml`、`main.qml::playLocalSong()`、`PlayerControl.qml::refreshLegacyMusicPlay()` 走直播放。不能以文件名、路径或 `file://` 字符串伪造 `MediaRefV2.entityId`，也不能静默把旧歌曲绑定到同名的另一个实例。
+- “我的文件夹”仍允许文件对话框导入任意音频文件；文件可能位于所有已配置插件目录之外。原先经 `FilePage.qml`、`main.qml::playLocalSong()`、`PlayerControl.qml::refreshLegacyMusicPlay()` 的本地直播放已退役，未认领记录现在仅展示并提示迁移。不能以文件名、路径或 `file://` 字符串伪造 `MediaRefV2.entityId`，也不能静默把旧歌曲绑定到同名的另一个实例。
 - `LocalLibraryIndex` 内部已有 `trackIdByPath` / `trackPathById`，可作为**插件内部**的精确匹配基础；Host 不应读取插件私有索引或保存反向路径映射。
 
 ## 迁移规则
@@ -60,3 +60,5 @@ Local session 在插件内部规范化路径，验证配置根目录范围、文
 本轮 Debug 应用构建、完整 CTest 69/69 和 PluginSdk 临时安装验证通过；集成测试确认插件按 ref 返回 Play 动作、跨实例/未知/删除 ref 被拒绝、已认领歌曲经 Coordinator 播放及入队且新队列无旧路径、歧义/目录外符号链接不进入播放。未迁移旧队列与主程序直播放仍是明确的后续清理项。
 
 随后已删除 `main.qml::playLocalSong()` 及其仅服务于旧直播放的歌词回调；“我的文件夹”未迁移歌曲继续可见，但在认领前不能播放或加入队列，已认领歌曲继续经插件查找媒体项并交给 Coordinator。旧内存队列中 `source == -1` 的条目切歌时明确拒绝直播放。下载管理仍保留已下载文件列表与“在文件夹中显示”，但其点击播放/入队不再写入路径队列；用户须先在 Local 插件中导入下载目录，再从“本地文件夹”操作。这里刻意不把下载文件静默绑定到任何 SourceInstance。旧在线平台的 `MusicApi` fallback 属 Phase 6，尚未移除。完整构建、测试和真实用户数据库验证结果应单独记录，不因静态入口清理就宣告 Phase 5 完成。
+
+全链路回归补充：使用真实 Local 插件与两个 SourceInstance、真实临时 WAV 文件，先索引取得各自的不透明 ref，再连续触发两次 Coordinator 播放而不等待首个解析完成。断言旧请求不产生 `streamReady`、仅第二实例的资源到达 PlaybackSink，且当前 generation 属第二次播放；随后在第三次解析完成前禁用对应实例，断言没有新的播放或过期资源回流，并核对插件 lease 释放。2026-10-04 本机目标测试及全量 CTest 69/69 通过。此测试使用假 Sink，不等价于 macOS 音频设备的人工试听或真实旧库迁移。

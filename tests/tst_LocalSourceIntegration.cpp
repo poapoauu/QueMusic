@@ -220,6 +220,59 @@ private slots:
         QCOMPARE(h.sink.stops, 2);
     }
 
+    void rapidLocalSwitchCancelsOldResolveAndInstanceLossFencesPendingStream()
+    {
+        Harness h;
+        QVERIFY(h.load());
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString track = root.filePath("song.wav");
+        QVERIFY(writeAudio(track));
+        QVERIFY(h.save("one", root.path()));
+        QVERIFY(h.save("two", root.path()));
+        auto *one = h.registry.sessionFor("local/one");
+        auto *two = h.registry.sessionFor("local/two");
+        QVERIFY(one && two);
+        QTRY_COMPARE(one->state(), SourceSessionStateV2::Ready);
+        QTRY_COMPARE(two->state(), SourceSessionStateV2::Ready);
+        h.children("one", root.path());
+        h.children("two", root.path());
+        auto *oneClaims = qobject_cast<ILegacyMediaIdentityProviderV1 *>(one);
+        auto *twoClaims = qobject_cast<ILegacyMediaIdentityProviderV1 *>(two);
+        auto *oneLookup = qobject_cast<IItemLookupProviderV1 *>(one);
+        auto *twoLookup = qobject_cast<IItemLookupProviderV1 *>(two);
+        QVERIFY(oneClaims && twoClaims && oneLookup && twoLookup);
+        const auto oneRef = oneClaims->claimLegacyFile(QUrl::fromLocalFile(track));
+        const auto twoRef = twoClaims->claimLegacyFile(QUrl::fromLocalFile(track));
+        QVERIFY(oneRef && twoRef);
+        const auto oneItem = oneLookup->lookupItem(*oneRef);
+        const auto twoItem = twoLookup->lookupItem(*twoRef);
+        QVERIFY(oneItem && twoItem);
+
+        QSignalSpy firstStream(one, &IMusicSourceSessionV2::streamReady);
+        QSignalSpy secondStream(two, &IMusicSourceSessionV2::streamReady);
+        const auto first = h.coordinator.play(playbackRow(*oneItem));
+        QVERIFY(!first.isNull());
+        const auto second = h.coordinator.play(playbackRow(*twoItem));
+        QVERIFY(!second.isNull());
+        QVERIFY(second != first);
+        QTRY_COMPARE(h.sink.plays, 1);
+        QCOMPARE(firstStream.size(), 0);
+        QCOMPARE(secondStream.size(), 1);
+        QCOMPARE(h.sink.stream.media, *twoRef);
+        QCOMPARE(h.coordinator.currentGeneration(), second);
+        QCOMPARE(h.plugins.plugin(packageId).activeLeases, 3);
+
+        const auto pending = h.coordinator.play(playbackRow(*oneItem));
+        QVERIFY(!pending.isNull());
+        QVERIFY(h.registry.disableInstance("local/one"));
+        QCoreApplication::processEvents();
+        QCOMPARE(firstStream.size(), 0);
+        QCOMPARE(h.sink.plays, 1);
+        QVERIFY(h.coordinator.currentGeneration().isNull());
+        QCOMPARE(h.plugins.plugin(packageId).activeLeases, 1);
+    }
+
     void legacyFileClaimOnlyReturnsIndexedPluginIdentity()
     {
         Harness h;
