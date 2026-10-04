@@ -91,7 +91,7 @@ private slots:
     {
         const QString main = readSource(QStringLiteral("main.qml"));
         QCOMPARE(main.count(QStringLiteral("window.musicAdapter.search(")), 3);
-        QVERIFY(main.contains(QStringLiteral("if (window.musicAdapter)")));
+        QVERIFY(!main.contains(QStringLiteral("MusicApi.searchSongs(")));
 
         const QString search = readSource(QStringLiteral("pages/SearchPage.qml"));
         QVERIFY(search.contains(QStringLiteral("objectName: \"searchSongsList\"")));
@@ -99,7 +99,10 @@ private slots:
         QVERIFY(search.contains(QStringLiteral("objectName: \"searchAlbumsList\"")));
         QVERIFY(search.contains(QStringLiteral("objectName: \"searchLyricsList\"")));
         QVERIFY(search.contains(QStringLiteral("musicAdapter.search(mainSearchInput.text, index)")));
-        QVERIFY(!search.contains(QStringLiteral("musicAdapter.loadMore(3, \"\")")));
+        QVERIFY(!search.contains(QStringLiteral("MusicApi.")));
+        QVERIFY(!search.contains(QStringLiteral("playListModel")));
+        QVERIFY(!search.contains(QStringLiteral("酷狗音乐")));
+        QVERIFY(!search.contains(QStringLiteral("网易云音乐")));
 
         const QString list = readSource(QStringLiteral("components/QListView.qml"));
         QVERIFY(list.contains(QStringLiteral("property var toolText0ForRow")));

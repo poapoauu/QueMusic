@@ -253,6 +253,8 @@ Home/Search/Playlist/Favourite/File 等旧 QML
 
 工作：逐页将 Home/Search/Playlist/Favourite/File/Download、播放器、桌面歌词和动作菜单改为 Adapter/MusicHub/Capability 驱动；Source 选择使用实例 ID，不再使用平台整数。
 
+2026-10-04 首个页面切片：`SearchPage.qml` 已保留原搜索标签、结果列表和详情层，但删除页面内所有 `MusicApi` 搜索/播放/收藏、固定平台选项及旧歌单弹窗分支。窗口搜索框、搜索按钮与历史记录三个入口也只调用 `OriginalUiMusicAdapter.search()`。Source 下拉列表按运行时 `sourceOptions` 展示，以 `selectedSourceInstanceId` 选择；新增第三方实例无需改页面代码，禁用实例不能被选中。Home、Playlist、Favourite、Player 等仍有旧平台 fallback，不能据此宣称 Phase 6 完成。详见 [Phase 6 页面迁移记录](phase-6-original-ui-source-migration.md)。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

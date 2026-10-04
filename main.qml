@@ -307,12 +307,7 @@ Window {
                     mainContent.contentIndexed(6);
                     Options.settings.searchList = Options.settings.searchList.filter(value => value !== mainSearchInput.text);
                     Options.settings.searchList.splice(0, 0, mainSearchInput.text);
-                    if (window.musicAdapter)
-                        window.musicAdapter.search(mainSearchInput.text, 0);
-                    else {
-                        MusicApi.searchSongsResults.clear();
-                        MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
-                    }
+                    window.musicAdapter.search(mainSearchInput.text, 0);
                     window.exitIndex = 1;
                     searchCard.close();
                 }
@@ -339,12 +334,7 @@ Window {
                     mainContent.contentIndexed(6);
                     Options.settings.searchList = Options.settings.searchList.filter(value => value !== mainSearchInput.text);
                     Options.settings.searchList.splice(0, 0, mainSearchInput.text);
-                    if (window.musicAdapter)
-                        window.musicAdapter.search(mainSearchInput.text, 0);
-                    else {
-                        MusicApi.searchSongsResults.clear();
-                        MusicApi.searchSongs(mainSearchInput.text,MusicApi.nowIndex,1,20);
-                    }
+                    window.musicAdapter.search(mainSearchInput.text, 0);
                     window.exitIndex = 1;
                     searchCard.close();
                 }
@@ -1161,12 +1151,7 @@ Window {
             mainSearchInput.text = name;
             Options.settings.searchList = Options.settings.searchList.filter(value => value !== name);
             Options.settings.searchList.splice(0, 0, name);
-            if (window.musicAdapter)
-                window.musicAdapter.search(name, 0);
-            else {
-                MusicApi.searchSongsResults.clear();
-                MusicApi.searchSongs(name,MusicApi.nowIndex,1,20);
-            }
+            window.musicAdapter.search(name, 0);
             window.exitIndex = 1;
             searchCard.close();
         }

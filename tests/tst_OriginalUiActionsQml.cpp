@@ -70,7 +70,7 @@ class FakeAdapter final : public QObject {
     Q_PROPERTY(QObject *searchLists READ searchLists CONSTANT)
     Q_PROPERTY(QObject *searchAlbums READ searchAlbums CONSTANT)
     Q_PROPERTY(QObject *searchLyrics READ searchLyrics CONSTANT)
-    Q_PROPERTY(QVariantList sourceOptions READ sourceOptions CONSTANT)
+    Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
 public:
@@ -109,12 +109,18 @@ public:
     QObject *searchLyrics() { return &searchLyricRows; }
     QVariantList sourceOptions() const
     {
+        if (!customSourceOptions.isEmpty()) return customSourceOptions;
         return {QVariantMap{{QStringLiteral("sourceInstanceId"), QString{}},
                             {QStringLiteral("displayName"), QStringLiteral("All")},
                             {QStringLiteral("available"), true}},
                 QVariantMap{{QStringLiteral("sourceInstanceId"), QStringLiteral("adapter/home")},
                             {QStringLiteral("displayName"), QStringLiteral("Home")},
                             {QStringLiteral("available"), true}}};
+    }
+    void setSourceOptions(QVariantList options)
+    {
+        customSourceOptions = std::move(options);
+        emit sourceOptionsChanged();
     }
     QString selectedSourceInstanceId() const { return selectedSource; }
     void setSelectedSourceInstanceId(const QString &value)
@@ -180,8 +186,10 @@ public:
     QList<QVariantMap> played, enqueued, browsed;
     QList<QPair<QVariantMap, bool>> favorites;
     QString selectedSource;
+    QVariantList customSourceOptions;
 signals:
     void selectedSourceInstanceIdChanged();
+    void sourceOptionsChanged();
 };
 
 class FakeDownloader final : public QObject { Q_OBJECT Q_PROPERTY(int completedCount MEMBER completedCount NOTIFY completedCountChanged) Q_PROPERTY(int taskCount MEMBER taskCount NOTIFY taskCountChanged) Q_PROPERTY(bool hasActiveTasks MEMBER hasActiveTasks NOTIFY taskCountChanged) public: Q_INVOKABLE QString effectiveDownloadDir() const { return QDir::tempPath(); } Q_INVOKABLE void removeTask(const QString &) {} Q_INVOKABLE void retryTask(const QString &) {} int completedCount = 0; int taskCount = 0; bool hasActiveTasks = false; signals: void completedCountChanged(); void taskCountChanged(); };
@@ -343,12 +351,35 @@ private slots:
         QCOMPARE(lyrics->property("model").value<QObject *>(), adapter.searchLyrics());
         QVERIFY(QMetaObject::invokeMethod(tabs, "tabChange", Q_ARG(int, 2)));
         QVERIFY(adapter.searches.contains(qMakePair(QStringLiteral("needle"), 2)));
-        QCOMPARE(context.musicApi.nowIndex, 2);
+        QCOMPARE(context.musicApi.nowIndex, 0);
         QObject *scope = page->findChild<QObject *>(QStringLiteral("searchSourceScope"));
         QVERIFY(scope);
         QVERIFY(scope->property("visible").toBool());
         QVERIFY(QMetaObject::invokeMethod(scope, "transformed", Q_ARG(int, 1)));
         QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("adapter/home"));
+        adapter.setSourceOptions({QVariantMap{{"sourceInstanceId", QString{}},
+                                              {"displayName", "All"}, {"available", true}},
+                                  QVariantMap{{"sourceInstanceId", "adapter/home"},
+                                              {"displayName", "Home"}, {"available", true}},
+                                  QVariantMap{{"sourceInstanceId", "third/instance"},
+                                              {"displayName", "Third-party"}, {"available", true}},
+                                  QVariantMap{{"sourceInstanceId", "disabled/instance"},
+                                              {"displayName", "Disabled"}, {"available", false}}});
+        QVERIFY(QMetaObject::invokeMethod(scope, "transformed", Q_ARG(int, 2)));
+        QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("third/instance"));
+        QCOMPARE(scope->property("choice").toInt(), 2);
+        QVERIFY(QMetaObject::invokeMethod(scope, "transformed", Q_ARG(int, 3)));
+        QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("third/instance"));
+        QCOMPARE(scope->property("choice").toInt(), 2);
+        QCOMPARE(context.musicApi.songSource, 0);
+        QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.played.size(), 1);
+        QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 1)));
+        QCOMPARE(adapter.played.size(), 1);
+        QVERIFY(QMetaObject::invokeMethod(songs, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QCOMPARE(adapter.enqueued.size(), 1);
+        QVERIFY(QMetaObject::invokeMethod(songs, "toolClicked", Q_ARG(int, 1), Q_ARG(int, 1)));
+        QCOMPARE(adapter.favorites.size(), 0);
         QVERIFY(QMetaObject::invokeMethod(albums, "clicked", Q_ARG(int, 0)));
         QCOMPARE(adapter.browsed.size(), 1);
         QObject *detailWindow = page->findChild<QObject *>(QStringLiteral("searchAdapterDetailWindow"));
@@ -363,6 +394,7 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(page.get(), "retryCurrentSection"));
         QCOMPARE(adapter.retries.constLast(), qMakePair(3, QStringLiteral("search-albums")));
         QCOMPARE(context.musicApi.legacySearches, 0);
+        QCOMPARE(context.musicApi.legacyPlays, 0);
         QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
     }
 
