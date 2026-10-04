@@ -13,42 +13,25 @@ Item {
     property real toolsWindow: 0
     //property bool displaytop: flickable.contentY > 60 ? true : false
     function sourceOptions() {
-        if (musicAdapter && musicAdapter.sourceOptions)
-            return musicAdapter.sourceOptions
-        return [
-            { sourceInstanceId: "", displayName: "酷狗音乐", available: true },
-            { sourceInstanceId: "", displayName: "网易云音乐", available: true },
-            { sourceInstanceId: "", displayName: "QQ音乐(x)", available: true },
-            { sourceInstanceId: "", displayName: "自定义源(x)", available: true }
-        ]
+        return musicAdapter ? musicAdapter.sourceOptions : []
     }
     function sourceChoice() {
-        if (!musicAdapter)
-            return MusicApi.songSource
+        if (!musicAdapter) return -1
         const options = sourceOptions()
         for (let i = 0; i < options.length; ++i) {
             if (options[i].sourceInstanceId === musicAdapter.selectedSourceInstanceId)
                 return i
         }
-        return 0
+        return -1
     }
     function selectSource(choice) {
-        if (musicAdapter) {
-            const option = sourceOptions()[choice]
-            if (option && option.available)
-                musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
-            return
-        }
-        MusicApi.songSource = choice
-        if(MusicApi.songSource === 0) {
-            MusicApi.hotPlayLists.clear()
-        }
-        if(MusicApi.hotPlayLists.count % 20 === 0) {
-            MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1)
-        } else {
-            MusicApi.hotPlayLists.clear()
-            MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1)
-        }
+        if (!musicAdapter) return
+        const option = sourceOptions()[choice]
+        if (option && option.available)
+            musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
+    }
+    function capabilitiesFor(row) {
+        return musicAdapter && row ? musicAdapter.capabilities(row) : ({})
     }
     function requestRecommendationMore() {
         if (musicAdapter && typeof musicAdapter.loadMore === "function") {
@@ -58,8 +41,7 @@ Item {
         return false
     }
     function categoryStripItems() {
-        if (!musicAdapter)
-            return MusicApi.getHotlistMenu
+        if (!musicAdapter) return []
         const model = musicAdapter.categoryItems
         if (!model || typeof model.get !== "function" || model.count === undefined)
             return []
@@ -72,19 +54,10 @@ Item {
         return items
     }
     function browseCategory(index) {
-        if (musicAdapter) {
-            const row = categoryStripItems()[index]
-            if (!row || !musicAdapter.browse(row))
-                return false
-            recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
-            window.exitIndex = 1
-            return true
-        }
-        MusicApi.musicPlaylists.clear()
-        MusicApi.globaltagid = MusicApi.getHotlistMenu.get(index).tagid
-        MusicApi.getMusicPlaylists(MusicApi.globaltagid, 1, 20)
-        const legacyRow = MusicApi.getHotlistMenu.get(index)
-        recommendWindow.opened(legacyRow.title, (legacyRow.cover || "").replace("{size}", "256") || "qrc:/QueMusic/resources/app/musicpic.png")
+        const row = categoryStripItems()[index]
+        if (!row || !capabilitiesFor(row).canBrowse || !musicAdapter.browse(row))
+            return false
+        recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
         window.exitIndex = 1
         return true
     }
@@ -93,27 +66,13 @@ Item {
     Component.onCompleted: {
         if (musicAdapter) {
             musicAdapter.activatePage(0)
-            return
+            musicAdapter.activatePage(1)
         }
-        if(!window.completedStart.homeLoaded) {
-            MusicApi.getHotlistMenu.clear();
-            MusicApi.getHotPlaylistMenu(3);
-            MusicApi.getHotPlaylists(1);
-            var date = new Date();
-            var timeHour = date.getHours();
-            if(timeHour > 3 && timeHour < 9) {
-                homeText.text = "早上好"
-            } else if(timeHour > 8 && timeHour < 13) {
-                homeText.text = "上午好"
-            } else if(timeHour > 12 && timeHour < 19) {
-                homeText.text = "下午好"
-            } else if(timeHour > 18 && timeHour < 23) {
-                homeText.text = "晚上好"
-            } else {
-                //homeText.text = "晚安"
-            }
-            window.completedStart.homeLoaded = true;
-        }
+        const hour = new Date().getHours()
+        if (hour > 3 && hour < 9) homeText.text = "早上好"
+        else if (hour > 8 && hour < 13) homeText.text = "上午好"
+        else if (hour > 12 && hour < 19) homeText.text = "下午好"
+        else if (hour > 18 && hour < 23) homeText.text = "晚上好"
     }
 
     Item {
@@ -146,9 +105,9 @@ Item {
                 //radius: 18
                 anchors.right: parent.right
                 choice: homePage.sourceChoice()
-                textColor: homePage.sourceChoice() == 0 ? "#0F3975" : homePage.sourceChoice() == 1 ? "#750F0F" : homePage.sourceChoice() == 2 ? "#16750F" : "#756F0F"
-                color: homePage.sourceChoice() == 0 ? "#CDE8FF" : homePage.sourceChoice() == 1 ? "#FFCDCD" : homePage.sourceChoice() == 2 ? "#CDFFCD" : "#FFFFCD"
-                border.color: homePage.sourceChoice() == 0 ? "#4384F5" : homePage.sourceChoice() == 1 ? "#F54343" : homePage.sourceChoice() == 2 ? "#4DF543" : "#F5F543"
+                textColor: Style.themes.textColor
+                color: Style.themes.primaryColor
+                border.color: Style.themes.borderColor
                 radius: 18
                 cardRadius: Style.settings.labelRadius
                 text: {
@@ -156,6 +115,7 @@ Item {
                     return option ? option.displayName : ""
                 }
                 model: homePage.sourceOptions().map((option) => option.displayName)
+                enabled: musicAdapter && homePage.sourceOptions().length > 0
                 onTransformed: (choiced) => {
                     homePage.selectSource(choiced)
                 }
@@ -285,12 +245,8 @@ Item {
                         }
 
                         onClicked: {
-                            if(musicAdapter) {
+                            if (musicAdapter)
                                 musicAdapter.activatePage(0)
-                            } else {
-                                MusicApi.recommendSongs.clear();
-                                MusicApi.getRecommendSongs(1, 20, MusicApi.songSource);
-                            }
                             var image = "qrc:/QueMusic/resources/app/rainbowMusicIcon.png";
                             var title = "每日推荐";
                             dailyRecomWindow.opened(title,image);
@@ -308,12 +264,8 @@ Item {
                             textColor: Style.themes.fullColor
                             iconColor: Style.themes.fullColor
                             onClicked: {
-                                if(musicAdapter) {
+                                if (musicAdapter)
                                     musicAdapter.activatePage(0)
-                                } else {
-                                    MusicApi.recommendSongs.clear();
-                                    MusicApi.getRecommendSongs(1, 20, MusicApi.songSource);
-                                }
                                 var image = "qrc:/QueMusic/resources/app/rainbowMusicIcon.png";
                                 var title = "每日推荐";
                                 dailyRecomWindow.opened(title,image);
@@ -868,71 +820,41 @@ Item {
                 y: 128
                 width: hotlistsWindow.width - 32
                 height: hotlistsWindow.height - 128
-                model: musicAdapter ? musicAdapter.recommendSongs : MusicApi.recommendSongs
+                model: musicAdapter ? musicAdapter.recommendSongs : null
                 clip: true
                 //reuseItems: true
                 topMargin: 8
                 bottomMargin: 24
+                menuModel: []
+                toolText0: ""
+                toolText1: ""
+                toolText0ForRow: function(index) {
+                    return homePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                }
+                toolText1ForRow: function(index) {
+                    return homePage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+                }
 
                 onClicked: (index) => {
-                               if(musicAdapter) {
-                                   musicAdapter.play(model.get(index));
-                               } else if(Options.settings.soundQuality === 0) {
-                                   MusicApi.getMusicInfo(model.get(index).hash);
-                               } else if(Options.settings.soundQuality === 1) {
-                                   MusicApi.getMusicInfo(model.get(index).hashhq);
-                               } else {
-                                   MusicApi.getMusicInfo(model.get(index).hashsq);
-                               }
-                           }
+                    const row = model.get(index)
+                    if (homePage.capabilitiesFor(row).canPlay)
+                        musicAdapter.play(row)
+                }
 
                 onToolClicked: (index,tool) => {
-                                   if (musicAdapter) {
-                                       if (tool === 0)
-                                           musicAdapter.enqueue(model.get(index));
-                                       return;
-                                   }
-                                   switch(tool) {
-                                   case 0:
-                                       var listIndex = -1;
-                                       var indexHash = model.get(index).hash;
-                                       for(var i = 0;i < playListModel.count;i++) {
-                                           var forUrl = playListModel.get(i).path;
-                                           if(forUrl === indexHash) {
-                                               listIndex = i;
-                                           }
-                                       }
-                                       if (listIndex == -1) {
-                                           playListModel.append({ name: model.get(index).title, path: model.get(index).hash, songer: model.get(index).artist, source: MusicApi.songSource });
-                                           mainWarn.tiped("成功加入播放列表",1);
-                                       }
-                                       break;
-                                   case 1:
-                                       if (favoritesSong.isFavorite(model.get(index).hash, "song")) {
-                                           favoritesSong.removeFavorite(model.get(index).hash, "song");
-                                           mainWarn.tiped("取消收藏",0);
-                                       } else {
-                                           favoritesSong.addFavorite(model.get(index).hash, model.get(index).title, model.get(index).artist, model.get(index).cover, MusicApi.songSource, model.get(index).duration, "song");
-                                           mainWarn.tiped("成功收藏",1);
-                                       }
-                                       break;
-                                   }
-                               }
+                    const row = model.get(index)
+                    const caps = homePage.capabilitiesFor(row)
+                    if (tool === 0 && caps.canEnqueue)
+                        musicAdapter.enqueue(row)
+                    else if (tool === 1 && caps.canFavorite)
+                        musicAdapter.setFavorite(row, true)
+                }
 
                 onEnded: {
-                    if (musicAdapter) {
-                        if (homePage.requestRecommendationMore())
-                            isEnd = false;
-                        else
-                            isEnd = true;
-                    } else if(MusicApi.recommendSongs.count % 20 === 0 && MusicApi.recommendSongs.count !== 0) {
-                        MusicApi.getRecommendSongs(MusicApi.recommendSongs.count / 20 + 1, 20, MusicApi.songSource);
+                    if (homePage.requestRecommendationMore())
                         isEnd = false;
-                    } else {
-                        if(MusicApi.recommendSongs.count !== 0) {
-                            isEnd = true;
-                        }
-                    }
+                    else
+                        isEnd = true;
                 }
             }
         }

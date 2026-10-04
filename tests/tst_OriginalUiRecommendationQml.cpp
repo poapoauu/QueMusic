@@ -71,7 +71,7 @@ class FakeOriginalUiMusic final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
-    Q_PROPERTY(QVariantList sourceOptions READ sourceOptions CONSTANT)
+    Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
 public:
@@ -81,12 +81,18 @@ public:
     QObject *categoryItems() { return &category; }
     QVariantList sourceOptions() const
     {
+        if (!customSourceOptions.isEmpty()) return customSourceOptions;
         return QVariantList{QVariantMap{{QStringLiteral("sourceInstanceId"), QString{}},
                                          {QStringLiteral("displayName"), QStringLiteral("全部音源")},
                                          {QStringLiteral("available"), true}},
                             QVariantMap{{QStringLiteral("sourceInstanceId"), QStringLiteral("source-b")},
                                          {QStringLiteral("displayName"), QStringLiteral("Source B")},
                                          {QStringLiteral("available"), true}}};
+    }
+    void setSourceOptions(QVariantList options)
+    {
+        customSourceOptions = std::move(options);
+        emit sourceOptionsChanged();
     }
     QString selectedSourceInstanceId() const { return selected; }
     void setSelectedSourceInstanceId(const QString &value)
@@ -100,6 +106,15 @@ public:
     Q_INVOKABLE bool browse(const QVariantMap &row) { browsedRows << row; return true; }
     Q_INVOKABLE void play(const QVariantMap &row) { playedRows << row; }
     Q_INVOKABLE void enqueue(const QVariantMap &row) { enqueuedRows << row; }
+    Q_INVOKABLE void setFavorite(const QVariantMap &row, bool favorite) { favoriteRows << qMakePair(row, favorite); }
+    Q_INVOKABLE QVariantMap capabilities(const QVariant &value) const
+    {
+        const QVariantMap row = value.toMap();
+        return {{QStringLiteral("canPlay"), row.value(QStringLiteral("canPlay"), true).toBool()},
+                {QStringLiteral("canEnqueue"), row.value(QStringLiteral("canEnqueue"), true).toBool()},
+                {QStringLiteral("canFavorite"), row.value(QStringLiteral("canFavorite"), true).toBool()},
+                {QStringLiteral("canBrowse"), row.value(QStringLiteral("canBrowse"), true).toBool()}};
+    }
 
     FakeListModel recommend;
     FakeListModel category;
@@ -108,9 +123,12 @@ public:
     QList<QVariantMap> browsedRows;
     QList<QVariantMap> playedRows;
     QList<QVariantMap> enqueuedRows;
+    QList<QPair<QVariantMap, bool>> favoriteRows;
+    QVariantList customSourceOptions;
 
 signals:
     void selectedSourceInstanceIdChanged();
+    void sourceOptionsChanged();
 
 private:
     QString selected;
@@ -318,10 +336,24 @@ private slots:
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
         auto home = loadPage(engine, QStringLiteral("pages/HomePage.qml"), &adapter, &error);
-        QVERIFY2(home, qPrintable(error)); QTRY_COMPARE(adapter.activatedPages, QList<int>{0});
+        QVERIFY2(home, qPrintable(error)); QTRY_COMPARE(adapter.activatedPages, (QList<int>{0, 1}));
         QObject *scope = home->findChild<QObject *>(QStringLiteral("recommendationSourceScope"));
         QVERIFY(scope); QVERIFY(QMetaObject::invokeMethod(scope, "transformed", Q_ARG(int, 1)));
         QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("source-b"));
+        adapter.setSourceOptions({QVariantMap{{"sourceInstanceId", QString{}},
+                                              {"displayName", "All"}, {"available", true}},
+                                  QVariantMap{{"sourceInstanceId", "source-b"},
+                                              {"displayName", "Source B"}, {"available", true}},
+                                  QVariantMap{{"sourceInstanceId", "third/instance"},
+                                              {"displayName", "Third-party"}, {"available", true}},
+                                  QVariantMap{{"sourceInstanceId", "disabled/instance"},
+                                              {"displayName", "Disabled"}, {"available", false}}});
+        QVERIFY(QMetaObject::invokeMethod(scope, "transformed", Q_ARG(int, 2)));
+        QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("third/instance"));
+        QCOMPARE(scope->property("choice").toInt(), 2);
+        QVERIFY(QMetaObject::invokeMethod(scope, "transformed", Q_ARG(int, 3)));
+        QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("third/instance"));
+        QCOMPARE(context.legacyMusicApi()->songSource, 0);
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
         QVERIFY2(playlist, qPrintable(error)); QTRY_VERIFY(adapter.activatedPages.contains(1));
     }
@@ -351,6 +383,19 @@ private slots:
                                                              {QStringLiteral("cover"), QString{}},
                                                              {QStringLiteral("duration"), 180}}};
         QCOMPARE(adapter.playedRows, expectedPlayed);
+        adapter.recommend.setRows({QVariantMap{{"title", "Unavailable recommendation"},
+                                              {"_adapterKey", 42ULL},
+                                              {"canPlay", false},
+                                              {"canEnqueue", false},
+                                              {"canFavorite", true}}});
+        QCoreApplication::processEvents();
+        QVERIFY(QMetaObject::invokeMethod(list, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(list, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QCOMPARE(adapter.playedRows.size(), 1);
+        QCOMPARE(adapter.enqueuedRows.size(), 0);
+        QVERIFY(QMetaObject::invokeMethod(list, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
+        QCOMPARE(adapter.favoriteRows.size(), 1);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
     }
 
     void categoryRowsUsePresentationIdentityForBrowse()

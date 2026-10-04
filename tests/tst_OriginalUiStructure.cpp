@@ -74,6 +74,11 @@ private slots:
         const QString home = readSource(QStringLiteral("pages/HomePage.qml"));
         QVERIFY(home.contains(QStringLiteral("QScrollView")));
         QVERIFY(!home.contains(QStringLiteral("MusicSectionView")));
+        QVERIFY(home.contains(QStringLiteral("musicAdapter.activatePage(1)")));
+        QVERIFY(home.contains(QStringLiteral("musicAdapter.recommendSongs : null")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi.getRecommendSongs(")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi.getHotlistMenu")));
+        QVERIFY(!home.contains(QStringLiteral("displayName: \"酷狗音乐\"")));
 
         for (const QString &page : {QStringLiteral("pages/PlaylistPage.qml"),
                                     QStringLiteral("pages/FavouritePage.qml"),
