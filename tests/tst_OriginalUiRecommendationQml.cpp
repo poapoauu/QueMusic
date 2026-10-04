@@ -37,6 +37,7 @@ public:
         return index >= 0 && index < m_rows.size() ? m_rows.at(index).toMap() : QVariantMap{};
     }
     Q_INVOKABLE void clear() {}
+    Q_INVOKABLE void tiped(const QString &, int) { ++warnings; }
     Q_INVOKABLE bool isFavorite(const QString &, const QString &) { ++favoriteQueries; return false; }
     Q_INVOKABLE void addFavorite(const QString &, const QString &, const QString &, const QString &,
                                  int, int, const QString &) { ++favoriteCalls; }
@@ -61,6 +62,7 @@ signals:
 public:
     int favoriteQueries = 0;
     int favoriteCalls = 0;
+    int warnings = 0;
 
 private:
     QVariantList m_rows;
@@ -274,9 +276,24 @@ public:
     FakeCompletedStart completed;
     QObject *completedStart() { return &completed; }
     int exitIndex = 0;
+    Q_INVOKABLE void togglePlayList() { ++queueOpens; }
+    int queueOpens = 0;
 signals:
     void exitIndexChanged();
     void exit();
+};
+
+class FakeQueueHistoryStore final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantMap latest READ latest NOTIFY historyChanged)
+public:
+    QVariantMap latest() const { return value; }
+    void setLatest(QVariantMap next) { value = std::move(next); emit historyChanged(); }
+    Q_INVOKABLE bool playLatest() { ++plays; return value.value("replayable").toBool(); }
+    QVariantMap value;
+    int plays = 0;
+signals:
+    void historyChanged();
 };
 
 class PageContext final {
@@ -288,6 +305,7 @@ public:
         QQmlContext *context = engine.rootContext();
         context->setContextProperty(QStringLiteral("MusicApi"), &musicApi);
         context->setContextProperty(QStringLiteral("window"), &window);
+        context->setContextProperty(QStringLiteral("queueHistoryStore"), &history);
         context->setContextProperty(QStringLiteral("Style"), QVariantMap{{QStringLiteral("themes"), themes}, {QStringLiteral("settings"), settings}});
         const QVariantMap lastSong{{QStringLiteral("hash"), QString{}}, {QStringLiteral("name"), QString{}}, {QStringLiteral("artist"), QString{}}, {QStringLiteral("cover"), QString{}}, {QStringLiteral("source"), 0}};
         context->setContextProperty(QStringLiteral("Options"), QVariantMap{{QStringLiteral("lastSongs"), lastSong}, {QStringLiteral("settings"), QVariantMap{{QStringLiteral("soundQuality"), 0}}}});
@@ -298,11 +316,13 @@ public:
         context->setContextProperty(QStringLiteral("mainSearchInput"), QVariantMap{{QStringLiteral("text"), QString{}}});
     }
     FakeLegacyMusicApi *legacyMusicApi() { return &musicApi; }
+    FakeQueueHistoryStore *historyStore() { return &history; }
     FakeWindow *windowObject() { return &window; }
     FakeListModel *legacyLists() { return &lists; }
 private:
     FakeLegacyMusicApi musicApi;
     FakeWindow window;
+    FakeQueueHistoryStore history;
     FakeListModel lists;
 };
 
@@ -332,6 +352,27 @@ std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, QObje
 class OriginalUiRecommendationQmlTest final : public QObject {
     Q_OBJECT
 private slots:
+    void latestCardReplaysOnlyAvailableQueueHistory()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        context.historyStore()->setLatest({{"title", "Saved plugin track"},
+                                           {"artist", "Artist"}, {"replayable", true}});
+        auto home = loadPage(engine, QStringLiteral("pages/HomePage.qml"), &adapter, &error);
+        QVERIFY2(home, qPrintable(error));
+        QVariant played;
+        QVERIFY(QMetaObject::invokeMethod(home.get(), "playLatest", Q_RETURN_ARG(QVariant, played)));
+        QVERIFY(played.toBool());
+        QCOMPARE(context.historyStore()->plays, 1);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+        context.historyStore()->setLatest({{"title", "Saved plugin track"},
+                                           {"artist", "Artist"}, {"replayable", false}});
+        QVERIFY(QMetaObject::invokeMethod(home.get(), "playLatest", Q_RETURN_ARG(QVariant, played)));
+        QVERIFY(!played.toBool());
+        QCOMPARE(context.historyStore()->plays, 1);
+        QCOMPARE(context.legacyLists()->warnings, 1);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+    }
+
     void pagesActivateAndScopeWritesSelectedSource()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;

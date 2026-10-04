@@ -257,6 +257,8 @@ Home/Search/Playlist/Favourite/File 等旧 QML
 
 随后 Home 的来源选择、每日推荐与分类入口已改为 Adapter/Capability 路径，并主动激活推荐和分类页模型；“上次听到”、私人漫游/雷达、热门歌单及旧详情仍是待迁移项。首页未完全动态化，也没有为旧平台路径构造虚假的 SourceInstance 身份。
 
+“上次听到”现已改用统一队列历史的展示快照；仅当原 occurrence 仍在队列且来源可用时允许通过 Coordinator 重播，移除或禁用后保持可见但不可重播。Home 不再读取 `Options.lastSongs` 或用旧平台 hash/source 入队。私人漫游/雷达、热门歌单及其详情仍待迁移；全页/全阶段验收尚未完成。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

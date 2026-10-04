@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QVariantMap>
 #include <functional>
 
 class PlaybackCoordinator;
@@ -13,6 +14,7 @@ class QueueHistoryStore final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString warningKey READ warningKey NOTIFY warningChanged)
     Q_PROPERTY(QString backupPath READ backupPath NOTIFY warningChanged)
+    Q_PROPERTY(QVariantMap latest READ latest NOTIFY historyChanged)
 public:
     struct Hooks {
         std::function<bool(const QString &, const QByteArray &)> write;
@@ -23,13 +25,17 @@ public:
                                QObject *parent = nullptr, Hooks hooks = {});
     bool loadAndAttach();
     QList<RecentPlay> history() const;
+    QVariantMap latest() const;
+    Q_INVOKABLE bool playLatest();
     LegacyImportResult importLegacyFile(const QString &path);
     Q_INVOKABLE bool retrySave();
     QString warningKey() const;
     QString backupPath() const;
 signals:
     void warningChanged();
+    void historyChanged();
 private:
+    int latestQueueIndex() const;
     void persist();
     void recordStart(const QUuid &generation);
     void warn(const QString &key);

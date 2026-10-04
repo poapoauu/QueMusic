@@ -110,6 +110,24 @@ private slots:
         StoreSink sink2; PlaybackCoordinator restarted(&h.registry, &sink2);
         QueueHistoryStore reloaded(&restarted, h.path()); QVERIFY(reloaded.loadAndAttach());
         QCOMPARE(reloaded.history().size(), 1);
+        QCOMPARE(store.latest().value(QStringLiteral("title")).toString(), QStringLiteral("Track"));
+        QCOMPARE(store.latest().value(QStringLiteral("artist")).toString(), QStringLiteral("Artist"));
+        QVERIFY(store.latest().value(QStringLiteral("replayable")).toBool());
+        QVERIFY(!store.latest().contains(QStringLiteral("ref")));
+        QVERIFY(!store.latest().contains(QStringLiteral("path")));
+        QSignalSpy historyChanged(&store, &QueueHistoryStore::historyChanged);
+        QVERIFY(store.playLatest());
+        QTRY_COMPARE(h.sink.plays, 2);
+        QTRY_COMPARE(store.history().size(), 2);
+        QVERIFY(!historyChanged.isEmpty());
+        QVERIFY(h.coordinator.stop());
+        QVERIFY(h.registry.disableInstance(QStringLiteral("task12c/home")));
+        QTRY_VERIFY(!store.latest().value(QStringLiteral("replayable")).toBool());
+        QVERIFY(!store.playLatest());
+        QVERIFY(h.coordinator.removeOccurrence(item.occurrenceId));
+        QVERIFY(!store.latest().value(QStringLiteral("replayable")).toBool());
+        QVERIFY(!store.playLatest());
+        QCOMPARE(h.sink.plays, 2);
     }
     void futureVersionIsReadOnly() {
         Harness h;

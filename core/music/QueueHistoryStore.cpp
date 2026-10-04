@@ -53,6 +53,36 @@ QString QueueHistoryStore::warningKey() const { return m_warningKey; }
 QString QueueHistoryStore::backupPath() const { return m_backupPath; }
 QList<RecentPlay> QueueHistoryStore::history() const { return m_history; }
 
+int QueueHistoryStore::latestQueueIndex() const
+{
+    if (!m_coordinator || m_history.isEmpty()) return -1;
+    const auto queue = m_coordinator->queue();
+    const QUuid occurrence = m_history.first().occurrenceId;
+    for (int index = 0; index < queue.size(); ++index) {
+        const QVariantMap row = queue.at(index).toMap();
+        if (row.value(QStringLiteral("occurrenceId")).toUuid() == occurrence
+            && !row.value(QStringLiteral("unavailable")).toBool()) return index;
+    }
+    return -1;
+}
+
+QVariantMap QueueHistoryStore::latest() const
+{
+    if (m_history.isEmpty()) return {};
+    const RecentPlay &item = m_history.first();
+    return {{QStringLiteral("title"), item.title},
+            {QStringLiteral("artist"), item.artists.join(QStringLiteral(", "))},
+            {QStringLiteral("album"), item.album},
+            {QStringLiteral("playedAt"), item.playedAt},
+            {QStringLiteral("replayable"), latestQueueIndex() >= 0}};
+}
+
+bool QueueHistoryStore::playLatest()
+{
+    const int index = latestQueueIndex();
+    return index >= 0 && m_coordinator && !m_coordinator->playQueueEntry(index).isNull();
+}
+
 void QueueHistoryStore::warn(const QString &key)
 {
     if (m_warningKey == key) return;
@@ -101,9 +131,13 @@ bool QueueHistoryStore::loadAndAttach()
             m_legacyImportVersion = result.snapshot.legacyImportVersion;
         }
     }
-    connect(m_coordinator, &PlaybackCoordinator::queueChanged, this, &QueueHistoryStore::persist);
+    connect(m_coordinator, &PlaybackCoordinator::queueChanged, this, [this] {
+        persist();
+        emit historyChanged();
+    });
     connect(m_coordinator, &PlaybackCoordinator::playbackStarted, this, &QueueHistoryStore::recordStart);
     m_attached = true;
+    emit historyChanged();
     return true;
 }
 
@@ -150,6 +184,7 @@ void QueueHistoryStore::recordStart(const QUuid &generation)
         m_history.prepend(std::move(play));
         if (m_history.size() > 200) m_history.resize(200);
         persist();
+        emit historyChanged();
         return;
     }
 }

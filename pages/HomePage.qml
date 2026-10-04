@@ -33,6 +33,12 @@ Item {
     function capabilitiesFor(row) {
         return musicAdapter && row ? musicAdapter.capabilities(row) : ({})
     }
+    function playLatest() {
+        if (queueHistoryStore.latest.replayable && queueHistoryStore.playLatest())
+            return true
+        mainWarn.tiped("这条播放记录已不在可用队列中，请从来源重新添加", 0)
+        return false
+    }
     function requestRecommendationMore() {
         if (musicAdapter && typeof musicAdapter.loadMore === "function") {
             musicAdapter.loadMore(0, "")
@@ -290,30 +296,26 @@ Item {
                         }
                         Text {
                             anchors.centerIn: parent
-                            visible: Options.lastSongs.name === ""
+                            visible: !queueHistoryStore.latest.title
                             text: "还没有播放记录"
                             font.pixelSize: Style.settings.text
                             color: Style.themes.textColor
                         }
-                        onClicked: {
-                            if(Options.lastSongs.hash !== "") {
-                                MusicApi.getMusicInfo(Options.lastSongs.hash, 0, Options.lastSongs.source);
-                            }
-                        }
+                        onClicked: homePage.playLatest()
                         controlItem: [
                             QPicture {
                                 y: 56
                                 x: 16
                                 width: 52; height: 52
                                 radius: 12
-                                source: Options.lastSongs.cover || "qrc:/QueMusic/resources/app/musicpic.png"
+                                source: "qrc:/QueMusic/resources/app/musicpic.png"
                             },
                             Text {
                                 x: 78
                                 y: 60
                                 width: parent.width - 78
                                 height: 23
-                                text: Options.lastSongs.name
+                                text: queueHistoryStore.latest.title || ""
                                 font.bold: true
                                 font.pixelSize: Style.settings.textmain
                                 color: Style.themes.fontColor
@@ -325,7 +327,7 @@ Item {
                                 y: 83
                                 width: parent.width - 78
                                 height: 21
-                                text: Options.lastSongs.artist
+                                text: queueHistoryStore.latest.artist || ""
                                 font.pixelSize: Style.settings.text
                                 color: Style.themes.textColor
                                 verticalAlignment: Text.AlignVCenter
@@ -338,15 +340,12 @@ Item {
                                 radius: 18
                                 iconCharacter: "\uf00e"
                                 text: "播放"
+                                enabled: queueHistoryStore.latest.replayable === true
                                 shadowEnabled: false
                                 buttonColor: Style.themes.themeColor
                                 textColor: Style.themes.fullColor
                                 iconColor: Style.themes.fullColor
-                                onClicked: {
-                                    if(Options.lastSongs.hash !== "") {
-                                        MusicApi.getMusicInfo(Options.lastSongs.hash, 0, Options.lastSongs.source);
-                                    }
-                                }
+                                onClicked: homePage.playLatest()
                             },
                             SButton {
                                 x: parent.width - 120
@@ -360,31 +359,19 @@ Item {
                                 onClicked: {
                                 }
                             },
-                            //  加入播放列表
+                            //  这条记录已经在队列中时，提供队列入口；不从历史快照伪造入队动作。
                             SButton {
                                 x: parent.width - 52
                                 y: 64
-                                iconCharacter: "\uf095"
+                                iconCharacter: "\uf0c9"
+                                visible: queueHistoryStore.latest.replayable === true
                                 width: 36
                                 height: 36
                                 radius: 36
                                 buttonColor: "transparent"
                                 hoverColor: Style.themes.hoverColor
                                 shadowEnabled: false
-                                onClicked: {
-                                    var listIndex = -1;
-                                    var indexHash = Options.lastSongs.hash;
-                                    for(var i = 0;i < playListModel.count;i++) {
-                                        var forUrl = playListModel.get(i).path;
-                                        if(forUrl === indexHash) {
-                                            listIndex = i;
-                                        }
-                                    }
-                                    if (listIndex == -1) {
-                                        playListModel.append({ name: Options.lastSongs.name, path: Options.lastSongs.hash, songer: Options.lastSongs.artist, source: Options.lastSongs.source });
-                                        mainWarn.tiped("成功加入播放列表",1);
-                                    }
-                                }
+                                onClicked: window.togglePlayList()
                             }
                         ]
                     }

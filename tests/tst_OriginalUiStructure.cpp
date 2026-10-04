@@ -79,6 +79,9 @@ private slots:
         QVERIFY(!home.contains(QStringLiteral("MusicApi.getRecommendSongs(")));
         QVERIFY(!home.contains(QStringLiteral("MusicApi.getHotlistMenu")));
         QVERIFY(!home.contains(QStringLiteral("displayName: \"酷狗音乐\"")));
+        QVERIFY(home.contains(QStringLiteral("queueHistoryStore.latest")));
+        QVERIFY(home.contains(QStringLiteral("queueHistoryStore.playLatest()")));
+        QVERIFY(!home.contains(QStringLiteral("Options.lastSongs")));
 
         for (const QString &page : {QStringLiteral("pages/PlaylistPage.qml"),
                                     QStringLiteral("pages/FavouritePage.qml"),
