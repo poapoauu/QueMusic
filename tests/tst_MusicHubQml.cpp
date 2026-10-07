@@ -290,6 +290,14 @@ signals:
     void exitIndexChanged();
 };
 
+class FakeQueueHistoryStore final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantMap latest READ latest CONSTANT)
+public:
+    QVariantMap latest() const { return {}; }
+    Q_INVOKABLE bool playLatest() { return false; }
+};
+
 class PageTestContext final {
 public:
     explicit PageTestContext(QQmlEngine &engine)
@@ -321,6 +329,7 @@ public:
         QQmlContext *context = engine.rootContext();
         context->setContextProperty(QStringLiteral("MusicApi"), &musicApi);
         context->setContextProperty(QStringLiteral("window"), &window);
+        context->setContextProperty(QStringLiteral("queueHistoryStore"), &queueHistoryStore);
         context->setContextProperty(QStringLiteral("favoritesList"), &favoritesList);
         context->setContextProperty(QStringLiteral("favoritesSong"), &favoritesSong);
         context->setContextProperty(QStringLiteral("favoritesArtist"), &favoritesArtist);
@@ -344,6 +353,7 @@ public:
 private:
     FakeLegacyMusicApi musicApi;
     FakePageWindow window;
+    FakeQueueHistoryStore queueHistoryStore;
     FakeLegacyListModel favoritesList;
     FakeLegacyListModel favoritesSong;
     FakeLegacyListModel favoritesArtist;

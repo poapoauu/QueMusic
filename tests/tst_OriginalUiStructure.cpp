@@ -117,6 +117,15 @@ private slots:
         QVERIFY(!search.contains(QStringLiteral("酷狗音乐")));
         QVERIFY(!search.contains(QStringLiteral("网易云音乐")));
 
+        const QString favorite = readSource(QStringLiteral("pages/FavouritePage.qml"));
+        QVERIFY(favorite.contains(QStringLiteral("objectName: \"favoriteSongsList\"")));
+        QVERIFY(favorite.contains(QStringLiteral("objectName: \"favoritePlaylistsList\"")));
+        QVERIFY(favorite.contains(QStringLiteral("objectName: \"favoriteAdapterDetailWindow\"")));
+        QVERIFY(!favorite.contains(QStringLiteral("MusicApi.")));
+        QVERIFY(!favorite.contains(QStringLiteral("playListModel")));
+        QVERIFY(!favorite.contains(QStringLiteral("favoritesSong")));
+        QVERIFY(!favorite.contains(QStringLiteral("favoritesList")));
+
         const QString list = readSource(QStringLiteral("components/QListView.qml"));
         QVERIFY(list.contains(QStringLiteral("property var toolText0ForRow")));
         QVERIFY(list.contains(QStringLiteral("property var toolText1ForRow")));

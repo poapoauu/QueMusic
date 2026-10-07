@@ -253,6 +253,25 @@ private slots:
         qmlRegisterType<FakeDownloadedMusicModel>("QueMusic", 1, 0, "DownloadedMusicModel");
     }
 
+    void favoritesWithoutAdapterStayEmptyInsteadOfUsingLegacyRows()
+    {
+        QQmlEngine engine; PageContext context(engine); QmlDiagnosticCapture diagnostics; QString error;
+        context.legacy.setRows({FakeAdapter::row(QStringLiteral("Legacy item"),
+                                                  QStringLiteral("legacy"))});
+        auto page = load(engine, QStringLiteral("pages/FavouritePage.qml"), nullptr, &error);
+        QVERIFY2(page, qPrintable(error));
+        QObject *songs = page->findChild<QObject *>(QStringLiteral("favoriteSongsList"));
+        QObject *lists = page->findChild<QObject *>(QStringLiteral("favoritePlaylistsList"));
+        QVERIFY(songs); QVERIFY(lists);
+        QCOMPARE(songs->property("count").toInt(), 0);
+        QCOMPARE(lists->property("count").toInt(), 0);
+        QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(lists, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(context.musicApi.legacyPlays, 0);
+        QCOMPARE(context.musicApi.legacyPlaylistRequests, 0);
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+    }
+
     void favoritesUseAdapterModelsAndActions()
     {
         QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
