@@ -144,6 +144,11 @@ void OriginalUiMusicAdapter::activatePage(int pageKind)
     if (m_hub) m_hub->activatePage(pageKind);
 }
 
+void OriginalUiMusicAdapter::refreshPage(int pageKind)
+{
+    if (m_hub) m_hub->refresh(pageKind);
+}
+
 void OriginalUiMusicAdapter::search(const QString &text, int searchTab)
 {
     if (m_hub) m_hub->search(text, searchTab);

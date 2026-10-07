@@ -14,37 +14,22 @@ Item {
     property real toolsWindow: 0
     //property bool displaytop: flickable.contentY > 60 ? true : false
     function sourceOptions() {
-        if (musicAdapter && musicAdapter.sourceOptions)
-            return musicAdapter.sourceOptions
-        return [
-            { sourceInstanceId: "", displayName: "酷狗音乐", available: true },
-            { sourceInstanceId: "", displayName: "网易云音乐", available: true },
-            { sourceInstanceId: "", displayName: "QQ音乐(x)", available: true },
-            { sourceInstanceId: "", displayName: "自定义源(x)", available: true }
-        ]
+        return musicAdapter && musicAdapter.sourceOptions ? musicAdapter.sourceOptions : []
     }
     function sourceChoice() {
-        if (!musicAdapter)
-            return MusicApi.songSource
+        if (!musicAdapter) return -1
         const options = sourceOptions()
         for (let i = 0; i < options.length; ++i) {
             if (options[i].sourceInstanceId === musicAdapter.selectedSourceInstanceId)
                 return i
         }
-        return 0
+        return -1
     }
     function selectSource(choice) {
-        if (musicAdapter) {
-            const option = sourceOptions()[choice]
-            if (option && option.available)
-                musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
-            return
-        }
-        MusicApi.songSource = choice
-        MusicApi.newSongs.clear()
-        MusicApi.getPlaylistMenu(3)
-        MusicApi.getNewSongs(1, 1, 20)
-        MusicApi.getAllToplist()
+        if (!musicAdapter) return
+        const option = sourceOptions()[choice]
+        if (option && option.available)
+            musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
     }
     function loadMoreCategory() {
         if (musicAdapter && typeof musicAdapter.loadMore === "function") {
@@ -54,28 +39,18 @@ Item {
         return false
     }
     function browseCategory(index) {
-        if (musicAdapter) {
-            const row = musicAdapter.categoryItems.get(index)
-            if (!row || !musicAdapter.browse(row))
-                return false
-            adapterDetailWindow.opened(row.title || "",
-                                       row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
-            window.exitIndex = 2
-            return true
-        }
-        return false
+        if (!musicAdapter || !musicAdapter.categoryItems) return false
+        const row = musicAdapter.categoryItems.get(index)
+        if (!row || !musicAdapter.capabilities(row).canBrowse || !musicAdapter.browse(row))
+            return false
+        adapterDetailWindow.opened(row.title || "",
+                                   row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
+        window.exitIndex = 2
+        return true
     }
     Component.onCompleted: {
-        if (musicAdapter) {
+        if (musicAdapter)
             musicAdapter.activatePage(1)
-            return
-        }
-        if(!window.completedStart.playlistLoaded) {
-            MusicApi.getPlaylistMenu(3);
-            MusicApi.getNewSongs(1, 1, 20);
-            MusicApi.getAllToplist();
-            window.completedStart.playlistLoaded = true;
-        }
     }
 
     QPages {
@@ -111,9 +86,9 @@ Item {
                 //radius: 18
                 anchors.right: parent.right
                 choice: playlistPage.sourceChoice()
-                textColor: playlistPage.sourceChoice() == 0 ? "#0F3975" : playlistPage.sourceChoice() == 1 ? "#750F0F" : playlistPage.sourceChoice() == 2 ? "#16750F" : "#756F0F"
-                color: playlistPage.sourceChoice() == 0 ? "#CDE8FF" : playlistPage.sourceChoice() == 1 ? "#FFCDCD" : playlistPage.sourceChoice() == 2 ? "#CDFFCD" : "#FFFFCD"
-                border.color: playlistPage.sourceChoice() == 0 ? "#4384F5" : playlistPage.sourceChoice() == 1 ? "#F54343" : playlistPage.sourceChoice() == 2 ? "#4DF543" : "#F5F543"
+                textColor: Style.themes.textColor
+                color: Style.themes.primaryColor
+                border.color: Style.themes.borderColor
                 radius: 18
                 cardRadius: Style.settings.labelRadius
                 text: {
@@ -121,6 +96,7 @@ Item {
                     return option ? option.displayName : ""
                 }
                 model: playlistPage.sourceOptions().map((option) => option.displayName)
+                enabled: musicAdapter && playlistPage.sourceOptions().length > 0
                 onTransformed: (choiced) => {
                     playlistPage.selectSource(choiced)
                 }
@@ -138,20 +114,8 @@ Item {
             blurSource: playlistChildPage.pageList[playlistChildPage.lastIndex]
             onTabChange: (index) => {
                 playlistChildPage.stack(index)
-                switch(index) {
-                case 0:
-                    break;
-                case 1:
-                    if (musicAdapter)
-                        musicAdapter.activatePage(1)
-                    else
-                        MusicApi.getMenuInfo(MusicApi.allPlaylistMenu[0].id)
-                    break;
-                case 2:
-                    break;
-                case 3:
-                    break;
-                }
+                if (index === 1 && musicAdapter)
+                    musicAdapter.activatePage(1)
             }
         }
 
@@ -169,6 +133,7 @@ Item {
                 anchors.fill: parent
                 //  刷新
                 SButton {
+                    objectName: "categoryRefreshButton"
                     width: 36
                     height: 36
                     radius: 18
@@ -176,12 +141,8 @@ Item {
                     buttonColor: "transparent"
                     hoverColor: Style.themes.hoverColor
                     onClicked: {
-                        if (musicAdapter)
-                            musicAdapter.activatePage(1)
-                        else {
-                            MusicApi.recommendSongs.clear()
-                            MusicApi.getRecommendSongs(1,24)
-                        }
+                        if (musicAdapter && typeof musicAdapter.refreshPage === "function")
+                            musicAdapter.refreshPage(1)
                     }
                 }
                 //  布局
@@ -286,6 +247,12 @@ Item {
                 model: musicAdapter ? musicAdapter.categoryItems : MusicApi.newSongs
                 clip: true
                 //topMargin: 72
+                menuModel: musicAdapter ? [] : ["下载到本地", "分享", "歌曲信息"]
+                toolText0: musicAdapter ? "" : "\uf095"
+                toolText1: musicAdapter ? "" : "\uf0c8"
+                toolText0ForRow: musicAdapter ? function(index) {
+                    return musicAdapter.capabilities(model.get(index)).canEnqueue ? "\uf095" : ""
+                } : null
 
                 onEnded: {
                     if (musicAdapter) {
@@ -304,7 +271,9 @@ Item {
                 }
                 onClicked: (index) => {
                     if (musicAdapter) {
-                        musicAdapter.play(model.get(index));
+                        const row = model.get(index)
+                        if (musicAdapter.capabilities(row).canPlay)
+                            musicAdapter.play(row)
                     } else if(Options.settings.soundQuality === 0) {
                         MusicApi.getMusicInfo(model.get(index).hash);
                     } else if(Options.settings.soundQuality === 1) {
@@ -315,8 +284,9 @@ Item {
                 }
                 onToolClicked: (index,tool) => {
                     if (musicAdapter) {
-                        if (tool === 0)
-                            musicAdapter.enqueue(model.get(index));
+                        const row = model.get(index)
+                        if (tool === 0 && musicAdapter.capabilities(row).canEnqueue)
+                            musicAdapter.enqueue(row)
                         return;
                     }
                     switch(tool) {
@@ -365,7 +335,7 @@ Item {
                 y: 72
                 width: parent.width
                 Repeater {
-                    model: MusicApi.allPlaylistMenu
+                    model: musicAdapter ? [] : MusicApi.allPlaylistMenu
                     delegate: Rectangle {
                         width: 64
                         height: 32
@@ -419,6 +389,12 @@ Item {
                 y: musicMenuFlow.implicitHeight + 80
                 width: parent.width + 16
                 model: musicAdapter ? musicAdapter.categoryItems : MusicApi.musicPlaylists
+                menuModel: musicAdapter ? [] : ["下载到本地", "分享", "歌曲信息"]
+                toolText0: ""
+                toolText1: musicAdapter ? "" : "\uf0c8"
+                toolText1ForRow: musicAdapter ? function(index) {
+                    return musicAdapter.capabilities(model.get(index)).canFavorite ? "\uf0c8" : ""
+                } : null
                 property int artistX: width / 2 - 50
                 //topMargin: 72
                 bottomMargin: 24
@@ -453,8 +429,15 @@ Item {
                     }
                 }
                 onToolClicked: (index,tool) => {
-                    if (musicAdapter)
+                    if (musicAdapter) {
+                        if (tool === 1) {
+                            const row = model.get(index)
+                            const caps = musicAdapter.capabilities(row)
+                            if (caps.canFavorite)
+                                musicAdapter.setFavorite(row, true)
+                        }
                         return
+                    }
                     switch(tool) {
                     case 1:
                         if (favoritesList.isFavorite(model.get(index).hash, "playlist")) {
@@ -833,17 +816,25 @@ Item {
             height: adapterDetailWindow.height - 128
             model: musicAdapter ? musicAdapter.categoryItems : []
             menuModel: []
+            toolText0: "\uf095"
             toolText1: ""
+            toolText0ForRow: musicAdapter ? function(index) {
+                return musicAdapter.capabilities(model.get(index)).canEnqueue ? "\uf095" : ""
+            } : null
             clip: true
             topMargin: 8
             bottomMargin: 24
             onClicked: (index) => {
-                if (musicAdapter)
-                    musicAdapter.play(model.get(index))
+                if (!musicAdapter) return
+                const row = model.get(index)
+                if (musicAdapter.capabilities(row).canPlay)
+                    musicAdapter.play(row)
             }
             onToolClicked: (index, tool) => {
-                if (musicAdapter && tool === 0)
-                    musicAdapter.enqueue(model.get(index))
+                if (!musicAdapter || tool !== 0) return
+                const row = model.get(index)
+                if (musicAdapter.capabilities(row).canEnqueue)
+                    musicAdapter.enqueue(row)
             }
             onMenuClicked: (index, choice) => {
                 if (musicAdapter)

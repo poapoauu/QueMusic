@@ -375,6 +375,21 @@ private slots:
         QCOMPARE(hub.selectedSourceInstanceId(), QStringLiteral("navidrome/home"));
     }
 
+    void categoryRefreshForwardsToTheActiveSource()
+    {
+        RoutingHarness harness;
+        QVERIFY(harness.init());
+        harness.adapter->setSelectedSourceInstanceId(QStringLiteral("adapter/home"));
+        harness.adapter->activatePage(1);
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 4);
+
+        harness.adapter->refreshPage(1);
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 8);
+        for (const QVariant &request : harness.session()->property("pageRequests").toList())
+            QCOMPARE(request.toMap().value(QStringLiteral("scope")).toString(),
+                     QStringLiteral("adapter/home"));
+    }
+
     void splitsFavoriteTracksAndPlaylistsByEntityType()
     {
         QTemporaryDir dir;

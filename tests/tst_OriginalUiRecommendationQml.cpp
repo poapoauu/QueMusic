@@ -106,6 +106,7 @@ public:
     }
 
     Q_INVOKABLE void activatePage(int page) { activatedPages << page; }
+    Q_INVOKABLE void refreshPage(int page) { refreshedPages << page; }
     Q_INVOKABLE void loadMore(int page, const QString &section) { moreRequests << qMakePair(page, section); }
     Q_INVOKABLE bool browse(const QVariantMap &row) { browsedRows << row; return true; }
     Q_INVOKABLE void play(const QVariantMap &row) { playedRows << row; }
@@ -124,6 +125,7 @@ public:
     FakeListModel category;
     FakeListModel favorites;
     QList<int> activatedPages;
+    QList<int> refreshedPages;
     QList<QPair<int, QString>> moreRequests;
     QList<QVariantMap> browsedRows;
     QList<QVariantMap> playedRows;
@@ -419,6 +421,16 @@ private slots:
         QCOMPARE(context.legacyMusicApi()->songSource, 0);
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
         QVERIFY2(playlist, qPrintable(error)); QTRY_VERIFY(adapter.activatedPages.contains(1));
+        QObject *categoryScope = playlist->findChild<QObject *>(QStringLiteral("categorySourceScope"));
+        QVERIFY(categoryScope);
+        QVERIFY(QMetaObject::invokeMethod(categoryScope, "transformed", Q_ARG(int, 2)));
+        QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("third/instance"));
+        QVERIFY(QMetaObject::invokeMethod(categoryScope, "transformed", Q_ARG(int, 3)));
+        QCOMPARE(adapter.selectedSourceInstanceId(), QStringLiteral("third/instance"));
+        QObject *refresh = playlist->findChild<QObject *>(QStringLiteral("categoryRefreshButton"));
+        QVERIFY(refresh);
+        QVERIFY(QMetaObject::invokeMethod(refresh, "clicked"));
+        QCOMPARE(adapter.refreshedPages, (QList<int>{1}));
     }
 
     void recommendationRowsPaginateAndPlayThroughAdapter()
@@ -647,6 +659,24 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(lists, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
         QCOMPARE(adapter.playedRows.size(), 1);
         QCOMPARE(adapter.enqueuedRows.size(), 1);
+        QCOMPARE(adapter.favoriteRows.size(), 1);
+        adapter.category.setRows({QVariantMap{{"title", "Unavailable row"},
+                                              {"_adapterKey", 82ULL},
+                                              {"canPlay", false}, {"canEnqueue", false},
+                                              {"canBrowse", false}, {"canFavorite", false},
+                                              {"canUnfavorite", false}}});
+        QCoreApplication::processEvents();
+        QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(songs, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(lists, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
+        QVariant browsed;
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseCategory",
+                                          Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(!browsed.toBool());
+        QCOMPARE(adapter.playedRows.size(), 1);
+        QCOMPARE(adapter.enqueuedRows.size(), 1);
+        QCOMPARE(adapter.favoriteRows.size(), 1);
+        QCOMPARE(adapter.browsedRows.size(), 0);
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
         QCOMPARE(context.legacyLists()->favoriteQueries, 0);
         QCOMPARE(context.legacyLists()->favoriteCalls, 0);

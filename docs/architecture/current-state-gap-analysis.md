@@ -263,6 +263,8 @@ Home 的“我的收藏歌单”现显示 Adapter 已加载的歌单数并激活
 
 收藏页歌曲、歌单和歌单详情的页面级旧平台回退已移除，Adapter 缺失时仅显示空态；播放、入队、浏览、取消收藏和批量操作走 Capability/Adapter。旧收藏数据没有删除，但尚未映射到插件身份，页面不再展示无法安全操作的旧条目；后续如需恢复应设计明确的认领/迁移流程。原“关注歌手”和“历史记录”标签仍是占位，不能将其计入已完成的插件功能；页面级代码清理也不代表 Phase 6 全部完成。
 
+分类页来源下拉框已去固定平台选项和整数写入；Adapter 列表动作加入逐行 Capability，刷新经 Host Adapter 转交 MusicHub。固定地区标签、排行榜、歌手和旧详情仍未插件化，分类页不能宣称完成。`refreshPage()` 仅扩展 Original UI Adapter，不改 Source SDK v2 的 ABI。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

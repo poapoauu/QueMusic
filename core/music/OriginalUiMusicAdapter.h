@@ -51,6 +51,7 @@ public:
     void setSelectedSourceInstanceId(const QString &id);
 
     Q_INVOKABLE void activatePage(int pageKind);
+    Q_INVOKABLE void refreshPage(int pageKind);
     // searchTab follows the original UI order: songs, playlists, albums, lyrics.
     Q_INVOKABLE void search(const QString &text, int searchTab = 0);
     // The argument is either one opaque presentation row or a list of rows.
