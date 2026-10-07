@@ -28,7 +28,9 @@ Home 的来源下拉框改为只显示运行时 `sourceOptions`，按 SourceInst
 
 `PlaylistPage.qml` 的来源下拉框现只显示 Adapter 的运行时 `sourceOptions`，不再提供固定平台名称、序号配色或 `songSource` 写入回退。分类页工具栏的刷新经新增的 Host `OriginalUiMusicAdapter.refreshPage()` 转交 `MusicHub.refresh()`；这是 Adapter 的增量接口，不改 Source SDK v2。已接入 Adapter 的歌曲、分类/歌单和详情列表在播放、入队、收藏、浏览前检查逐行 Capability；不支持的操作隐藏或拒绝，Adapter 模式不再创建旧平台的分类菜单模型。测试覆盖动态第三方实例与禁用实例、真实来源刷新请求、无能力行拒绝动作以及原详情入队按钮的视觉/点击兼容。
 
-该页的固定地区标签、排行榜、歌手及其旧详情仍有 `MusicApi` 路径，尚未成为动态 Source；必须待对应插件数据/分类语义可用后单独迁移，不把旧榜单或歌手 ID 冒充插件 ref。
+歌曲标签页现已删除固定地区枚举，分类条读取插件返回的 Genre 展示项，并通过 Capability 与 Adapter 浏览原始展示身份；横向滚动保留圆角标签交互。歌曲列表无 Adapter 时为空，不再请求旧新歌 API、解析 hash 音质或写入路径队列，也不显示旧下载菜单。Genre 不存在时分类条为空，不伪造地区分类。
+
+排行榜、歌手、歌单标签页的旧回退及其旧详情仍有 `MusicApi` 路径，尚未成为动态 Source；必须待对应插件数据/分类语义可用后单独迁移，不把旧榜单或歌手 ID 冒充插件 ref。当前分类结果仍是共享 Adapter 页面模型，Genre 浏览后详情展示该模型，不宣称已实现独立的歌曲筛选模型。
 
 ## 后续顺序与验收
 

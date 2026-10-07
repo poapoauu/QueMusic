@@ -649,6 +649,13 @@ private slots:
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
         QVERIFY2(playlist, qPrintable(error));
         adapter.category.setRows(categoryRows());
+        QObject *genres = playlist->findChild<QObject *>(QStringLiteral("categoryGenreFilters"));
+        QVERIFY(genres);
+        QTRY_COMPARE(genres->property("count").toInt(), 1);
+        QVariant genreRows;
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "categoryGenres",
+                                          Q_RETURN_ARG(QVariant, genreRows)));
+        QCOMPARE(genreRows.toList().first().toMap(), adapter.category.get(0));
         QObject *songs = playlist->findChild<QObject *>(QStringLiteral("categoryList"));
         QObject *lists = playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"));
         QVERIFY(songs); QVERIFY(lists);
@@ -666,6 +673,7 @@ private slots:
                                               {"canBrowse", false}, {"canFavorite", false},
                                               {"canUnfavorite", false}}});
         QCoreApplication::processEvents();
+        QTRY_COMPARE(genres->property("count").toInt(), 0);
         QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 0)));
         QVERIFY(QMetaObject::invokeMethod(songs, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
         QVERIFY(QMetaObject::invokeMethod(lists, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));

@@ -41,6 +41,19 @@ Item {
     function browseCategory(index) {
         if (!musicAdapter || !musicAdapter.categoryItems) return false
         const row = musicAdapter.categoryItems.get(index)
+        return browsePresentation(row)
+    }
+    function categoryGenres() {
+        const rows = []
+        if (!musicAdapter || !musicAdapter.categoryItems) return rows
+        for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
+            const row = musicAdapter.categoryItems.get(i)
+            if (row.entityType === 4) rows.push(row)
+        }
+        return rows
+    }
+    function browsePresentation(row) {
+        if (!musicAdapter) return false
         if (!row || !musicAdapter.capabilities(row).canBrowse || !musicAdapter.browse(row))
             return false
         adapterDetailWindow.opened(row.title || "",
@@ -188,53 +201,37 @@ Item {
             id: musicsPage
             width: playlistChildPage.width
             height: playlistChildPage.height
-            property int musicMenuIndex: 0
-            Row {
-                spacing: 6
+            ListView {
+                objectName: "categoryGenreFilters"
+                width: parent.width
+                height: 32
                 y: 72
-                Repeater {
-                    model: ["华语","欧美","日韩","韩语","日语"]
-                    delegate: Rectangle {
-                        width: 64
-                        height: 32
-                        radius: 16
-                        color: musicsPage.musicMenuIndex === index ? Style.themes.themeColor : Style.themes.primaryColor
-                        border.color: Style.themes.sideColor
-                        border.width: 1
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 16
-                            color: Style.themes.hoverColor
-                            opacity: musicsMenuArea.containsMouse ? 1 : 0
-                            z: 1
-                            Behavior on opacity { NumberAnimation { duration: 80 } }
-                        }
-
-                        Text {
-                            anchors.fill: parent
-                            text: modelData
-                            elide: Text.ElideRight
-                            z: 2
-                            font.pixelSize: Style.settings.text
-                            color: musicsPage.musicMenuIndex === index ? Style.themes.fullColor : Style.themes.textColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        MouseArea {
-                            id: musicsMenuArea
-                            hoverEnabled: true
-                            anchors.fill: parent
-                            onClicked: {
-                                if (musicAdapter) {
-                                    musicAdapter.activatePage(1)
-                                } else {
-                                    MusicApi.newSongs.clear();
-                                    MusicApi.globalid = index + 1;
-                                    musicsPage.musicMenuIndex = index;
-                                    MusicApi.getNewSongs(index + 1, 1, 20);
-                                }
-                            }
-                        }
+                spacing: 6
+                orientation: ListView.Horizontal
+                clip: true
+                model: playlistPage.categoryGenres()
+                delegate: Rectangle {
+                    width: 96
+                    height: 32
+                    radius: 16
+                    color: musicsMenuArea.containsMouse ? Style.themes.hoverColor : Style.themes.primaryColor
+                    border.color: Style.themes.sideColor
+                    border.width: 1
+                    Text {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        text: modelData.title || ""
+                        elide: Text.ElideRight
+                        font.pixelSize: Style.settings.text
+                        color: Style.themes.textColor
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    MouseArea {
+                        id: musicsMenuArea
+                        hoverEnabled: true
+                        anchors.fill: parent
+                        onClicked: playlistPage.browsePresentation(modelData)
                     }
                 }
             }
@@ -244,82 +241,26 @@ Item {
                 width: parent.width + 16
                 y: 104
                 height: parent.height - 104
-                model: musicAdapter ? musicAdapter.categoryItems : MusicApi.newSongs
+                model: musicAdapter ? musicAdapter.categoryItems : null
                 clip: true
-                //topMargin: 72
-                menuModel: musicAdapter ? [] : ["下载到本地", "分享", "歌曲信息"]
-                toolText0: musicAdapter ? "" : "\uf095"
-                toolText1: musicAdapter ? "" : "\uf0c8"
+                menuModel: []
+                toolText0: ""
+                toolText1: ""
                 toolText0ForRow: musicAdapter ? function(index) {
                     return musicAdapter.capabilities(model.get(index)).canEnqueue ? "\uf095" : ""
                 } : null
-
-                onEnded: {
-                    if (musicAdapter) {
-                        if (playlistPage.loadMoreCategory())
-                            isEnd = false;
-                        else
-                            isEnd = true;
-                    } else if(MusicApi.newSongs.count % 20 === 0 && MusicApi.newSongs.count !== 0) {
-                        MusicApi.getNewSongs(MusicApi.globalid, MusicApi.newSongs.count / 20 + 1, 20);
-                        isEnd = false;
-                    } else {
-                        if(MusicApi.newSongs.count !== 0) {
-                            isEnd = true;
-                        }
-                    }
-                }
+                onEnded: isEnd = !playlistPage.loadMoreCategory()
                 onClicked: (index) => {
-                    if (musicAdapter) {
-                        const row = model.get(index)
-                        if (musicAdapter.capabilities(row).canPlay)
-                            musicAdapter.play(row)
-                    } else if(Options.settings.soundQuality === 0) {
-                        MusicApi.getMusicInfo(model.get(index).hash);
-                    } else if(Options.settings.soundQuality === 1) {
-                        MusicApi.getMusicInfo(model.get(index).hashhq);
-                    } else {
-                        MusicApi.getMusicInfo(model.get(index).hashsq);
-                    }
+                    if (!musicAdapter || !model) return
+                    const row = model.get(index)
+                    if (musicAdapter.capabilities(row).canPlay)
+                        musicAdapter.play(row)
                 }
-                onToolClicked: (index,tool) => {
-                    if (musicAdapter) {
-                        const row = model.get(index)
-                        if (tool === 0 && musicAdapter.capabilities(row).canEnqueue)
-                            musicAdapter.enqueue(row)
-                        return;
-                    }
-                    switch(tool) {
-                    case 0:
-                        var listIndex = -1
-                        var indexHash = model.get(index).hash;
-                        for(var i = 0;i < playListModel.count;i++) {
-                            var forUrl = playListModel.get(i).path;
-                            if(forUrl === indexHash) {
-                                listIndex = i;
-                            }
-                        }
-                        if (listIndex == -1) {
-                            playListModel.append({ name: model.get(index).title, path: model.get(index).hash, songer: model.get(index).artist, source: MusicApi.songSource });
-                            mainWarn.tiped("成功加入播放列表",1);
-                        }
-                        break;
-                    }
-                }
-                onMenuClicked: (index,choice) => {
-                    if (musicAdapter)
-                        return
-                    switch(choice) {
-                    case 0:
-                        if(Options.settings.soundQuality === 0) {
-                            MusicApi.getMusicInfo(model.get(index).hash,1);
-                        } else if(Options.settings.soundQuality === 1) {
-                            MusicApi.getMusicInfo(model.get(index).hashhq,1);
-                        } else {
-                            MusicApi.getMusicInfo(model.get(index).hashsq,1);
-                        }
-                        break;
-                    }
+                onToolClicked: (index, tool) => {
+                    if (!musicAdapter || !model) return
+                    const row = model.get(index)
+                    if (tool === 0 && musicAdapter.capabilities(row).canEnqueue)
+                        musicAdapter.enqueue(row)
                 }
             }
         }
