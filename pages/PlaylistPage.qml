@@ -52,6 +52,15 @@ Item {
         }
         return rows
     }
+    function categoryPlaylists() {
+        const rows = []
+        if (!musicAdapter || !musicAdapter.categoryItems) return rows
+        for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
+            const row = musicAdapter.categoryItems.get(i)
+            if (row.entityType === 3) rows.push(row)
+        }
+        return rows
+    }
     function browsePresentation(row) {
         if (!musicAdapter) return false
         if (!row || !musicAdapter.capabilities(row).canBrowse || !musicAdapter.browse(row))
@@ -247,18 +256,19 @@ Item {
                 toolText0: ""
                 toolText1: ""
                 toolText0ForRow: musicAdapter ? function(index) {
-                    return musicAdapter.capabilities(model.get(index)).canEnqueue ? "\uf095" : ""
+                    const row = searchSong.model && searchSong.model.get(index)
+                    return row && musicAdapter.capabilities(row).canEnqueue ? "\uf095" : ""
                 } : null
                 onEnded: isEnd = !playlistPage.loadMoreCategory()
                 onClicked: (index) => {
-                    if (!musicAdapter || !model) return
-                    const row = model.get(index)
+                    if (!musicAdapter || !searchSong.model) return
+                    const row = searchSong.model.get(index)
                     if (musicAdapter.capabilities(row).canPlay)
                         musicAdapter.play(row)
                 }
                 onToolClicked: (index, tool) => {
-                    if (!musicAdapter || !model) return
-                    const row = model.get(index)
+                    if (!musicAdapter || !searchSong.model) return
+                    const row = searchSong.model.get(index)
                     if (tool === 0 && musicAdapter.capabilities(row).canEnqueue)
                         musicAdapter.enqueue(row)
                 }
@@ -269,127 +279,35 @@ Item {
             visible: false
             width: playlistChildPage.width
             height: playlistChildPage.height
-            property int musicMenuIndex: 0
-            Flow {
-                id: musicMenuFlow
-                spacing: 6
-                y: 72
-                width: parent.width
-                Repeater {
-                    model: musicAdapter ? [] : MusicApi.allPlaylistMenu
-                    delegate: Rectangle {
-                        width: 64
-                        height: 32
-                        radius: 16
-                        color: musicMenuPage.musicMenuIndex === index ? Style.themes.themeColor : Style.themes.primaryColor
-                        border.color: Style.themes.sideColor
-                        border.width: 1
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 16
-                            color: Style.themes.hoverColor
-                            opacity: musiclistMenuArea.containsMouse ? 1 : 0
-                            z: 1
-                            Behavior on opacity { NumberAnimation { duration: 80 } }
-                        }
-
-                        Text {
-                            anchors.fill: parent
-                            text: modelData.title
-                            elide: Text.ElideRight
-                            z: 2
-                            font.pixelSize: Style.settings.text
-                            color: musicMenuPage.musicMenuIndex === index ? Style.themes.fullColor : Style.themes.textColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        MouseArea {
-                            id: musiclistMenuArea
-                            hoverEnabled: true
-                            anchors.fill: parent
-                            onClicked: {
-                                if (musicAdapter) {
-                                    musicAdapter.activatePage(1)
-                                } else {
-                                    musicMenuPage.musicMenuIndex = index;
-                                    MusicApi.globaltagid = MusicApi.allPlaylistMenu[index].id;
-                                    MusicApi.musicPlaylists.clear();
-                                    MusicApi.getMenuInfo(MusicApi.allPlaylistMenu[index].id);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             QListView {
                 id: musicMenuList
                 objectName: "categoryBrowseList"
+                y: 72
                 height: parent.height - y
-                clip: true
-                y: musicMenuFlow.implicitHeight + 80
                 width: parent.width + 16
-                model: musicAdapter ? musicAdapter.categoryItems : MusicApi.musicPlaylists
-                menuModel: musicAdapter ? [] : ["下载到本地", "分享", "歌曲信息"]
+                clip: true
+                isList: true
+                showListCount: false
+                model: playlistPage.categoryPlaylists()
+                menuModel: []
                 toolText0: ""
-                toolText1: musicAdapter ? "" : "\uf0c8"
-                toolText1ForRow: musicAdapter ? function(index) {
-                    return musicAdapter.capabilities(model.get(index)).canFavorite ? "\uf0c8" : ""
-                } : null
-                property int artistX: width / 2 - 50
-                //topMargin: 72
+                toolText1: ""
+                toolText1ForRow: function(index) {
+                    const row = model[index]
+                    return musicAdapter && row && musicAdapter.capabilities(row).canFavorite ? "\uf0c8" : ""
+                }
+                artistX: width / 2 - 50
                 bottomMargin: 24
-
-                onEnded: {
-                    if (musicAdapter) {
-                        if (playlistPage.loadMoreCategory())
-                            isEnd = false;
-                        else
-                            isEnd = true;
-                    } else if(MusicApi.musicPlaylists.count % 20 === 0 && MusicApi.musicPlaylists.count !== 0) {
-                        MusicApi.getMusicPlaylists(MusicApi.globaltagid, MusicApi.musicPlaylists.count / 20 + 1, 20);
-                        isEnd = false;
-                    } else {
-                        if(MusicApi.musicPlaylists.count !== 0) {
-                            isEnd = true;
-                        }
-                    }
-                }
-
+                onEnded: isEnd = !playlistPage.loadMoreCategory()
                 onClicked: (index) => {
-                    if (musicAdapter) {
-                        playlistPage.browseCategory(index)
-                    } else {
-                        MusicApi.playlistSong.clear();
-                        MusicApi.globalid = model.get(index).hash;
-                        MusicApi.getPlaylistSongs(model.get(index).hash,1,20);
-                        //var image = model.get(index).cover.replace("{size}", "256") || "qrc:/QueMusic/resources/app/musicpic.png";
-                        //var title = model.get(index).title;
-                        playListSongsWindow.opened(model.get(index));
-                        window.exitIndex = 2;
-                    }
+                    const row = model[index]
+                    if (row) playlistPage.browsePresentation(row)
                 }
-                onToolClicked: (index,tool) => {
-                    if (musicAdapter) {
-                        if (tool === 1) {
-                            const row = model.get(index)
-                            const caps = musicAdapter.capabilities(row)
-                            if (caps.canFavorite)
-                                musicAdapter.setFavorite(row, true)
-                        }
-                        return
-                    }
-                    switch(tool) {
-                    case 1:
-                        if (favoritesList.isFavorite(model.get(index).hash, "playlist")) {
-                            favoritesList.removeFavorite(model.get(index).hash, "playlist");
-                            mainWarn.tiped("取消收藏",0);
-                        } else {
-                            favoritesList.addFavorite(model.get(index).hash, model.get(index).title, model.get(index).artist, model.get(index).cover, MusicApi.songSource, model.get(index).duration, "playlist");
-                            mainWarn.tiped("成功收藏",1);
-                        }
-                        break;
-                    }
+                onToolClicked: (index, tool) => {
+                    const row = model[index]
+                    if (musicAdapter && row && tool === 1
+                            && musicAdapter.capabilities(row).canFavorite)
+                        musicAdapter.setFavorite(row, true)
                 }
             }
         }

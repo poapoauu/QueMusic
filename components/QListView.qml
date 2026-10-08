@@ -11,10 +11,11 @@ ListView {
     bottomMargin: 24
     rightMargin: 16
     property int scrollToY: view.contentY
-    property list<string> headerModel: isList ? ["标题","创建者","曲目","操作"] : ["标题","歌手","时长","操作"]//text,x
+    property list<string> headerModel: isList ? ["标题","创建者",showListCount ? "曲目" : "","操作"] : ["标题","歌手","时长","操作"]//text,x
     property list<string> menuModel: ["下载到本地","分享","歌曲信息"]
     property list<int> selectedIndices: []
     property bool isList: false
+    property bool showListCount: true
     property int artistX: width / 2 - 32
     property int toolX: width - 210
     property string toolText0: "\uf095"
@@ -257,6 +258,7 @@ ListView {
 
     delegate: Rectangle {
         id: listDel
+        readonly property var displayRow: typeof modelData !== "undefined" ? modelData : model
         height: 60
         width: view.width - 16
         color: view.selectedIndices.indexOf(index) !== -1 ? Style.themes.containColor : "#00000000"
@@ -281,7 +283,7 @@ ListView {
             width: 44
             height: 44
             radius: 10
-            source: model.cover.replace("{size}","64") || "qrc:/QueMusic/resources/app/musicpic.png"
+            source: displayRow.cover ? displayRow.cover.replace("{size}","64") : "qrc:/QueMusic/resources/app/musicpic.png"
         }
 
 
@@ -292,7 +294,7 @@ ListView {
             z: 3
             width: view.artistX - 110
             height: 28
-            text: model.title || "Unknown"
+            text: displayRow.title || "Unknown"
             color: Style.themes.fontColor
             font.weight: Font.DemiBold
             elide: Text.ElideRight
@@ -308,7 +310,7 @@ ListView {
             width: 32
             height: 18
             radius: 9
-            visible: model.paytype === 3
+            visible: displayRow.paytype === 3
             Text {
                 text: "VIP"
                 anchors.centerIn: parent
@@ -323,7 +325,7 @@ ListView {
             z: 3
             width: view.artistX - 128
             height: 28
-            text: model.artist || "Unknown"
+            text: displayRow.artist || "Unknown"
             color: Style.themes.textColor
             font.weight: Font.Normal
             elide: Text.ElideRight
@@ -338,18 +340,18 @@ ListView {
             z: 3
             width: 60
             height: 28
-            text: model.duration + "首"
+            visible: !view.isList || view.showListCount
+            text: displayRow.duration + "首"
             color: Style.themes.textColor
             font.bold: false
             elide: Text.ElideRight
             font.pixelSize: Style.settings.text
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignHCenter
-            visible: true
             Behavior on color { ColorAnimation { duration: 120 } }
             Component.onCompleted: {
                 if(!view.isList) {
-                    text = Math.floor(model.duration / 60) + ":" + (model.duration % 60)
+                    text = Math.floor(displayRow.duration / 60) + ":" + (displayRow.duration % 60)
                 }
             }
         }

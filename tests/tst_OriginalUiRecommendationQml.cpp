@@ -191,6 +191,15 @@ QVariantList categoryRows()
                          {QStringLiteral("_adapterKey"), 73ULL}}};
 }
 
+QVariantList playlistRows()
+{
+    return {QVariantMap{{QStringLiteral("title"), QStringLiteral("Mapped playlist")},
+                         {QStringLiteral("artist"), QStringLiteral("Mapped curator")},
+                         {QStringLiteral("cover"), QString{}}, {QStringLiteral("duration"), 0},
+                         {QStringLiteral("entityType"), 3},
+                         {QStringLiteral("_adapterKey"), 76ULL}}};
+}
+
 QVariantList mixedCategoryRows()
 {
     return {QVariantMap{{QStringLiteral("title"), QStringLiteral("Mapped genre")},
@@ -510,7 +519,7 @@ private slots:
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
         QVERIFY2(playlist, qPrintable(error));
-        adapter.category.setRows(categoryRows());
+        adapter.category.setRows(playlistRows());
         QTRY_COMPARE(playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"))
                          ->property("count").toInt(), 1);
         QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseCategory",
@@ -535,6 +544,41 @@ private slots:
         QTRY_VERIFY(!detail->property("visible").toBool());
     }
 
+    void playlistTabOnlyShowsPluginPlaylists()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        QVariantList rows = mixedCategoryRows();
+        rows.append(playlistRows().first());
+        adapter.category.setRows(rows);
+        QObject *lists = playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"));
+        QObject *genres = playlist->findChild<QObject *>(QStringLiteral("categoryGenreFilters"));
+        QVERIFY(lists); QVERIFY(genres);
+        QTRY_COMPARE(lists->property("count").toInt(), 1);
+        QTRY_COMPARE(genres->property("count").toInt(), 1);
+        const QVariantList visibleRows = lists->property("model").toList();
+        QCOMPARE(visibleRows.size(), 1);
+        QCOMPARE(visibleRows.first().toMap().value(QStringLiteral("_adapterKey")).toULongLong(), 76ULL);
+        QVERIFY(QMetaObject::invokeMethod(lists, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.browsedRows.size(), 1);
+        QCOMPARE(adapter.browsedRows.first().value(QStringLiteral("_adapterKey")).toULongLong(), 76ULL);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+    }
+
+    void playlistTabHasNoLegacyFallbackWithoutAdapter()
+    {
+        QQmlEngine engine; PageContext context(engine); QString error;
+        context.legacyMusicApi()->listModel()->setRows(playlistRows());
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), nullptr, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        QObject *lists = playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"));
+        QVERIFY(lists);
+        QCOMPARE(lists->property("count").toInt(), 0);
+        QVERIFY(QMetaObject::invokeMethod(lists, "ended"));
+        QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
+    }
+
     void adapterDetailKeepsOnlyEnqueueActionAvailable()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
@@ -549,7 +593,7 @@ private slots:
         pageItem->setParentItem(window.contentItem());
         window.show();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
-        adapter.category.setRows(categoryRows());
+        adapter.category.setRows(playlistRows());
         QTRY_COMPARE(playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"))
                          ->property("count").toInt(), 1);
         QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseCategory",
@@ -595,8 +639,8 @@ private slots:
         QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, enqueueCenter);
         QTRY_COMPARE(adapter.enqueuedRows.size(), 1);
         QCOMPARE(adapter.enqueuedRows.constFirst().value(QStringLiteral("_adapterKey")).toULongLong(),
-                 73ULL);
-        QCOMPARE(adapter.enqueuedRows.constFirst(), categoryRows().constFirst().toMap());
+                 76ULL);
+        QCOMPARE(adapter.enqueuedRows.constFirst(), playlistRows().constFirst().toMap());
 
         QObject *menu = detailList->property("menu").value<QObject *>();
         QVERIFY(menu);
@@ -648,14 +692,10 @@ private slots:
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
         QVERIFY2(playlist, qPrintable(error));
-        adapter.category.setRows(categoryRows());
+        adapter.category.setRows(playlistRows());
         QObject *genres = playlist->findChild<QObject *>(QStringLiteral("categoryGenreFilters"));
         QVERIFY(genres);
-        QTRY_COMPARE(genres->property("count").toInt(), 1);
-        QVariant genreRows;
-        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "categoryGenres",
-                                          Q_RETURN_ARG(QVariant, genreRows)));
-        QCOMPARE(genreRows.toList().first().toMap(), adapter.category.get(0));
+        QTRY_COMPARE(genres->property("count").toInt(), 0);
         QObject *songs = playlist->findChild<QObject *>(QStringLiteral("categoryList"));
         QObject *lists = playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"));
         QVERIFY(songs); QVERIFY(lists);
@@ -668,6 +708,7 @@ private slots:
         QCOMPARE(adapter.enqueuedRows.size(), 1);
         QCOMPARE(adapter.favoriteRows.size(), 1);
         adapter.category.setRows({QVariantMap{{"title", "Unavailable row"},
+                                              {"entityType", 3},
                                               {"_adapterKey", 82ULL},
                                               {"canPlay", false}, {"canEnqueue", false},
                                               {"canBrowse", false}, {"canFavorite", false},
