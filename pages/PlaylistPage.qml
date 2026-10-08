@@ -46,6 +46,21 @@ Item {
         }
         return false
     }
+    function requestCategorySections(model, retry, fallbackSection) {
+        if (!musicAdapter || !model) return
+        const action = retry ? "retry" : "loadMore"
+        if (typeof musicAdapter[action] !== "function") return
+        const ids = retry ? model.retrySectionIds : model.paginationSectionIds
+        // Older Host models can still use the single-section contract.
+        const targets = ids !== undefined ? Array.from(ids)
+                       : !model.loadingMore && (retry || model.hasMore) ? [fallbackSection] : []
+        for (const id of targets)
+            musicAdapter[action](1, id)
+    }
+    function categoryPaginationBlocked(model) {
+        return model && model.loadingMore === true
+                && (!model.paginationSectionIds || model.paginationSectionIds.length === 0)
+    }
     function browseCategory(index) {
         if (!musicAdapter || !musicAdapter.categoryItems) return false
         const row = musicAdapter.categoryItems.get(index)
@@ -322,16 +337,15 @@ Item {
                 } : null
                 sectionId: model && model.sectionId ? model.sectionId : ""
                 hasMore: model && model.hasMore === true
-                loadingMore: model && model.loadingMore === true
+                loadingMore: playlistPage.categoryPaginationBlocked(model)
+                useLegacyLoadingState: false
                 sectionError: model && model.error && Object.keys(model.error).length > 0 ? ({failed: true}) : ({})
                 retryAction: function(section) {
-                    if (musicAdapter && typeof musicAdapter.retry === "function")
-                        musicAdapter.retry(1, section)
+                    playlistPage.requestCategorySections(searchSong.model, true, section)
                 }
                 isEnd: count > 0 && !hasMore && !loadingMore
                 onEnded: {
-                    if (hasMore && !loadingMore && musicAdapter && typeof musicAdapter.loadMore === "function")
-                        musicAdapter.loadMore(1, sectionId)
+                    playlistPage.requestCategorySections(model, false, sectionId)
                 }
                 onClicked: (index) => {
                     if (!musicAdapter || !searchSong.model) return
@@ -640,11 +654,11 @@ Item {
                 }
                 sectionId: model && model.sectionId ? model.sectionId : ""
                 hasMore: model && model.hasMore === true
-                loadingMore: model && model.loadingMore === true
+                loadingMore: playlistPage.categoryPaginationBlocked(model)
+                useLegacyLoadingState: false
                 sectionError: model && model.error && Object.keys(model.error).length > 0 ? ({failed: true}) : ({})
                 retryAction: function(section) {
-                    if (musicAdapter && typeof musicAdapter.retry === "function")
-                        musicAdapter.retry(1, section)
+                    playlistPage.requestCategorySections(adapterDetailList.model, true, section)
                 }
                 isEnd: count > 0 && !hasMore && !loadingMore
                 clip: true
@@ -666,8 +680,7 @@ Item {
                         musicAdapter.enqueue(row)
                 }
                 onEnded: {
-                    if (hasMore && !loadingMore && musicAdapter && typeof musicAdapter.loadMore === "function")
-                        musicAdapter.loadMore(1, sectionId)
+                    playlistPage.requestCategorySections(model, false, sectionId)
                 }
             }
             Text {

@@ -8,6 +8,7 @@
 
 #include <QAbstractListModel>
 #include <QHash>
+#include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -16,6 +17,8 @@ class OnlineListModel : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
     Q_PROPERTY(QString sectionId READ sectionId NOTIFY presentationStateChanged)
+    Q_PROPERTY(QStringList paginationSectionIds READ paginationSectionIds NOTIFY presentationStateChanged)
+    Q_PROPERTY(QStringList retrySectionIds READ retrySectionIds NOTIFY presentationStateChanged)
     Q_PROPERTY(bool hasMore READ hasMore NOTIFY presentationStateChanged)
     Q_PROPERTY(bool loadingMore READ loadingMore NOTIFY presentationStateChanged)
     Q_PROPERTY(QVariantMap error READ error NOTIFY presentationStateChanged)
@@ -37,6 +40,8 @@ public:
     void setItems(const QVariantList &items);
     void setPresentationState(const QVariantMap &state);
     QString sectionId() const;
+    QStringList paginationSectionIds() const;
+    QStringList retrySectionIds() const;
     bool hasMore() const;
     bool loadingMore() const;
     QVariantMap error() const;
@@ -53,6 +58,8 @@ private:
     QHash<QByteArray, int> m_roleIndex; // 字段名 → role id
     int m_nextRole = Qt::UserRole + 1;
     QString m_sectionId;
+    QStringList m_paginationSectionIds;
+    QStringList m_retrySectionIds;
     bool m_hasMore = false;
     bool m_loadingMore = false;
     QVariantMap m_error;

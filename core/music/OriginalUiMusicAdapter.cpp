@@ -67,16 +67,38 @@ QVariantMap sectionState(MusicPageModel *model, const QList<PageSectionKindV2> &
     return {};
 }
 
-QVariantMap withoutUnsupportedErrors(QVariantMap state)
+QVariantMap categorySectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds)
 {
-    auto errors = state.value("error").toMap();
-    for (auto it = errors.begin(); it != errors.end();) {
-        if (it->toMap().value("kind").toInt() == int(SourceErrorKindV2::Unsupported))
-            it = errors.erase(it);
-        else ++it;
+    if (!model) return {};
+    QString firstId;
+    QStringList paginationIds, retryIds;
+    QVariantMap errors;
+    bool hasMore = false, loadingMore = false;
+    for (int i = 0; i < model->rowCount(); ++i) {
+        if (!kinds.contains(model->section(i).kind)) continue;
+        const auto index = model->index(i);
+        const QString id = model->data(index, MusicPageModel::SectionIdRole).toString();
+        if (firstId.isEmpty()) firstId = id;
+        const bool more = model->data(index, MusicPageModel::HasMoreRole).toBool()
+            && !model->section(i).nextCursor.isEmpty();
+        const bool loading = model->data(index, MusicPageModel::LoadingMoreRole).toBool();
+        bool failed = false;
+        const auto sourceErrors = model->data(index, MusicPageModel::ErrorRole).toMap();
+        for (const auto &value : sourceErrors)
+            failed |= value.toMap().value("kind").toInt() != int(SourceErrorKindV2::Unsupported);
+        hasMore |= more && sourceErrors.isEmpty();
+        loadingMore |= loading;
+        if (id.isEmpty()) continue;
+        // Keep diagnostic text and source identities out of this aggregate UI state.
+        if (failed) {
+            errors.insert(id, QVariantMap{{"failed", true}});
+            if (!loading) retryIds.append(id);
+        } else if (more && !loading && sourceErrors.isEmpty()) {
+            paginationIds.append(id);
+        }
     }
-    state["error"] = errors;
-    return state;
+    return {{"sectionId", firstId}, {"hasMore", hasMore}, {"loadingMore", loadingMore},
+            {"paginationSectionIds", paginationIds}, {"retrySectionIds", retryIds}, {"error", errors}};
 }
 
 } // namespace
@@ -496,11 +518,10 @@ void OriginalUiMusicAdapter::rebuild()
         m_recommendSongs->setPresentationState(sectionState(m_hub->recommendation(), {
             PageSectionKindV2::RecentlyPlayed, PageSectionKindV2::FrequentlyPlayed,
             PageSectionKindV2::HighestRated, PageSectionKindV2::Newest, PageSectionKindV2::Random}));
-        m_categoryItems->setPresentationState(withoutUnsupportedErrors(sectionState(m_hub->category(), {
+        m_categoryItems->setPresentationState(categorySectionState(m_hub->category(), {
             PageSectionKindV2::Genres, PageSectionKindV2::Artists,
-            PageSectionKindV2::Albums, PageSectionKindV2::Tracks, PageSectionKindV2::Playlists})));
-        m_categorySongs->setPresentationState(withoutUnsupportedErrors(
-            sectionState(m_hub->category(), {PageSectionKindV2::Tracks})));
+            PageSectionKindV2::Albums, PageSectionKindV2::Tracks, PageSectionKindV2::Playlists}));
+        m_categorySongs->setPresentationState(categorySectionState(m_hub->category(), {PageSectionKindV2::Tracks}));
         m_favoriteSongs->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::FavoriteTracks}));
         m_favoriteLists->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::Playlists}));
         m_searchSongs->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));

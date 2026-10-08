@@ -12,6 +12,8 @@ class FakeListModel final : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
     Q_PROPERTY(QString sectionId MEMBER sectionId NOTIFY presentationStateChanged)
+    Q_PROPERTY(QStringList paginationSectionIds MEMBER paginationSectionIds NOTIFY presentationStateChanged)
+    Q_PROPERTY(QStringList retrySectionIds MEMBER retrySectionIds NOTIFY presentationStateChanged)
     Q_PROPERTY(bool hasMore MEMBER hasMore NOTIFY presentationStateChanged)
     Q_PROPERTY(bool loadingMore MEMBER loadingMore NOTIFY presentationStateChanged)
     Q_PROPERTY(QVariantMap error MEMBER error NOTIFY presentationStateChanged)
@@ -71,6 +73,8 @@ signals:
 
 public:
     QString sectionId;
+    QStringList paginationSectionIds;
+    QStringList retrySectionIds;
     bool hasMore = false;
     bool loadingMore = false;
     QVariantMap error;
@@ -861,16 +865,19 @@ private slots:
         QCOMPARE(adapter.playedRows.last().value("_adapterKey").toULongLong(), 75ULL);
         adapter.songs.sectionId = "filtered-tracks";
         adapter.songs.hasMore = true;
+        adapter.songs.paginationSectionIds = {"filtered-tracks"};
         emit adapter.songs.presentationStateChanged();
         const int before = adapter.moreRequests.size();
         QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
         QCOMPARE(adapter.moreRequests.size(), before + 1);
         QCOMPARE(adapter.moreRequests.last(), qMakePair(1, QString("filtered-tracks")));
         adapter.songs.loadingMore = true;
+        adapter.songs.paginationSectionIds.clear();
         emit adapter.songs.presentationStateChanged();
         QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
         QCOMPARE(adapter.moreRequests.size(), before + 1);
         adapter.songs.loadingMore = false;
+        adapter.songs.retrySectionIds = {"filtered-tracks"};
         adapter.songs.error = {{"source", QVariantMap{{"detail", "private diagnostic"}}}};
         emit adapter.songs.presentationStateChanged();
         QCOMPARE(songs->property("sectionError").toMap(), QVariantMap({{"failed", true}}));
@@ -888,6 +895,50 @@ private slots:
         emit adapter.categoryStatusChanged();
         QTRY_COMPARE(status->property("text").toString(), QStringLiteral("部分内容加载失败"));
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+    }
+
+    void categoryListsFanOutOnlyActionableSections()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        adapter.category.setRows(mixedCategoryRows());
+        QObject *songs = playlist->findChild<QObject *>(QStringLiteral("categoryList"));
+        QVERIFY(songs);
+        adapter.songs.sectionId = "exhausted-first";
+        adapter.songs.hasMore = true;
+        adapter.songs.loadingMore = true;
+        adapter.songs.paginationSectionIds = {"ready-a", "ready-b"};
+        emit adapter.songs.presentationStateChanged();
+        QVERIFY(!songs->property("loadingMore").toBool());
+        QVERIFY(!songs->property("useLegacyLoadingState").toBool());
+        QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
+        QCOMPARE(adapter.moreRequests, (QList<QPair<int, QString>>{{1, "ready-a"}, {1, "ready-b"}}));
+        adapter.songs.paginationSectionIds.clear();
+        adapter.songs.retrySectionIds = {"failed-a", "failed-b"};
+        adapter.songs.error = {{"failed-a", QVariantMap{{"failed", true}}}};
+        emit adapter.songs.presentationStateChanged();
+        QVERIFY(songs->property("loadingMore").toBool());
+        QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
+        QCOMPARE(adapter.moreRequests.size(), 2);
+        QVERIFY(QMetaObject::invokeMethod(songs, "retrySection"));
+        QCOMPARE(adapter.retries, (QList<QPair<int, QString>>{{1, "failed-a"}, {1, "failed-b"}}));
+        QVariant browsed;
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browsePresentation", Q_RETURN_ARG(QVariant, browsed),
+                                          Q_ARG(QVariant, QVariant(adapter.category.get(1)))));
+        QVERIFY(browsed.toBool());
+        QTRY_VERIFY(playlist->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList")));
+        QObject *detail = playlist->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList"));
+        adapter.category.paginationSectionIds = {"album-next", "tracks-next"};
+        adapter.category.retrySectionIds = {"playlist-failed"};
+        adapter.category.hasMore = true;
+        emit adapter.category.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(detail, "ended"));
+        QCOMPARE(adapter.moreRequests.at(2), qMakePair(1, QString("album-next")));
+        QCOMPARE(adapter.moreRequests.at(3), qMakePair(1, QString("tracks-next")));
+        QVERIFY(QMetaObject::invokeMethod(detail, "retrySection"));
+        QCOMPARE(adapter.retries.last(), qMakePair(1, QString("playlist-failed")));
+        QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
     }
 
     void adapterRowsNeverInvokeLegacyPlaylistActions()

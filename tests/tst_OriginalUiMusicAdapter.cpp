@@ -361,6 +361,62 @@ private slots:
         QCOMPARE(adapter.categorySongs()->sectionId(), QStringLiteral("tracks"));
     }
 
+    void categoryAggregatesIndependentSectionState()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath("settings.ini"), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        auto result = resultWith({makeItem(MediaEntityTypeV2::Track, "source", "source/a", "a")}, "exhausted");
+        auto next = result.sections.first();
+        next.sectionId = "next-a"; next.hasMore = true; next.nextCursor = "private-cursor-a";
+        next.items = {makeItem(MediaEntityTypeV2::Track, "source", "source/b", "b")};
+        result.sections.append(next);
+        next.sectionId = "next-b"; next.nextCursor = "private-cursor-b";
+        result.sections.append(next);
+        next.sectionId = "albums"; next.kind = PageSectionKindV2::Albums;
+        next.items = {makeItem(MediaEntityTypeV2::Album, "source", "source/a", "album")};
+        result.sections.append(next);
+        next.sectionId = "invalid-cursor"; next.kind = PageSectionKindV2::Tracks;
+        next.nextCursor.clear(); next.items.clear();
+        result.sections.append(next);
+        auto *model = hub.category();
+        const auto generation = model->beginRequest();
+        QVERIFY(model->applyResult(generation, result));
+        PageSectionV2 unsupported; unsupported.sectionId = "unsupported"; unsupported.kind = PageSectionKindV2::Tracks;
+        QVERIFY(model->applyQueryFailure(generation, unsupported, {SourceErrorKindV2::Unsupported}));
+        QVERIFY(model->finishGeneration(generation, 2));
+        QCOMPARE(adapter.categorySongs()->paginationSectionIds(), QStringList({"next-a", "next-b"}));
+        QCOMPARE(adapter.categoryItems()->paginationSectionIds(), QStringList({"next-a", "next-b", "albums"}));
+        QVERIFY(adapter.categorySongs()->hasMore());
+        QVERIFY(adapter.categorySongs()->retrySectionIds().isEmpty());
+        QVERIFY(model->beginSectionRequest(generation, "next-a"));
+        QVERIFY(adapter.categorySongs()->loadingMore());
+        QCOMPARE(adapter.categorySongs()->paginationSectionIds(), QStringList({"next-b"}));
+        QVERIFY(model->applySectionFailure(generation, "next-a",
+                                          {SourceErrorKindV2::Network, "network", "private diagnostic"}));
+        QCOMPARE(adapter.categorySongs()->retrySectionIds(), QStringList({"next-a"}));
+        QCOMPARE(adapter.categorySongs()->paginationSectionIds(), QStringList({"next-b"}));
+        QCOMPARE(adapter.categorySongs()->error(), QVariantMap({{"next-a", QVariantMap{{"failed", true}}}}));
+        QVERIFY(model->beginSectionRequest(generation, "next-a"));
+        QVERIFY(adapter.categorySongs()->retrySectionIds().isEmpty());
+        auto recovered = resultWith({}, "next-a");
+        QVERIFY(model->applySectionResult(generation, "next-a", recovered, false));
+        QVERIFY(adapter.categorySongs()->error().isEmpty());
+        QVERIFY(model->beginSectionRequest(generation, "next-b"));
+        QVERIFY(model->applySectionFailure(generation, "next-b", {SourceErrorKindV2::Unsupported}));
+        // Retained cursors must not keep an unsupported section in a fetch loop.
+        QVERIFY(adapter.categorySongs()->paginationSectionIds().isEmpty());
+        QVERIFY(adapter.categorySongs()->retrySectionIds().isEmpty());
+        QVERIFY(adapter.categorySongs()->error().isEmpty());
+        QVERIFY(!adapter.categorySongs()->hasMore());
+        QVERIFY(model->resetGeneration(generation));
+        QVERIFY(adapter.categorySongs()->paginationSectionIds().isEmpty());
+        QVERIFY(adapter.categoryItems()->retrySectionIds().isEmpty());
+        QVERIFY(!adapter.categorySongs()->hasMore());
+    }
+
     void categoryBackRestoresSanitizedParentContext()
     {
         RoutingHarness harness; QVERIFY(harness.init());

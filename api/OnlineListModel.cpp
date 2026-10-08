@@ -110,12 +110,17 @@ void OnlineListModel::setItems(const QVariantList &items)
 void OnlineListModel::setPresentationState(const QVariantMap &state)
 {
     const QString sectionId = state.value(QStringLiteral("sectionId")).toString();
+    const QStringList paginationSectionIds = state.value(QStringLiteral("paginationSectionIds")).toStringList();
+    const QStringList retrySectionIds = state.value(QStringLiteral("retrySectionIds")).toStringList();
     const bool hasMore = state.value(QStringLiteral("hasMore")).toBool();
     const bool loadingMore = state.value(QStringLiteral("loadingMore")).toBool();
     const QVariantMap error = state.value(QStringLiteral("error")).toMap();
     if (m_sectionId == sectionId && m_hasMore == hasMore && m_loadingMore == loadingMore
-        && m_error == error) return;
+        && m_error == error && m_paginationSectionIds == paginationSectionIds
+        && m_retrySectionIds == retrySectionIds) return;
     m_sectionId = sectionId;
+    m_paginationSectionIds = paginationSectionIds;
+    m_retrySectionIds = retrySectionIds;
     m_hasMore = hasMore;
     m_loadingMore = loadingMore;
     m_error = error;
@@ -123,6 +128,8 @@ void OnlineListModel::setPresentationState(const QVariantMap &state)
 }
 
 QString OnlineListModel::sectionId() const { return m_sectionId; }
+QStringList OnlineListModel::paginationSectionIds() const { return m_paginationSectionIds; }
+QStringList OnlineListModel::retrySectionIds() const { return m_retrySectionIds; }
 bool OnlineListModel::hasMore() const { return m_hasMore; }
 bool OnlineListModel::loadingMore() const { return m_loadingMore; }
 QVariantMap OnlineListModel::error() const { return m_error; }

@@ -27,6 +27,7 @@ ListView {
     property string sectionId: ""
     property bool hasMore: true
     property bool loadingMore: false
+    property bool useLegacyLoadingState: true
     property var sectionError: ({})
     property var retryAction: null
     property alias menu: menu
@@ -54,7 +55,8 @@ ListView {
     }
 
     onAtYEndChanged: {
-        if (atYEnd && view.hasMore && !view.loadingMore && !MusicApi.loadState) ended();
+        if (atYEnd && view.hasMore && !view.loadingMore
+                && (!view.useLegacyLoadingState || !MusicApi.loadState)) ended();
     }
     footer: Item {
         width: view.width
