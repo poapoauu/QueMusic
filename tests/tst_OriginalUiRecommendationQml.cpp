@@ -11,6 +11,10 @@
 class FakeListModel final : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    Q_PROPERTY(QString sectionId MEMBER sectionId NOTIFY presentationStateChanged)
+    Q_PROPERTY(bool hasMore MEMBER hasMore NOTIFY presentationStateChanged)
+    Q_PROPERTY(bool loadingMore MEMBER loadingMore NOTIFY presentationStateChanged)
+    Q_PROPERTY(QVariantMap error MEMBER error NOTIFY presentationStateChanged)
 public:
     explicit FakeListModel(QVariantList rows = {}, QObject *parent = nullptr)
         : QAbstractListModel(parent), m_rows(std::move(rows))
@@ -55,11 +59,21 @@ public:
         endResetModel();
         emit countChanged();
     }
+    void updateRow(int row, const QVariantMap &values)
+    {
+        m_rows[row] = values;
+        emit dataChanged(index(row), index(row));
+    }
 
 signals:
     void countChanged();
+    void presentationStateChanged();
 
 public:
+    QString sectionId;
+    bool hasMore = false;
+    bool loadingMore = false;
+    QVariantMap error;
     int favoriteQueries = 0;
     int favoriteCalls = 0;
     int warnings = 0;
@@ -73,15 +87,34 @@ class FakeOriginalUiMusic final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
+    Q_PROPERTY(QObject *categorySongs READ categorySongs CONSTANT)
+    Q_PROPERTY(QString categoryState MEMBER categoryState NOTIFY categoryStatusChanged)
+    Q_PROPERTY(bool categoryHasError MEMBER categoryHasError NOTIFY categoryStatusChanged)
+    Q_PROPERTY(bool categoryCanNavigateBack READ categoryCanNavigateBack NOTIFY categoryNavigationChanged)
+    Q_PROPERTY(QString categoryTitle READ categoryTitle NOTIFY categoryNavigationChanged)
+    Q_PROPERTY(QString categoryCover READ categoryCover NOTIFY categoryNavigationChanged)
     Q_PROPERTY(QObject *favoriteLists READ favoriteLists CONSTANT)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
 public:
-    FakeOriginalUiMusic() = default;
+    FakeOriginalUiMusic()
+    {
+        connect(&category, &FakeListModel::countChanged, this, [this] {
+            QVariantList rows;
+            for (int i = 0; i < category.rowCount(); ++i)
+                if (category.get(i).contains("entityType") && category.get(i).value("entityType").toInt() == 0)
+                    rows.append(category.get(i));
+            songs.setRows(rows);
+        });
+    }
 
     QObject *recommendSongs() { return &recommend; }
     QObject *categoryItems() { return &category; }
+    QObject *categorySongs() { return &songs; }
+    bool categoryCanNavigateBack() const { return !navigation.isEmpty(); }
+    QString categoryTitle() const { return navigation.isEmpty() ? QString{} : navigation.last().value("title").toString(); }
+    QString categoryCover() const { return navigation.isEmpty() ? QString{} : navigation.last().value("cover").toString(); }
     QObject *favoriteLists() { return &favorites; }
     QVariantList sourceOptions() const
     {
@@ -108,8 +141,15 @@ public:
     Q_INVOKABLE void activatePage(int page) { activatedPages << page; }
     Q_INVOKABLE void refreshPage(int page) { refreshedPages << page; }
     Q_INVOKABLE void loadMore(int page, const QString &section) { moreRequests << qMakePair(page, section); }
-    Q_INVOKABLE bool browse(const QVariantMap &row) { browsedRows << row; return true; }
-    Q_INVOKABLE void closeCategoryBrowse() { ++closedBrowses; }
+    Q_INVOKABLE bool browse(const QVariantMap &row) {
+        browsedRows << row; navigation << row; emit categoryNavigationChanged(); return true;
+    }
+    Q_INVOKABLE bool categoryBack() {
+        if (navigation.isEmpty()) return false;
+        navigation.removeLast(); emit categoryNavigationChanged(); return true;
+    }
+    Q_INVOKABLE void closeCategoryBrowse() { ++closedBrowses; navigation.clear(); emit categoryNavigationChanged(); }
+    Q_INVOKABLE void retry(int page, const QString &section) { retries << qMakePair(page, section); }
     Q_INVOKABLE void play(const QVariantMap &row) { playedRows << row; }
     Q_INVOKABLE void enqueue(const QVariantMap &row) { enqueuedRows << row; }
     Q_INVOKABLE void setFavorite(const QVariantMap &row, bool favorite) { favoriteRows << qMakePair(row, favorite); }
@@ -125,10 +165,15 @@ public:
     FakeListModel recommend;
     int closedBrowses = 0;
     FakeListModel category;
+    FakeListModel songs;
+    QString categoryState = "ready";
+    bool categoryHasError = false;
     FakeListModel favorites;
     QList<int> activatedPages;
     QList<int> refreshedPages;
     QList<QPair<int, QString>> moreRequests;
+    QList<QPair<int, QString>> retries;
+    QList<QVariantMap> navigation;
     QList<QVariantMap> browsedRows;
     QList<QVariantMap> playedRows;
     QList<QVariantMap> enqueuedRows;
@@ -136,6 +181,8 @@ public:
     QVariantList customSourceOptions;
 
 signals:
+    void categoryStatusChanged();
+    void categoryNavigationChanged();
     void selectedSourceInstanceIdChanged();
     void sourceOptionsChanged();
 
@@ -147,6 +194,7 @@ class FakeOriginalUiMusicNoPagination final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
+    Q_PROPERTY(QObject *categorySongs READ categoryItems CONSTANT)
     Q_PROPERTY(QObject *favoriteLists READ favoriteLists CONSTANT)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions CONSTANT)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId CONSTANT)
@@ -659,6 +707,11 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(list, "clicked", Q_ARG(int, 0)));
         QCOMPARE(adapter.playedRows.size(), 1);
         QCOMPARE(adapter.playedRows.first(), track);
+        QVariant returned;
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "backCategoryDetail",
+                                          Q_RETURN_ARG(QVariant, returned)));
+        QVERIFY(returned.toBool());
+        QCOMPARE(detail->property("title").toString(), artist.value("title").toString());
         QVariantMap unavailable = artist;
         unavailable["canBrowse"] = false;
         adapter.category.setRows({unavailable});
@@ -670,7 +723,9 @@ private slots:
         QVERIFY(more);
         QVERIFY(QMetaObject::invokeMethod(more, "clicked"));
         QVERIFY(adapter.moreRequests.contains(qMakePair(1, QString{})));
-        emit context.windowObject()->exit();
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "backCategoryDetail",
+                                          Q_RETURN_ARG(QVariant, returned)));
+        QVERIFY(returned.toBool());
         QTRY_VERIFY(!detail->property("visible").toBool());
         QCOMPARE(adapter.closedBrowses, 1);
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
@@ -773,6 +828,12 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         QQuickItem *row = nullptr;
         QTRY_VERIFY((row = list->property("currentItem").value<QQuickItem *>()));
+        QObject *duration = row->findChild<QObject *>(QStringLiteral("rowDurationText"));
+        QVERIFY(duration);
+        QCOMPARE(duration->property("text").toString(), QStringLiteral("3:00"));
+        auto changed = model.get(0); changed["duration"] = 65;
+        model.updateRow(0, changed);
+        QTRY_COMPARE(duration->property("text").toString(), QStringLiteral("1:05"));
         const QStringList icons{QStringLiteral("\uf050"), QStringLiteral("\uf0c8"),
                                 QStringLiteral("\uf095")};
         for (int i = 0; i < icons.size(); ++i) {
@@ -784,12 +845,59 @@ private slots:
         }
     }
 
+    void categorySongsUseScopedPagingAndGenericStatus()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        adapter.category.setRows(mixedCategoryRows());
+        QObject *songs = playlist->findChild<QObject *>(QStringLiteral("categoryList"));
+        QObject *status = playlist->findChild<QObject *>(QStringLiteral("categoryStatusText"));
+        QObject *retry = playlist->findChild<QObject *>(QStringLiteral("categoryRetryButton"));
+        QVERIFY(songs); QVERIFY(status); QVERIFY(retry);
+        QTRY_COMPARE(songs->property("count").toInt(), 1);
+        QCOMPARE(adapter.songs.get(0).value("_adapterKey").toULongLong(), 75ULL);
+        QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.playedRows.last().value("_adapterKey").toULongLong(), 75ULL);
+        adapter.songs.sectionId = "filtered-tracks";
+        adapter.songs.hasMore = true;
+        emit adapter.songs.presentationStateChanged();
+        const int before = adapter.moreRequests.size();
+        QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
+        QCOMPARE(adapter.moreRequests.size(), before + 1);
+        QCOMPARE(adapter.moreRequests.last(), qMakePair(1, QString("filtered-tracks")));
+        adapter.songs.loadingMore = true;
+        emit adapter.songs.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
+        QCOMPARE(adapter.moreRequests.size(), before + 1);
+        adapter.songs.loadingMore = false;
+        adapter.songs.error = {{"source", QVariantMap{{"detail", "private diagnostic"}}}};
+        emit adapter.songs.presentationStateChanged();
+        QCOMPARE(songs->property("sectionError").toMap(), QVariantMap({{"failed", true}}));
+        QVERIFY(QMetaObject::invokeMethod(songs, "retrySection"));
+        QCOMPARE(adapter.retries.last(), qMakePair(1, QString("filtered-tracks")));
+        adapter.categoryState = "loading";
+        emit adapter.categoryStatusChanged();
+        QTRY_COMPARE(status->property("text").toString(), QStringLiteral("正在加载…"));
+        adapter.categoryState = "failed"; adapter.categoryHasError = true;
+        emit adapter.categoryStatusChanged();
+        QTRY_COMPARE(status->property("text").toString(), QStringLiteral("加载失败"));
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
+        QCOMPARE(adapter.refreshedPages.last(), 1);
+        adapter.categoryState = "ready";
+        emit adapter.categoryStatusChanged();
+        QTRY_COMPARE(status->property("text").toString(), QStringLiteral("部分内容加载失败"));
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+    }
+
     void adapterRowsNeverInvokeLegacyPlaylistActions()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
         QVERIFY2(playlist, qPrintable(error));
-        adapter.category.setRows(playlistRows());
+        auto track = recommendationRows().first().toMap();
+        track["entityType"] = 0;
+        adapter.category.setRows({track, playlistRows().first()});
         QObject *genres = playlist->findChild<QObject *>(QStringLiteral("categoryGenreFilters"));
         QVERIFY(genres);
         QTRY_COMPARE(genres->property("count").toInt(), 0);
@@ -804,12 +912,14 @@ private slots:
         QCOMPARE(adapter.playedRows.size(), 1);
         QCOMPARE(adapter.enqueuedRows.size(), 1);
         QCOMPARE(adapter.favoriteRows.size(), 1);
-        adapter.category.setRows({QVariantMap{{"title", "Unavailable row"},
+        QVariantMap unavailable{{"title", "Unavailable row"},
                                               {"entityType", 3},
                                               {"_adapterKey", 82ULL},
                                               {"canPlay", false}, {"canEnqueue", false},
                                               {"canBrowse", false}, {"canFavorite", false},
-                                              {"canUnfavorite", false}}});
+                                              {"canUnfavorite", false}};
+        auto unavailableTrack = unavailable; unavailableTrack["entityType"] = 0;
+        adapter.category.setRows({unavailable, unavailableTrack});
         QCoreApplication::processEvents();
         QTRY_COMPARE(genres->property("count").toInt(), 0);
         QVERIFY(QMetaObject::invokeMethod(songs, "clicked", Q_ARG(int, 0)));
@@ -852,7 +962,7 @@ private slots:
         QVERIFY(songs);
         QVERIFY(QMetaObject::invokeMethod(songs, "ended"));
         QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
-        QCOMPARE(songs->property("isEnd").toBool(), true);
+        QCOMPARE(songs->property("hasMore").toBool(), false);
     }
 };
 

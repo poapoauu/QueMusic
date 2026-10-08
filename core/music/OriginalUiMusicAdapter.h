@@ -19,6 +19,12 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_OBJECT
     Q_PROPERTY(OnlineListModel *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(OnlineListModel *categoryItems READ categoryItems CONSTANT)
+    Q_PROPERTY(OnlineListModel *categorySongs READ categorySongs CONSTANT)
+    Q_PROPERTY(QString categoryState READ categoryState NOTIFY categoryStatusChanged)
+    Q_PROPERTY(bool categoryHasError READ categoryHasError NOTIFY categoryStatusChanged)
+    Q_PROPERTY(bool categoryCanNavigateBack READ categoryCanNavigateBack NOTIFY categoryNavigationChanged)
+    Q_PROPERTY(QString categoryTitle READ categoryTitle NOTIFY categoryNavigationChanged)
+    Q_PROPERTY(QString categoryCover READ categoryCover NOTIFY categoryNavigationChanged)
     Q_PROPERTY(OnlineListModel *favoriteSongs READ favoriteSongs CONSTANT)
     Q_PROPERTY(OnlineListModel *favoriteLists READ favoriteLists CONSTANT)
     Q_PROPERTY(OnlineListModel *searchSongs READ searchSongs CONSTANT)
@@ -37,6 +43,12 @@ public:
 
     OnlineListModel *recommendSongs() const;
     OnlineListModel *categoryItems() const;
+    OnlineListModel *categorySongs() const;
+    QString categoryState() const;
+    bool categoryHasError() const;
+    bool categoryCanNavigateBack() const;
+    QString categoryTitle() const;
+    QString categoryCover() const;
     OnlineListModel *favoriteSongs() const;
     OnlineListModel *favoriteLists() const;
     OnlineListModel *searchSongs() const;
@@ -61,6 +73,7 @@ public:
     Q_INVOKABLE void retry(int pageKind, const QString &sectionId);
     Q_INVOKABLE bool browse(const QVariantMap &presentationItem);
     Q_INVOKABLE void closeCategoryBrowse();
+    Q_INVOKABLE bool categoryBack();
     Q_INVOKABLE QUuid play(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &presentationItem, bool favorite);
@@ -72,6 +85,8 @@ public:
     Q_INVOKABLE bool pluginAvailable(const QString &packageId) const;
 
 signals:
+    void categoryStatusChanged();
+    void categoryNavigationChanged();
     void sourceOptionsChanged();
     void selectedSourceInstanceIdChanged();
     void directoryChanged();
@@ -90,6 +105,7 @@ private:
     QPointer<PlaybackCoordinator> m_playback;
     OnlineListModel *m_recommendSongs;
     OnlineListModel *m_categoryItems;
+    OnlineListModel *m_categorySongs;
     OnlineListModel *m_favoriteSongs;
     OnlineListModel *m_favoriteLists;
     OnlineListModel *m_searchSongs;

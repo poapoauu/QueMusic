@@ -311,12 +311,76 @@ private slots:
         QCOMPARE(row.value(QStringLiteral("title")), QStringLiteral("Track 42"));
         QCOMPARE(row.value(QStringLiteral("artist")), QStringLiteral("Artist"));
         QCOMPARE(row.value(QStringLiteral("album")), QStringLiteral("Album"));
+        QCOMPARE(row.value(QStringLiteral("duration")).toLongLong(), 123LL);
         QCOMPARE(row.value(QStringLiteral("source")), QStringLiteral("navidrome"));
         QVERIFY(!row.contains(QStringLiteral("ref")));
         QVERIFY(!row.contains(QStringLiteral("url")));
         QVERIFY(!row.contains(QStringLiteral("headers")));
         QVERIFY(!row.contains(QStringLiteral("metadata")));
         QVERIFY(!row.contains(QStringLiteral("availableActions")));
+    }
+
+    void categorySongsFilterEntitiesAndReusePresentationIdentity()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        accept(hub.category(), resultWith({
+            makeItem(MediaEntityTypeV2::Album, "source", "source/home", "album"),
+            makeItem(MediaEntityTypeV2::Track, "source", "source/home", "track"),
+            makeItem(MediaEntityTypeV2::Playlist, "source", "source/home", "playlist")}, "tracks"));
+        QCOMPARE(adapter.categorySongs()->rowCount(), 1);
+        QCOMPARE(adapter.categorySongs()->get(0), adapter.categoryItems()->get(1));
+        QCOMPARE(adapter.categorySongs()->sectionId(), QStringLiteral("tracks"));
+    }
+
+    void categoryStatusDistinguishesUnsupportedAndNetworkFailure()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        auto *model = hub.category();
+        auto generation = model->beginRequest();
+        QCOMPARE(adapter.categoryState(), QStringLiteral("loading"));
+        PageSectionV2 section; section.kind = PageSectionKindV2::Tracks; section.sectionId = "tracks";
+        QVERIFY(model->applyQueryFailure(generation, section, {SourceErrorKindV2::Unsupported}));
+        QVERIFY(model->finishGeneration(generation, 1));
+        QCOMPARE(adapter.categoryState(), QStringLiteral("empty"));
+        QVERIFY(!adapter.categoryHasError());
+        QVERIFY(adapter.categorySongs()->error().isEmpty());
+        generation = model->beginRequest();
+        QVERIFY(model->applyQueryFailure(generation, section,
+                                         {SourceErrorKindV2::Network, "source.network", "private diagnostic"}));
+        QVERIFY(model->finishGeneration(generation, 1));
+        QCOMPARE(adapter.categoryState(), QStringLiteral("failed"));
+        QVERIFY(adapter.categoryHasError());
+        QCOMPARE(adapter.categorySongs()->sectionId(), QStringLiteral("tracks"));
+    }
+
+    void categoryBackRestoresSanitizedParentContext()
+    {
+        RoutingHarness harness; QVERIFY(harness.init());
+        auto artist = routedItem(MediaEntityTypeV2::Artist, QStringLiteral("artist-42"));
+        artist.title = "Parent artist";
+        auto album = routedItem(MediaEntityTypeV2::Album, QStringLiteral("album-42"));
+        album.title = "Child album";
+        accept(harness.hub->recommendation(), resultWith({artist, album}, QStringLiteral("recommend")));
+        QVERIFY(harness.adapter->browse(harness.adapter->recommendSongs()->get(0)));
+        QVERIFY(harness.adapter->browse(harness.adapter->recommendSongs()->get(1)));
+        QCOMPARE(harness.adapter->categoryTitle(), album.title);
+        QVERIFY(harness.adapter->categoryBack());
+        QVERIFY(harness.adapter->categoryCanNavigateBack());
+        QCOMPARE(harness.adapter->categoryTitle(), artist.title);
+        QCOMPARE(harness.hub->categoryContext().value("item").toMap().value("ref").toMap()
+                     .value("entityId").toString(), artist.ref.entityId);
+        QVERIFY(harness.adapter->categoryBack());
+        QVERIFY(!harness.adapter->categoryCanNavigateBack());
+        QVERIFY(harness.adapter->categoryTitle().isEmpty());
+        QVERIFY(!harness.adapter->categoryBack());
     }
 
     void chartClassificationIsExposedOnlyForPlaylists()

@@ -10,6 +10,13 @@ Item {
     id: playlistPage
     property var musicAdapter: null
     property var playbackAdapter: null
+    readonly property string categoryStatusMessage: {
+        if (!musicAdapter) return ""
+        if (musicAdapter.categoryState === "loading") return "正在加载…"
+        if (musicAdapter.categoryHasError)
+            return musicAdapter.categoryState === "ready" ? "部分内容加载失败" : "加载失败"
+        return ""
+    }
     //property alias animatedWindow: animationWrapper
     property real toolsWindow: 0
     //property bool displaytop: flickable.contentY > 60 ? true : false
@@ -32,6 +39,7 @@ Item {
             musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
     }
     function loadMoreCategory() {
+        if (musicAdapter && musicAdapter.categoryState === "loading") return false
         if (musicAdapter && typeof musicAdapter.loadMore === "function") {
             musicAdapter.loadMore(1, "")
             return true
@@ -94,9 +102,38 @@ Item {
         window.exitIndex = 2
         return true
     }
+    function backCategoryDetail() {
+        if (!musicAdapter || typeof musicAdapter.categoryBack !== "function"
+                || !musicAdapter.categoryBack()) return false
+        if (musicAdapter.categoryCanNavigateBack) {
+            adapterDetailWindow.title = musicAdapter.categoryTitle || ""
+            adapterDetailWindow.image = musicAdapter.categoryCover || ""
+        } else {
+            adapterDetailWindow.closed()
+        }
+        return true
+    }
     Component.onCompleted: {
         if (musicAdapter)
             musicAdapter.activatePage(1)
+    }
+    Text {
+        objectName: "categoryStatusText"
+        x: 24; y: 116
+        width: parent.width - 200
+        text: playlistPage.categoryStatusMessage
+        visible: !adapterDetailWindow.visible
+        color: Style.themes.textColor
+        font.pixelSize: Style.settings.textTip
+    }
+    QButton {
+        objectName: "categoryRetryButton"
+        x: parent.width - 144; y: 112
+        width: 120; height: 28
+        text: "重试"
+        visible: !adapterDetailWindow.visible && musicAdapter && musicAdapter.categoryHasError === true
+        enabled: musicAdapter && musicAdapter.categoryState !== "loading"
+        onClicked: musicAdapter.refreshPage(1)
     }
 
     QPages {
@@ -274,7 +311,7 @@ Item {
                 width: parent.width + 16
                 y: 104
                 height: parent.height - 104
-                model: musicAdapter ? musicAdapter.categoryItems : null
+                model: musicAdapter && musicAdapter.categorySongs ? musicAdapter.categorySongs : null
                 clip: true
                 menuModel: []
                 toolText0: ""
@@ -283,7 +320,19 @@ Item {
                     const row = searchSong.model && searchSong.model.get(index)
                     return row && musicAdapter.capabilities(row).canEnqueue ? "\uf095" : ""
                 } : null
-                onEnded: isEnd = !playlistPage.loadMoreCategory()
+                sectionId: model && model.sectionId ? model.sectionId : ""
+                hasMore: model && model.hasMore === true
+                loadingMore: model && model.loadingMore === true
+                sectionError: model && model.error && Object.keys(model.error).length > 0 ? ({failed: true}) : ({})
+                retryAction: function(section) {
+                    if (musicAdapter && typeof musicAdapter.retry === "function")
+                        musicAdapter.retry(1, section)
+                }
+                isEnd: count > 0 && !hasMore && !loadingMore
+                onEnded: {
+                    if (hasMore && !loadingMore && musicAdapter && typeof musicAdapter.loadMore === "function")
+                        musicAdapter.loadMore(1, sectionId)
+                }
                 onClicked: (index) => {
                     if (!musicAdapter || !searchSong.model) return
                     const row = searchSong.model.get(index)
@@ -296,6 +345,14 @@ Item {
                     if (tool === 0 && musicAdapter.capabilities(row).canEnqueue)
                         musicAdapter.enqueue(row)
                 }
+            }
+            Text {
+                objectName: "categorySongsEmptyState"
+                anchors.centerIn: parent
+                visible: searchSong.count === 0 && playlistPage.categoryStatusMessage === ""
+                text: "暂无歌曲"
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
             }
         }
         Item {
@@ -343,7 +400,7 @@ Item {
             Text {
                 objectName: "categoryChartsEmptyState"
                 anchors.centerIn: parent
-                visible: playlistPage.categoryCharts().length === 0
+                visible: playlistPage.categoryCharts().length === 0 && playlistPage.categoryStatusMessage === ""
                 text: "暂无排行榜"
                 color: Style.themes.textColor
                 font.pixelSize: Style.settings.text
@@ -535,48 +592,91 @@ Item {
                     && typeof musicAdapter.closeCategoryBrowse === "function")
                 musicAdapter.closeCategoryBrowse()
         }
-        content: QListView {
-            objectName: "adapterPlaylistDetailList"
-            x: 24
-            y: 128
-            width: adapterDetailWindow.width - 32
-            height: adapterDetailWindow.height - 128
-            model: musicAdapter ? musicAdapter.categoryItems : []
-            menuModel: []
-            toolText0: "\uf095"
-            toolText1: ""
-            toolText0ForRow: musicAdapter ? function(index) {
-                return musicAdapter.capabilities(model.get(index)).canEnqueue ? "\uf095" : ""
-            } : null
-            clip: true
-            topMargin: 8
-            bottomMargin: 24
-            onClicked: (index) => {
-                if (!musicAdapter) return
-                const row = model.get(index)
-                const caps = musicAdapter.capabilities(row)
-                if (caps.canPlay)
-                    musicAdapter.play(row)
-                else if (caps.canBrowse)
-                    playlistPage.browsePresentation(row)
+        content: Item {
+            width: adapterDetailWindow.width
+            height: adapterDetailWindow.height
+            QButton {
+                objectName: "categoryDetailBackButton"
+                x: parent.width - 144
+                y: 48
+                width: 120
+                height: 36
+                radius: 18
+                text: "返回上级"
+                enabled: musicAdapter && musicAdapter.categoryCanNavigateBack === true
+                onClicked: playlistPage.backCategoryDetail()
             }
-            onToolClicked: (index, tool) => {
-                if (!musicAdapter || tool !== 0) return
-                const row = model.get(index)
-                if (musicAdapter.capabilities(row).canEnqueue)
-                    musicAdapter.enqueue(row)
+            Text {
+                objectName: "categoryDetailStatusText"
+                x: 24; y: 112
+                width: parent.width - 200
+                text: playlistPage.categoryStatusMessage
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.textTip
             }
-            onMenuClicked: (index, choice) => {
-                if (musicAdapter)
-                    return
+            QButton {
+                objectName: "categoryDetailRetryButton"
+                x: parent.width - 144; y: 108
+                width: 120; height: 28
+                text: "重试"
+                visible: musicAdapter && musicAdapter.categoryHasError === true
+                enabled: musicAdapter && musicAdapter.categoryState !== "loading"
+                onClicked: musicAdapter.refreshPage(1)
             }
-            onEnded: {
-                if (musicAdapter && typeof musicAdapter.loadMore === "function") {
-                    musicAdapter.loadMore(1, "")
-                    isEnd = false
-                } else {
-                    isEnd = true
+            QListView {
+                id: adapterDetailList
+                objectName: "adapterPlaylistDetailList"
+                x: 24
+                y: 144
+                width: adapterDetailWindow.width - 32
+                height: adapterDetailWindow.height - 144
+                model: musicAdapter ? musicAdapter.categoryItems : null
+                menuModel: []
+                toolText0: "\uf095"
+                toolText1: ""
+                toolText0ForRow: function(index) {
+                    const row = adapterDetailList.model && adapterDetailList.model.get(index)
+                    return musicAdapter && row && musicAdapter.capabilities(row).canEnqueue ? "\uf095" : ""
                 }
+                sectionId: model && model.sectionId ? model.sectionId : ""
+                hasMore: model && model.hasMore === true
+                loadingMore: model && model.loadingMore === true
+                sectionError: model && model.error && Object.keys(model.error).length > 0 ? ({failed: true}) : ({})
+                retryAction: function(section) {
+                    if (musicAdapter && typeof musicAdapter.retry === "function")
+                        musicAdapter.retry(1, section)
+                }
+                isEnd: count > 0 && !hasMore && !loadingMore
+                clip: true
+                topMargin: 8
+                bottomMargin: 24
+                onClicked: (index) => {
+                    if (!musicAdapter || !model) return
+                    const row = model.get(index)
+                    const caps = musicAdapter.capabilities(row)
+                    if (caps.canPlay)
+                        musicAdapter.play(row)
+                    else if (caps.canBrowse)
+                        playlistPage.browsePresentation(row)
+                }
+                onToolClicked: (index, tool) => {
+                    if (!musicAdapter || !model || tool !== 0) return
+                    const row = model.get(index)
+                    if (musicAdapter.capabilities(row).canEnqueue)
+                        musicAdapter.enqueue(row)
+                }
+                onEnded: {
+                    if (hasMore && !loadingMore && musicAdapter && typeof musicAdapter.loadMore === "function")
+                        musicAdapter.loadMore(1, sectionId)
+                }
+            }
+            Text {
+                objectName: "categoryDetailEmptyState"
+                anchors.centerIn: parent
+                visible: adapterDetailList.count === 0 && playlistPage.categoryStatusMessage === ""
+                text: "暂无内容"
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
             }
         }
     }

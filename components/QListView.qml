@@ -336,12 +336,15 @@ ListView {
         }
         Text {
             x: view.width - 92
+            objectName: "rowDurationText"
             y: 16
             z: 3
             width: 60
             height: 28
             visible: !view.isList || view.showListCount
-            text: displayRow.duration + "首"
+            text: view.isList ? displayRow.duration + "首"
+                             : Math.floor((displayRow.duration || 0) / 60) + ":"
+                               + ("0" + ((displayRow.duration || 0) % 60)).slice(-2)
             color: Style.themes.textColor
             font.bold: false
             elide: Text.ElideRight
@@ -349,11 +352,6 @@ ListView {
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignHCenter
             Behavior on color { ColorAnimation { duration: 120 } }
-            Component.onCompleted: {
-                if(!view.isList) {
-                    text = Math.floor(displayRow.duration / 60) + ":" + (displayRow.duration % 60)
-                }
-            }
         }
 
         MouseArea {
