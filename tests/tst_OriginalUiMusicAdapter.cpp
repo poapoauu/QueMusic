@@ -417,6 +417,65 @@ private slots:
         QVERIFY(!adapter.categorySongs()->hasMore());
     }
 
+    void categoryCardsKeepIdentityAndUseTheirOwnSectionKinds()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath("settings.ini"), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        auto artist = makeItem(MediaEntityTypeV2::Artist, "source", "source/a", "artist");
+        auto playlist = makeItem(MediaEntityTypeV2::Playlist, "source", "source/a", "playlist");
+        auto chart = makeItem(MediaEntityTypeV2::Playlist, "source", "source/a", "chart");
+        chart.metadata = {{"collectionKind", "chart"}};
+        auto result = resultWith({artist}, "artists-a");
+        result.sections[0].kind = PageSectionKindV2::Artists;
+        result.sections[0].hasMore = true; result.sections[0].nextCursor = "artist-private-cursor";
+        auto playlists = resultWith({playlist, chart}, "playlists-a").sections.first();
+        playlists.kind = PageSectionKindV2::Playlists;
+        playlists.hasMore = true; playlists.nextCursor = "playlist-private-cursor";
+        result.sections.append(playlists);
+        result.sections.append(resultWith({makeItem(MediaEntityTypeV2::Track, "source", "source/a", "track")},
+                                         "tracks-a").sections.first());
+        auto *model = hub.category();
+        const auto generation = model->beginRequest();
+        QVERIFY(model->applyResult(generation, result));
+        QVERIFY(model->finishGeneration(generation, 1));
+        QCOMPARE(adapter.categoryArtists()->rowCount(), 1);
+        QCOMPARE(adapter.categoryPlaylists()->rowCount(), 1);
+        QCOMPARE(adapter.categoryCharts()->rowCount(), 1);
+        QCOMPARE(adapter.categoryArtists()->get(0), adapter.categoryItems()->get(0));
+        QCOMPARE(adapter.categoryPlaylists()->get(0), adapter.categoryItems()->get(1));
+        QCOMPARE(adapter.categoryCharts()->get(0), adapter.categoryItems()->get(2));
+        QCOMPARE(adapter.categoryArtists()->paginationSectionIds(), QStringList({"artists-a"}));
+        QCOMPARE(adapter.categoryPlaylists()->paginationSectionIds(), QStringList({"playlists-a"}));
+        QCOMPARE(adapter.categoryCharts()->paginationSectionIds(), adapter.categoryPlaylists()->paginationSectionIds());
+        QVERIFY(model->beginSectionRequest(generation, "playlists-a"));
+        QVERIFY(adapter.categoryPlaylists()->loadingMore());
+        QVERIFY(adapter.categoryCharts()->loadingMore());
+        QVERIFY(adapter.categoryCharts()->paginationSectionIds().isEmpty());
+        QCOMPARE(adapter.categoryArtists()->paginationSectionIds(), QStringList({"artists-a"}));
+        QVERIFY(model->applySectionFailure(generation, "playlists-a",
+                                          {SourceErrorKindV2::Network, "network", "private diagnostic"}));
+        QCOMPARE(adapter.categoryPlaylists()->retrySectionIds(), QStringList({"playlists-a"}));
+        QCOMPARE(adapter.categoryCharts()->retrySectionIds(), adapter.categoryPlaylists()->retrySectionIds());
+        QVERIFY(adapter.categoryArtists()->error().isEmpty());
+        QVERIFY(model->resetGeneration(generation));
+        for (auto *projection : {adapter.categoryArtists(), adapter.categoryPlaylists(), adapter.categoryCharts()}) {
+            QCOMPARE(projection->rowCount(), 0);
+            QVERIFY(projection->paginationSectionIds().isEmpty());
+            QVERIFY(projection->retrySectionIds().isEmpty());
+            QVERIFY(projection->error().isEmpty());
+        }
+        // A page of ordinary playlists may be followed by chart data; its cursor
+        // must remain available even when the chart projection is currently empty.
+        playlists.items = {playlist};
+        result.sections = {playlists};
+        accept(model, result);
+        QCOMPARE(adapter.categoryCharts()->rowCount(), 0);
+        QCOMPARE(adapter.categoryCharts()->paginationSectionIds(), QStringList({"playlists-a"}));
+    }
+
     void categoryBackRestoresSanitizedParentContext()
     {
         RoutingHarness harness; QVERIFY(harness.init());

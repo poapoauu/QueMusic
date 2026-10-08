@@ -20,6 +20,9 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(OnlineListModel *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(OnlineListModel *categoryItems READ categoryItems CONSTANT)
     Q_PROPERTY(OnlineListModel *categorySongs READ categorySongs CONSTANT)
+    Q_PROPERTY(OnlineListModel *categoryArtists READ categoryArtists CONSTANT)
+    Q_PROPERTY(OnlineListModel *categoryPlaylists READ categoryPlaylists CONSTANT)
+    Q_PROPERTY(OnlineListModel *categoryCharts READ categoryCharts CONSTANT)
     Q_PROPERTY(QString categoryState READ categoryState NOTIFY categoryStatusChanged)
     Q_PROPERTY(bool categoryHasError READ categoryHasError NOTIFY categoryStatusChanged)
     Q_PROPERTY(bool categoryCanNavigateBack READ categoryCanNavigateBack NOTIFY categoryNavigationChanged)
@@ -44,6 +47,9 @@ public:
     OnlineListModel *recommendSongs() const;
     OnlineListModel *categoryItems() const;
     OnlineListModel *categorySongs() const;
+    OnlineListModel *categoryArtists() const;
+    OnlineListModel *categoryPlaylists() const;
+    OnlineListModel *categoryCharts() const;
     QString categoryState() const;
     bool categoryHasError() const;
     bool categoryCanNavigateBack() const;
@@ -106,6 +112,9 @@ private:
     OnlineListModel *m_recommendSongs;
     OnlineListModel *m_categoryItems;
     OnlineListModel *m_categorySongs;
+    OnlineListModel *m_categoryArtists;
+    OnlineListModel *m_categoryPlaylists;
+    OnlineListModel *m_categoryCharts;
     OnlineListModel *m_favoriteSongs;
     OnlineListModel *m_favoriteLists;
     OnlineListModel *m_searchSongs;

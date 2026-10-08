@@ -269,6 +269,8 @@ Home 的“我的收藏歌单”现显示 Adapter 已加载的歌单数并激活
 
 上述首分区限制随后已在分类歌曲/详情修正：Host 展示模型提供 `paginationSectionIds` 与 `retrySectionIds`，聚合所有匹配分区的状态，经现有 MusicHub 接口分别分页/重试。耗尽、无游标、加载中或失败分区不重复翻页；非 Unsupported 错误只重试对应未加载分区，聚合错误不暴露插件诊断。分类歌曲/详情不再被共享列表的旧 MusicApi 加载状态阻塞。旧单分区属性保留，Source SDK v2 和 Plugin UI API ABI 不变。歌手/歌单/榜单网格以及 Search/Favourite 的精细分区分页、真实多实例音频与手工视觉仍是后续验收项。
 
+分类页歌手、歌单和榜单随后也完成了定向分页切片：新增 Host `categoryArtists` / `categoryPlaylists` / `categoryCharts` 展示模型，复用已有动作身份。歌手只请求 Artists 分区；普通歌单与榜单共用标准 Playlists 查询/游标，只在展示层区分，未虚构榜单专用能力。删除三个标签通用空 sectionId 的“更多”请求，接入分区加载、重试、耗尽和空态；首批没有榜单但仍有 Playlists 游标时允许继续加载。歌单列表不再受旧 MusicApi 加载状态阻塞。主程序构建及六个相关测试套件通过；新增的是 Host 属性，Source SDK v2/Plugin UI API ABI 不变。其他页面分区状态、剩余旧平台入口和真实多实例音频/手工视觉仍待迁移与验收。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

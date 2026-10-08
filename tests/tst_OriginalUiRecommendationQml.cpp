@@ -92,6 +92,9 @@ class FakeOriginalUiMusic final : public QObject {
     Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
     Q_PROPERTY(QObject *categorySongs READ categorySongs CONSTANT)
+    Q_PROPERTY(QObject *categoryArtists READ categoryArtists CONSTANT)
+    Q_PROPERTY(QObject *categoryPlaylists READ categoryPlaylists CONSTANT)
+    Q_PROPERTY(QObject *categoryCharts READ categoryCharts CONSTANT)
     Q_PROPERTY(QString categoryState MEMBER categoryState NOTIFY categoryStatusChanged)
     Q_PROPERTY(bool categoryHasError MEMBER categoryHasError NOTIFY categoryStatusChanged)
     Q_PROPERTY(bool categoryCanNavigateBack READ categoryCanNavigateBack NOTIFY categoryNavigationChanged)
@@ -105,17 +108,30 @@ public:
     FakeOriginalUiMusic()
     {
         connect(&category, &FakeListModel::countChanged, this, [this] {
-            QVariantList rows;
-            for (int i = 0; i < category.rowCount(); ++i)
-                if (category.get(i).contains("entityType") && category.get(i).value("entityType").toInt() == 0)
-                    rows.append(category.get(i));
+            QVariantList rows, artistRows, playlistRows, chartRows;
+            for (int i = 0; i < category.rowCount(); ++i) {
+                const auto row = category.get(i);
+                if (!row.contains("entityType")) continue;
+                if (row.value("entityType").toInt() == 0) rows.append(row);
+                else if (row.value("entityType").toInt() == 2) artistRows.append(row);
+                else if (row.value("entityType").toInt() == 3) {
+                    if (row.value("collectionKind").toString() == "chart") chartRows.append(row);
+                    else playlistRows.append(row);
+                }
+            }
             songs.setRows(rows);
+            artists.setRows(artistRows);
+            playlists.setRows(playlistRows);
+            charts.setRows(chartRows);
         });
     }
 
     QObject *recommendSongs() { return &recommend; }
     QObject *categoryItems() { return &category; }
     QObject *categorySongs() { return &songs; }
+    QObject *categoryArtists() { return &artists; }
+    QObject *categoryPlaylists() { return &playlists; }
+    QObject *categoryCharts() { return &charts; }
     bool categoryCanNavigateBack() const { return !navigation.isEmpty(); }
     QString categoryTitle() const { return navigation.isEmpty() ? QString{} : navigation.last().value("title").toString(); }
     QString categoryCover() const { return navigation.isEmpty() ? QString{} : navigation.last().value("cover").toString(); }
@@ -170,6 +186,9 @@ public:
     int closedBrowses = 0;
     FakeListModel category;
     FakeListModel songs;
+    FakeListModel artists;
+    FakeListModel playlists;
+    FakeListModel charts;
     QString categoryState = "ready";
     bool categoryHasError = false;
     FakeListModel favorites;
@@ -610,9 +629,8 @@ private slots:
         QVERIFY(lists); QVERIFY(genres);
         QTRY_COMPARE(lists->property("count").toInt(), 1);
         QTRY_COMPARE(genres->property("count").toInt(), 1);
-        const QVariantList visibleRows = lists->property("model").toList();
-        QCOMPARE(visibleRows.size(), 1);
-        QCOMPARE(visibleRows.first().toMap().value(QStringLiteral("_adapterKey")).toULongLong(), 76ULL);
+        QCOMPARE(lists->property("model").value<QObject *>(), adapter.categoryPlaylists());
+        QCOMPARE(adapter.playlists.get(0).value(QStringLiteral("_adapterKey")).toULongLong(), 76ULL);
         QVERIFY(QMetaObject::invokeMethod(lists, "clicked", Q_ARG(int, 0)));
         QCOMPARE(adapter.browsedRows.size(), 1);
         QCOMPARE(adapter.browsedRows.first().value(QStringLiteral("_adapterKey")).toULongLong(), 76ULL);
@@ -665,8 +683,11 @@ private slots:
         QCOMPARE(adapter.browsedRows.size(), 1);
         QObject *more = playlist->findChild<QObject *>(QStringLiteral("categoryChartsMoreButton"));
         QVERIFY(more);
+        adapter.charts.hasMore = true;
+        adapter.charts.paginationSectionIds = {"playlist-next"};
+        emit adapter.charts.presentationStateChanged();
         QVERIFY(QMetaObject::invokeMethod(more, "clicked"));
-        QVERIFY(adapter.moreRequests.contains(qMakePair(1, QString{})));
+        QVERIFY(adapter.moreRequests.contains(qMakePair(1, QString("playlist-next"))));
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
         adapter.category.setRows(playlistRows());
         QTRY_COMPARE(cards->property("count").toInt(), 0);
@@ -725,8 +746,11 @@ private slots:
         QCOMPARE(adapter.browsedRows.size(), 2);
         QObject *more = playlist->findChild<QObject *>(QStringLiteral("categoryArtistsMoreButton"));
         QVERIFY(more);
+        adapter.artists.hasMore = true;
+        adapter.artists.paginationSectionIds = {"artist-next"};
+        emit adapter.artists.presentationStateChanged();
         QVERIFY(QMetaObject::invokeMethod(more, "clicked"));
-        QVERIFY(adapter.moreRequests.contains(qMakePair(1, QString{})));
+        QVERIFY(adapter.moreRequests.contains(qMakePair(1, QString("artist-next"))));
         QVERIFY(QMetaObject::invokeMethod(playlist.get(), "backCategoryDetail",
                                           Q_RETURN_ARG(QVariant, returned)));
         QVERIFY(returned.toBool());
@@ -939,6 +963,69 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(detail, "retrySection"));
         QCOMPARE(adapter.retries.last(), qMakePair(1, QString("playlist-failed")));
         QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
+    }
+
+    void categoryCardsPageAndRetryOnlyTheirOwnSections()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto page = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(page, qPrintable(error));
+        adapter.category.setRows(playlistRows());
+        auto *artistMore = page->findChild<QObject *>("categoryArtistsMoreButton");
+        auto *artistRetry = page->findChild<QObject *>("categoryArtistsRetryButton");
+        auto *chartMore = page->findChild<QObject *>("categoryChartsMoreButton");
+        auto *chartRetry = page->findChild<QObject *>("categoryChartsRetryButton");
+        auto *lists = page->findChild<QObject *>("categoryBrowseList");
+        auto *cards = page->findChild<QObject *>("categoryChartCards");
+        QVERIFY(artistMore); QVERIFY(artistRetry); QVERIFY(chartMore); QVERIFY(chartRetry); QVERIFY(lists); QVERIFY(cards);
+        QVERIFY(!artistMore->property("enabled").toBool());
+        QVERIFY(!chartMore->property("enabled").toBool());
+        adapter.artists.hasMore = true;
+        adapter.artists.paginationSectionIds = {"artists-a", "artists-b"};
+        adapter.playlists.hasMore = adapter.charts.hasMore = true;
+        adapter.playlists.paginationSectionIds = adapter.charts.paginationSectionIds = {"playlists-a"};
+        emit adapter.artists.presentationStateChanged();
+        emit adapter.playlists.presentationStateChanged();
+        emit adapter.charts.presentationStateChanged();
+        QCOMPARE(cards->property("count").toInt(), 0);
+        QVERIFY(chartMore->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(artistMore, "clicked"));
+        QCOMPARE(adapter.moreRequests, (QList<QPair<int, QString>>{{1, "artists-a"}, {1, "artists-b"}}));
+        QVERIFY(QMetaObject::invokeMethod(chartMore, "clicked"));
+        QCOMPARE(adapter.moreRequests.last(), qMakePair(1, QString("playlists-a")));
+        QVERIFY(QMetaObject::invokeMethod(lists, "ended"));
+        QCOMPARE(adapter.moreRequests.last(), qMakePair(1, QString("playlists-a")));
+        QCOMPARE(adapter.moreRequests.size(), 4);
+        QVERIFY(!lists->property("useLegacyLoadingState").toBool());
+        adapter.artists.paginationSectionIds.clear(); adapter.artists.loadingMore = true;
+        adapter.playlists.paginationSectionIds.clear(); adapter.charts.paginationSectionIds.clear();
+        adapter.playlists.loadingMore = adapter.charts.loadingMore = true;
+        emit adapter.artists.presentationStateChanged();
+        emit adapter.playlists.presentationStateChanged(); emit adapter.charts.presentationStateChanged();
+        QVERIFY(!artistMore->property("enabled").toBool());
+        QVERIFY(!chartMore->property("enabled").toBool());
+        QCOMPARE(chartMore->property("text").toString(), QStringLiteral("正在加载…"));
+        QVERIFY(QMetaObject::invokeMethod(artistMore, "clicked"));
+        QVERIFY(QMetaObject::invokeMethod(chartMore, "clicked"));
+        QVERIFY(QMetaObject::invokeMethod(lists, "ended"));
+        QCOMPARE(adapter.moreRequests.size(), 4);
+        adapter.artists.loadingMore = adapter.playlists.loadingMore = adapter.charts.loadingMore = false;
+        adapter.artists.retrySectionIds = {"artists-failed"};
+        adapter.playlists.retrySectionIds = adapter.charts.retrySectionIds = {"playlists-failed"};
+        adapter.artists.error = {{"artists-failed", QVariantMap{{"failed", true}}}};
+        adapter.playlists.error = adapter.charts.error = {{"playlists-failed", QVariantMap{{"failed", true}}}};
+        emit adapter.artists.presentationStateChanged();
+        emit adapter.playlists.presentationStateChanged(); emit adapter.charts.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(artistRetry, "clicked"));
+        QVERIFY(QMetaObject::invokeMethod(chartRetry, "clicked"));
+        QVERIFY(QMetaObject::invokeMethod(lists, "retrySection"));
+        QCOMPARE(adapter.retries, (QList<QPair<int, QString>>{{1, "artists-failed"}, {1, "playlists-failed"}, {1, "playlists-failed"}}));
+        adapter.categoryState = "loading"; emit adapter.categoryStatusChanged();
+        QVERIFY(!artistRetry->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(artistRetry, "clicked"));
+        QCOMPARE(adapter.retries.size(), 3);
+        QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
     }
 
     void adapterRowsNeverInvokeLegacyPlaylistActions()

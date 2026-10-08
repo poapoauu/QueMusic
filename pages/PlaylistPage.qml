@@ -10,6 +10,9 @@ Item {
     id: playlistPage
     property var musicAdapter: null
     property var playbackAdapter: null
+    readonly property var artistModel: musicAdapter ? musicAdapter.categoryArtists || null : null
+    readonly property var playlistModel: musicAdapter ? musicAdapter.categoryPlaylists || null : null
+    readonly property var chartModel: musicAdapter ? musicAdapter.categoryCharts || null : null
     readonly property string categoryStatusMessage: {
         if (!musicAdapter) return ""
         if (musicAdapter.categoryState === "loading") return "正在加载…"
@@ -38,16 +41,8 @@ Item {
         if (option && option.available)
             musicAdapter.selectedSourceInstanceId = option.sourceInstanceId
     }
-    function loadMoreCategory() {
-        if (musicAdapter && musicAdapter.categoryState === "loading") return false
-        if (musicAdapter && typeof musicAdapter.loadMore === "function") {
-            musicAdapter.loadMore(1, "")
-            return true
-        }
-        return false
-    }
     function requestCategorySections(model, retry, fallbackSection) {
-        if (!musicAdapter || !model) return
+        if (!musicAdapter || !model || musicAdapter.categoryState === "loading") return
         const action = retry ? "retry" : "loadMore"
         if (typeof musicAdapter[action] !== "function") return
         const ids = retry ? model.retrySectionIds : model.paginationSectionIds
@@ -60,6 +55,26 @@ Item {
     function categoryPaginationBlocked(model) {
         return model && model.loadingMore === true
                 && (!model.paginationSectionIds || model.paginationSectionIds.length === 0)
+    }
+    function categoryCanLoadMore(model) {
+        return musicAdapter && musicAdapter.categoryState !== "loading" && model
+                && model.paginationSectionIds && model.paginationSectionIds.length > 0
+    }
+    function categoryCanRetry(model) {
+        return musicAdapter && musicAdapter.categoryState !== "loading" && model
+                && model.retrySectionIds && model.retrySectionIds.length > 0
+    }
+    function categoryModelHasError(model) {
+        return model && model.error && Object.keys(model.error).length > 0
+    }
+    function categoryModelIsEmpty(model) {
+        return (!model || model.count === 0) && (!musicAdapter || musicAdapter.categoryState !== "loading")
+                && (!model || !model.loadingMore) && !categoryModelHasError(model)
+    }
+    function categoryRows(model) {
+        const rows = []
+        if (model) for (let i = 0; i < model.count; ++i) rows.push(model.get(i))
+        return rows
     }
     function browseCategory(index) {
         if (!musicAdapter || !musicAdapter.categoryItems) return false
@@ -76,34 +91,16 @@ Item {
         return rows
     }
     function categoryPlaylists() {
-        const rows = []
-        if (!musicAdapter || !musicAdapter.categoryItems) return rows
-        for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
-            const row = musicAdapter.categoryItems.get(i)
-            if (row.entityType === 3 && row.collectionKind !== "chart") rows.push(row)
-        }
-        return rows
+        return categoryRows(playlistModel)
     }
     function categoryArtists() {
-        const rows = []
-        if (!musicAdapter || !musicAdapter.categoryItems) return rows
-        for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
-            const row = musicAdapter.categoryItems.get(i)
-            if (row.entityType === 2) rows.push(row)
-        }
-        return rows
+        return categoryRows(artistModel)
     }
     function browseArtist(index) {
         return browsePresentation(categoryArtists()[index])
     }
     function categoryCharts() {
-        const rows = []
-        if (!musicAdapter || !musicAdapter.categoryItems) return rows
-        for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
-            const row = musicAdapter.categoryItems.get(i)
-            if (row.entityType === 3 && row.collectionKind === "chart") rows.push(row)
-        }
-        return rows
+        return categoryRows(chartModel)
     }
     function browseChart(index) {
         return browsePresentation(categoryCharts()[index])
@@ -383,27 +380,53 @@ Item {
                 clip: true
                 isList: true
                 showListCount: false
-                model: playlistPage.categoryPlaylists()
+                model: playlistPage.playlistModel
                 menuModel: []
                 toolText0: ""
                 toolText1: ""
                 toolText1ForRow: function(index) {
-                    const row = model[index]
+                    const row = model && model.get(index)
                     return musicAdapter && row && musicAdapter.capabilities(row).canFavorite ? "\uf0c8" : ""
                 }
                 artistX: width / 2 - 50
                 bottomMargin: 24
-                onEnded: isEnd = !playlistPage.loadMoreCategory()
+                sectionId: model && model.sectionId ? model.sectionId : ""
+                hasMore: model && model.hasMore === true
+                loadingMore: playlistPage.categoryPaginationBlocked(model)
+                useLegacyLoadingState: false
+                sectionError: playlistPage.categoryModelHasError(model) ? ({failed: true}) : ({})
+                retryAction: function(section) { playlistPage.requestCategorySections(musicMenuList.model, true, section) }
+                isEnd: count > 0 && !hasMore && !loadingMore
+                onEnded: playlistPage.requestCategorySections(model, false, sectionId)
                 onClicked: (index) => {
-                    const row = model[index]
+                    const row = model && model.get(index)
                     if (row) playlistPage.browsePresentation(row)
                 }
                 onToolClicked: (index, tool) => {
-                    const row = model[index]
+                    const row = model && model.get(index)
                     if (musicAdapter && row && tool === 1
                             && musicAdapter.capabilities(row).canFavorite)
                         musicAdapter.setFavorite(row, true)
                 }
+            }
+            Text {
+                objectName: "categoryPlaylistsEmptyState"
+                anchors.centerIn: parent
+                visible: playlistPage.categoryModelIsEmpty(playlistPage.playlistModel)
+                text: "暂无歌单"
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
+            }
+            QButton {
+                objectName: "categoryPlaylistsMoreButton"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                width: 120; height: 40; radius: 20
+                visible: musicMenuList.count === 0 && playlistPage.playlistModel
+                         && (playlistPage.playlistModel.hasMore || playlistPage.playlistModel.loadingMore)
+                text: playlistPage.playlistModel && playlistPage.playlistModel.loadingMore ? "正在加载…" : "更多"
+                enabled: playlistPage.categoryCanLoadMore(playlistPage.playlistModel)
+                onClicked: playlistPage.requestCategorySections(playlistPage.playlistModel, false, "")
             }
         }
         Item {
@@ -414,7 +437,7 @@ Item {
             Text {
                 objectName: "categoryChartsEmptyState"
                 anchors.centerIn: parent
-                visible: playlistPage.categoryCharts().length === 0 && playlistPage.categoryStatusMessage === ""
+                visible: playlistPage.categoryModelIsEmpty(playlistPage.chartModel)
                 text: "暂无排行榜"
                 color: Style.themes.textColor
                 font.pixelSize: Style.settings.text
@@ -508,16 +531,26 @@ Item {
                     }
                 }
             }
-            QButton {
-                objectName: "categoryChartsMoreButton"
+            Row {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                height: 40
-                width: 120
-                radius: 20
-                text: "更多"
-                visible: playlistPage.categoryCharts().length > 0
-                onClicked: playlistPage.loadMoreCategory()
+                spacing: 12
+                QButton {
+                    objectName: "categoryChartsMoreButton"
+                    height: 40; width: 120; radius: 20
+                    text: playlistPage.chartModel && playlistPage.chartModel.loadingMore ? "正在加载…" : "更多"
+                    visible: playlistPage.chartModel && (playlistPage.chartModel.hasMore || playlistPage.chartModel.loadingMore)
+                    enabled: playlistPage.categoryCanLoadMore(playlistPage.chartModel)
+                    onClicked: playlistPage.requestCategorySections(playlistPage.chartModel, false, "")
+                }
+                QButton {
+                    objectName: "categoryChartsRetryButton"
+                    height: 40; width: 120; radius: 20
+                    text: "重试"
+                    visible: playlistPage.categoryModelHasError(playlistPage.chartModel)
+                    enabled: playlistPage.categoryCanRetry(playlistPage.chartModel)
+                    onClicked: playlistPage.requestCategorySections(playlistPage.chartModel, true, "")
+                }
             }
         }
         Item {
@@ -525,6 +558,14 @@ Item {
             visible: false
             width: playlistChildPage.width
             height: playlistChildPage.height
+            Text {
+                objectName: "categoryArtistsEmptyState"
+                anchors.centerIn: parent
+                visible: playlistPage.categoryModelIsEmpty(playlistPage.artistModel)
+                text: "暂无歌手"
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
+            }
             Flickable {
                 id: singerFlick
                 y: 72
@@ -577,16 +618,26 @@ Item {
                     Item {
                         width: parent.width
                         height: 60
-                        QButton {
-                            objectName: "categoryArtistsMoreButton"
+                        Row {
                             anchors.centerIn: parent
-                            height: 40
-                            width: 120
-                            radius: 20
-                            iconCharacter: "\uf0f8"
-                            text: "更多"
-                            enabled: musicAdapter !== null
-                            onClicked: playlistPage.loadMoreCategory()
+                            spacing: 12
+                            QButton {
+                                objectName: "categoryArtistsMoreButton"
+                                height: 40; width: 120; radius: 20
+                                iconCharacter: "\uf0f8"
+                                text: playlistPage.artistModel && playlistPage.artistModel.loadingMore ? "正在加载…" : "更多"
+                                visible: playlistPage.artistModel && (playlistPage.artistModel.hasMore || playlistPage.artistModel.loadingMore)
+                                enabled: playlistPage.categoryCanLoadMore(playlistPage.artistModel)
+                                onClicked: playlistPage.requestCategorySections(playlistPage.artistModel, false, "")
+                            }
+                            QButton {
+                                objectName: "categoryArtistsRetryButton"
+                                height: 40; width: 120; radius: 20
+                                text: "重试"
+                                visible: playlistPage.categoryModelHasError(playlistPage.artistModel)
+                                enabled: playlistPage.categoryCanRetry(playlistPage.artistModel)
+                                onClicked: playlistPage.requestCategorySections(playlistPage.artistModel, true, "")
+                            }
                         }
                     }
                 }

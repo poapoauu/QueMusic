@@ -108,6 +108,8 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     : QObject(parent), m_hub(hub), m_playback(playback),
       m_recommendSongs(new OnlineListModel(this)), m_categoryItems(new OnlineListModel(this)),
       m_categorySongs(new OnlineListModel(this)),
+      m_categoryArtists(new OnlineListModel(this)), m_categoryPlaylists(new OnlineListModel(this)),
+      m_categoryCharts(new OnlineListModel(this)),
       m_favoriteSongs(new OnlineListModel(this)), m_favoriteLists(new OnlineListModel(this)),
       m_searchSongs(new OnlineListModel(this)), m_searchLists(new OnlineListModel(this)),
       m_searchAlbums(new OnlineListModel(this)), m_searchLyrics(new OnlineListModel(this)),
@@ -150,6 +152,9 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
 OnlineListModel *OriginalUiMusicAdapter::recommendSongs() const { return m_recommendSongs; }
 OnlineListModel *OriginalUiMusicAdapter::categoryItems() const { return m_categoryItems; }
 OnlineListModel *OriginalUiMusicAdapter::categorySongs() const { return m_categorySongs; }
+OnlineListModel *OriginalUiMusicAdapter::categoryArtists() const { return m_categoryArtists; }
+OnlineListModel *OriginalUiMusicAdapter::categoryPlaylists() const { return m_categoryPlaylists; }
+OnlineListModel *OriginalUiMusicAdapter::categoryCharts() const { return m_categoryCharts; }
 bool OriginalUiMusicAdapter::categoryHasError() const
 {
     if (!m_hub) return false;
@@ -419,6 +424,9 @@ void OriginalUiMusicAdapter::clearPresentationState()
     m_recommendSongs->setItems({});
     m_categoryItems->setItems({});
     m_categorySongs->setItems({});
+    m_categoryArtists->setItems({});
+    m_categoryPlaylists->setItems({});
+    m_categoryCharts->setItems({});
     m_favoriteSongs->setItems({});
     m_favoriteLists->setItems({});
     m_searchSongs->setItems({});
@@ -428,6 +436,7 @@ void OriginalUiMusicAdapter::clearPresentationState()
     m_directoryItems->setItems({});
     m_directoryKeys.clear();
     for (OnlineListModel *model : {m_recommendSongs, m_categoryItems, m_categorySongs, m_favoriteSongs,
+                                   m_categoryArtists, m_categoryPlaylists, m_categoryCharts,
                                    m_favoriteLists, m_searchSongs, m_searchLists,
                                    m_searchAlbums, m_searchLyrics, m_directoryItems})
         model->setPresentationState({});
@@ -503,11 +512,23 @@ void OriginalUiMusicAdapter::rebuild()
     }
     m_recommendSongs->setItems(recommendations);
     m_categoryItems->setItems(category);
-    QVariantList categorySongs;
-    for (const QVariant &row : category)
-        if (row.toMap().value("entityType").toInt() == int(MediaEntityTypeV2::Track))
+    QVariantList categorySongs, categoryArtists, categoryPlaylists, categoryCharts;
+    for (const QVariant &row : category) {
+        const auto item = row.toMap();
+        if (item.value("entityType").toInt() == int(MediaEntityTypeV2::Track))
             categorySongs.append(row);
+        else if (item.value("entityType").toInt() == int(MediaEntityTypeV2::Artist))
+            categoryArtists.append(row);
+        else if (item.value("entityType").toInt() == int(MediaEntityTypeV2::Playlist)) {
+            if (item.value("collectionKind").toString() == QStringLiteral("chart"))
+                categoryCharts.append(row);
+            else categoryPlaylists.append(row);
+        }
+    }
     m_categorySongs->setItems(categorySongs);
+    m_categoryArtists->setItems(categoryArtists);
+    m_categoryPlaylists->setItems(categoryPlaylists);
+    m_categoryCharts->setItems(categoryCharts);
     m_favoriteSongs->setItems(favoriteSongs);
     m_favoriteLists->setItems(favoriteLists);
     m_searchSongs->setItems(searchSongs);
@@ -522,6 +543,11 @@ void OriginalUiMusicAdapter::rebuild()
             PageSectionKindV2::Genres, PageSectionKindV2::Artists,
             PageSectionKindV2::Albums, PageSectionKindV2::Tracks, PageSectionKindV2::Playlists}));
         m_categorySongs->setPresentationState(categorySectionState(m_hub->category(), {PageSectionKindV2::Tracks}));
+        m_categoryArtists->setPresentationState(categorySectionState(m_hub->category(), {PageSectionKindV2::Artists}));
+        // Charts are a presentation classification, not a distinct v2 query/cursor.
+        const auto playlistsState = categorySectionState(m_hub->category(), {PageSectionKindV2::Playlists});
+        m_categoryPlaylists->setPresentationState(playlistsState);
+        m_categoryCharts->setPresentationState(playlistsState);
         m_favoriteSongs->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::FavoriteTracks}));
         m_favoriteLists->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::Playlists}));
         m_searchSongs->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
