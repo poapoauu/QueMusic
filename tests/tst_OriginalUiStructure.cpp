@@ -86,6 +86,9 @@ private slots:
         QVERIFY(categoryPage.contains(QStringLiteral("musicAdapter.refreshPage(1)")));
         QVERIFY(!categoryPage.contains(QStringLiteral("displayName: \"酷狗音乐\"")));
         QVERIFY(!categoryPage.contains(QStringLiteral("MusicApi.songSource = choice")));
+        QVERIFY(!categoryPage.contains(QStringLiteral("MusicApi")));
+        QVERIFY(!categoryPage.contains(QStringLiteral("playListModel")));
+        QVERIFY(!categoryPage.contains(QStringLiteral("PlayListWindow")));
         QVERIFY(home.contains(QStringLiteral("musicAdapter.favoriteLists.count")));
         QVERIFY(!home.contains(QStringLiteral("favoritesList.count")));
         QVERIFY(home.contains(QStringLiteral("objectName: \"homeCategoryDetailList\"")));

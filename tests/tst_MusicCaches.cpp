@@ -161,6 +161,35 @@ private slots:
         for (int index=1;index<disk->page.sections[0].items.size();++index)
             QVERIFY(disk->page.sections[0].items[index].metadata.isEmpty());
     }
+    void chartClassificationSurvivesSanitizationAndRestart()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        PageCacheKeyV2 key; key.sourceInstanceIds = {"charts/home"};
+        const auto now = QDateTime::currentDateTimeUtc();
+        PageSectionV2 section; section.kind = PageSectionKindV2::Playlists;
+        for (const QVariant &classification : {QVariant(QString("chart")),
+                                                QVariant(QString("server-secret")), QVariant(true)}) {
+            MediaItemV2 item;
+            item.ref = {"charts", "charts/home", "home", MediaEntityTypeV2::Playlist, "opaque-chart"};
+            item.metadata = {{"collectionKind", classification}, {"token", QString("drop")}};
+            section.items.append(item);
+        }
+        const PageResultV2 page{{section}, {}, false, true};
+        const auto live = PageCache::sanitized(page);
+        QCOMPARE(live.sections[0].items[0].metadata, QVariantMap({{"collectionKind", QString("chart")}}));
+        QVERIFY(live.sections[0].items[1].metadata.isEmpty());
+        QVERIFY(live.sections[0].items[2].metadata.isEmpty());
+        {
+            PageCache writer(dir.path());
+            QVERIFY(writer.store(key, page, now));
+        }
+        PageCache reader(dir.path());
+        const auto restored = reader.lookup(key, now, std::chrono::minutes(5));
+        QVERIFY(restored);
+        QCOMPARE(restored->page.sections[0].items[0].metadata, live.sections[0].items[0].metadata);
+        QVERIFY(restored->page.sections[0].items[1].metadata.isEmpty());
+        QVERIFY(restored->page.sections[0].items[2].metadata.isEmpty());
+    }
     // A disk-only lookup fails after the backing file disappears; a memory hit
     // must return the sanitized DTO and recompute staleness for the new time.
     void memoryHitSurvivesMissingDiskAndRecomputesStaleness()

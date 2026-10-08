@@ -314,6 +314,10 @@ QVariantMap OriginalUiMusicAdapter::presentationItem(const QVariantMap &full,
             {QStringLiteral("duration"), full.value(QStringLiteral("durationMs"))},
             {QStringLiteral("source"), ref.value(QStringLiteral("sourcePluginId")).toString()},
             {QStringLiteral("entityType"), ref.value(QStringLiteral("entityType"))},
+            {QStringLiteral("collectionKind"),
+             ref.value(QStringLiteral("entityType")).toInt() == int(MediaEntityTypeV2::Playlist)
+                 && full.value(QStringLiteral("metadata")).toMap().value(QStringLiteral("collectionKind"))
+                        == QStringLiteral("chart") ? QStringLiteral("chart") : QString{}},
             {QStringLiteral("subtitle"), full.value(QStringLiteral("subtitle")).toString()},
             {QStringLiteral("sectionId"), sectionState.value(QStringLiteral("sectionId"))},
             {QStringLiteral("hasMore"), sectionState.value(QStringLiteral("hasMore"))},

@@ -27,7 +27,7 @@ QList<PageSectionKindV2> sectionsForPage(MusicPageKindV2 page)
     using K = PageSectionKindV2;
     switch (page) {
     case MusicPageKindV2::Recommendation: return {K::RecentlyPlayed, K::FrequentlyPlayed, K::HighestRated, K::Newest, K::Random};
-    case MusicPageKindV2::Category: return {K::Genres, K::Artists, K::Albums, K::Tracks};
+    case MusicPageKindV2::Category: return {K::Genres, K::Artists, K::Albums, K::Tracks, K::Playlists};
     case MusicPageKindV2::Favorites: return {K::FavoriteTracks, K::FavoriteAlbums, K::FavoriteArtists, K::Playlists};
     case MusicPageKindV2::Search: return {K::SearchResults};
     }

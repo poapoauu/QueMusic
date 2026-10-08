@@ -319,6 +319,26 @@ private slots:
         QVERIFY(!row.contains(QStringLiteral("availableActions")));
     }
 
+    void chartClassificationIsExposedOnlyForPlaylists()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath(QStringLiteral("settings.ini")), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        auto chart = makeItem(MediaEntityTypeV2::Playlist, "charts", "charts/home", "chart-42");
+        chart.metadata = {{"collectionKind", QStringLiteral("chart")}};
+        auto track = makeItem(MediaEntityTypeV2::Track, "charts", "charts/home", "track-42");
+        track.metadata = chart.metadata;
+        auto unknown = chart; unknown.metadata = {{"collectionKind", QStringLiteral("private-kind")}};
+        accept(hub.category(), resultWith({chart, track, unknown}, QStringLiteral("playlists")));
+        QCOMPARE(adapter.categoryItems()->get(0).value("collectionKind").toString(), QStringLiteral("chart"));
+        QVERIFY(adapter.categoryItems()->get(1).value("collectionKind").toString().isEmpty());
+        QVERIFY(adapter.categoryItems()->get(2).value("collectionKind").toString().isEmpty());
+        QVERIFY(!adapter.categoryItems()->get(0).contains("metadata"));
+        QVERIFY(!adapter.categoryItems()->get(0).contains("ref"));
+    }
+
     void keepsDuplicateTitlesFromDifferentSourcesDistinct()
     {
         QTemporaryDir dir;
@@ -381,10 +401,10 @@ private slots:
         QVERIFY(harness.init());
         harness.adapter->setSelectedSourceInstanceId(QStringLiteral("adapter/home"));
         harness.adapter->activatePage(1);
-        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 4);
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 5);
 
         harness.adapter->refreshPage(1);
-        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 8);
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 10);
         for (const QVariant &request : harness.session()->property("pageRequests").toList())
             QCOMPARE(request.toMap().value(QStringLiteral("scope")).toString(),
                      QStringLiteral("adapter/home"));
@@ -663,9 +683,11 @@ private slots:
     {
         RoutingHarness harness;
         QVERIFY(harness.init());
-        accept(harness.hub->recommendation(), resultWith({routedItem(
-            MediaEntityTypeV2::Playlist, QStringLiteral("playlist-42"))}, QStringLiteral("recommend")));
+        auto chart = routedItem(MediaEntityTypeV2::Playlist, QStringLiteral("playlist-42"));
+        chart.metadata = {{"collectionKind", QStringLiteral("chart")}};
+        accept(harness.hub->recommendation(), resultWith({chart}, QStringLiteral("recommend")));
         const QVariantMap row = harness.adapter->recommendSongs()->get(0);
+        QCOMPARE(row.value("collectionKind").toString(), QStringLiteral("chart"));
 
         QVERIFY(harness.adapter->browse(row));
 
@@ -692,12 +714,12 @@ private slots:
         harness.adapter->closeCategoryBrowse();
         QVERIFY(!harness.hub->canNavigateBack());
         QVERIFY(harness.hub->categoryContext().isEmpty());
-        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 6);
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 7);
         const auto requests = harness.session()->property("pageRequests").toList();
         for (int i = 2; i < requests.size(); ++i)
             QVERIFY(requests.at(i).toMap().value(QStringLiteral("filters")).toMap().isEmpty());
         harness.adapter->closeCategoryBrowse();
-        QCOMPARE(harness.session()->property("pageRequests").toList().size(), 6);
+        QCOMPARE(harness.session()->property("pageRequests").toList().size(), 7);
     }
 
     void favoriteRoutesThePrivateTrackIdentity()

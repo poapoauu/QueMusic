@@ -57,7 +57,7 @@ Item {
         if (!musicAdapter || !musicAdapter.categoryItems) return rows
         for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
             const row = musicAdapter.categoryItems.get(i)
-            if (row.entityType === 3) rows.push(row)
+            if (row.entityType === 3 && row.collectionKind !== "chart") rows.push(row)
         }
         return rows
     }
@@ -72,6 +72,18 @@ Item {
     }
     function browseArtist(index) {
         return browsePresentation(categoryArtists()[index])
+    }
+    function categoryCharts() {
+        const rows = []
+        if (!musicAdapter || !musicAdapter.categoryItems) return rows
+        for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
+            const row = musicAdapter.categoryItems.get(i)
+            if (row.entityType === 3 && row.collectionKind === "chart") rows.push(row)
+        }
+        return rows
+    }
+    function browseChart(index) {
+        return browsePresentation(categoryCharts()[index])
     }
     function browsePresentation(row) {
         if (!musicAdapter) return false
@@ -148,7 +160,7 @@ Item {
             blurSource: playlistChildPage.pageList[playlistChildPage.lastIndex]
             onTabChange: (index) => {
                 playlistChildPage.stack(index)
-                if ((index === 1 || index === 3) && musicAdapter)
+                if (musicAdapter)
                     musicAdapter.activatePage(1)
             }
         }
@@ -328,15 +340,18 @@ Item {
             visible: false
             width: playlistChildPage.width
             height: playlistChildPage.height
-            Component.onCompleted: {
-                if(MusicApi.toplistList.count === 0)
-                    MusicApi.getAllToplist();
+            Text {
+                objectName: "categoryChartsEmptyState"
+                anchors.centerIn: parent
+                visible: playlistPage.categoryCharts().length === 0
+                text: "暂无排行榜"
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
             }
-
             QScrollView {
                 id: toplistFlick
                 width: parent.width + 24
-                height: parent.height
+                height: parent.height - 48
                 contentChildren: Flow {
                     id: toplistFlow
                     width: parent.width
@@ -346,7 +361,8 @@ Item {
                     //height: implicitHeight + 640
                     spacing: 20
                     Repeater {
-                        model: MusicApi.toplistList
+                        objectName: "categoryChartCards"
+                        model: playlistPage.categoryCharts()
                         delegate: Rectangle {
                             width: 156
                             height: 216
@@ -368,33 +384,33 @@ Item {
                             QPicture {
                                 width: 156
                                 height: 156
-                                source: model.cover.replace("{size}","128") || "qrc:/QueMusic/resources/app/musicpic.png"
+                                source: modelData.cover || "qrc:/QueMusic/resources/app/musicpic.png"
                                 radius: Style.settings.labelRadius
                                 radius3: 0
                                 radius4: 0
                                 sourceSize: Qt.size(128,128)
                             }
-                            // 平台徽标
+                            // 插件明确标记的榜单
                             Rectangle {
                                 x: 8
                                 y: 8
                                 width: 50
                                 height: 20
                                 radius: 10
-                                color: model.source === 0 ? "#CDE8FF" : "#FFCDCD"
+                                color: Style.themes.primaryColor
                                 Text {
                                     anchors.centerIn: parent
-                                    text: model.source === 0 ? "酷狗" : "网易云"
+                                    text: "榜单"
                                     font.pixelSize: 11
                                     font.weight: Font.DemiBold
-                                    color: model.source === 0 ? "#0F3975" : "#750F0F"
+                                    color: Style.themes.themeColor
                                 }
                             }
                             Text {
                                 x: 12
                                 y: 166
                                 width: 132
-                                text: model.title
+                                text: modelData.title
                                 font.bold: true
                                 color: Style.themes.fontColor
                                 font.pixelSize: Style.settings.textmain
@@ -404,7 +420,7 @@ Item {
                                 x: 12
                                 y: 190
                                 width: 132
-                                text: model.artist || ""
+                                text: modelData.artist || ""
                                 color: Style.themes.textColor
                                 font.pixelSize: Style.settings.text
                                 elide: Text.ElideRight
@@ -414,16 +430,23 @@ Item {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 onClicked: {
-                                    MusicApi.playlistSong.clear();
-                                    MusicApi.globalid = model.hash;
-                                    MusicApi.getMusicToplist(1, 20, Number(model.hash), model.source);
-                                    playListSongsWindow.opened(model);
-                                    window.exitIndex = 2;
+                                    playlistPage.browseChart(index)
                                 }
                             }
                         }
                     }
                 }
+            }
+            QButton {
+                objectName: "categoryChartsMoreButton"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                height: 40
+                width: 120
+                radius: 20
+                text: "更多"
+                visible: playlistPage.categoryCharts().length > 0
+                onClicked: playlistPage.loadMoreCategory()
             }
         }
         Item {
@@ -500,78 +523,6 @@ Item {
         }
     }
 
-    // 尚未迁移的旧榜单详情
-    PlayListWindow {
-        id: playListSongsWindow
-        objectName: "playlistDetailWindow"
-        mainTarget: playlistChildPage
-        winIndex: 2
-        content: Item {
-            QListView {
-                id: playListsView
-                x: 24
-                y: 184
-                width: playListSongsWindow.width - 32
-                height: playListSongsWindow.height - 184
-                model: MusicApi.playlistSong
-                clip: true
-                topMargin: 8
-                bottomMargin: 24
-                onClicked: (index) => {
-                    if (musicAdapter)
-                        return
-                    if(Options.settings.soundQuality === 0) {
-                        MusicApi.getMusicInfo(model.get(index).hash);
-                    } else if(Options.settings.soundQuality === 1) {
-                        MusicApi.getMusicInfo(model.get(index).hashhq);
-                    } else {
-                        MusicApi.getMusicInfo(model.get(index).hashsq);
-                    }
-                }
-                onToolClicked: (index,tool) => {
-                    if (musicAdapter)
-                        return
-                    switch(tool) {
-                    case 0:
-                        var listIndex = -1;
-                        var indexHash = model.get(index).hash;
-                        for(var i = 0;i < playListModel.count;i++) {
-                            var forUrl = playListModel.get(i).path;
-                            if(forUrl === indexHash) {
-                                listIndex = i;
-                            }
-                        }
-                        if (listIndex == -1) {
-                            playListModel.append({ name: model.get(index).title, path: model.get(index).hash, songer: model.get(index).artist, source: MusicApi.songSource });
-                            mainWarn.tiped("成功加入播放列表",1);
-                        }
-                        break;
-                    }
-                }
-                footer: Item {
-                    height: 60
-                    width: playListsView.width
-                    QButton {
-                        anchors.centerIn: parent
-                        height: 40; width: 120
-                        radius: 20
-                        iconCharacter: "\uf0f8"
-                        text: "更多"
-                        onClicked: {
-                            if (musicAdapter) return;
-                            if(MusicApi.loadState) return;
-                            var id = MusicApi.globalid;
-                            var page = MusicApi.playlistSong.count / 20 + 1;
-                            if(MusicApi.playlistSong.count % 20 === 0)
-                                MusicApi.getMusicToplist(page, 20, id, MusicApi.songSource);
-                            else
-                                mainWarn.tiped("没有更多了",0);
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     AnimatorWindow {
         id: adapterDetailWindow

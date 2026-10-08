@@ -530,8 +530,7 @@ private slots:
         QObject *detail = playlist->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailWindow"));
         QObject *legacyDetail = playlist->findChild<QObject *>(QStringLiteral("playlistDetailWindow"));
         QVERIFY(detail);
-        QVERIFY(legacyDetail);
-        QVERIFY(!legacyDetail->property("visible").toBool());
+        QVERIFY(!legacyDetail);
         QTRY_VERIFY(detail->property("visible").toBool());
         QObject *detailList = nullptr;
         QTRY_VERIFY((detailList = detail->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList"))));
@@ -582,6 +581,43 @@ private slots:
         QCOMPARE(artists->property("count").toInt(), 0);
         QVERIFY(QMetaObject::invokeMethod(lists, "ended"));
         QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
+    }
+
+    void chartsRequireExplicitPluginClassification()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        QObject *cards = playlist->findChild<QObject *>(QStringLiteral("categoryChartCards"));
+        QObject *empty = playlist->findChild<QObject *>(QStringLiteral("categoryChartsEmptyState"));
+        QObject *lists = playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"));
+        QVERIFY(cards); QVERIFY(empty); QVERIFY(lists);
+        QCOMPARE(cards->property("count").toInt(), 0);
+        const QVariantMap chart{{"title", "Plugin chart"}, {"cover", QString{}},
+                                {"entityType", 3}, {"collectionKind", "chart"}, {"_adapterKey", 91ULL}};
+        QVariantMap misleadingTrack = chart; misleadingTrack["entityType"] = 0;
+        QVariantList rows = playlistRows(); rows.append(misleadingTrack); rows.append(chart);
+        adapter.category.setRows(rows);
+        QTRY_COMPARE(cards->property("count").toInt(), 1);
+        QTRY_COMPARE(lists->property("count").toInt(), 1);
+        QVariant browsed;
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseChart",
+                                          Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(browsed.toBool());
+        QCOMPARE(adapter.browsedRows.first(), chart);
+        QVariantMap unavailable = chart; unavailable["canBrowse"] = false;
+        adapter.category.setRows({unavailable});
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseChart",
+                                          Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(!browsed.toBool());
+        QCOMPARE(adapter.browsedRows.size(), 1);
+        QObject *more = playlist->findChild<QObject *>(QStringLiteral("categoryChartsMoreButton"));
+        QVERIFY(more);
+        QVERIFY(QMetaObject::invokeMethod(more, "clicked"));
+        QVERIFY(adapter.moreRequests.contains(qMakePair(1, QString{})));
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+        adapter.category.setRows(playlistRows());
+        QTRY_COMPARE(cards->property("count").toInt(), 0);
     }
 
     void artistNavigationBrowsesAlbumsThenPlaysTracks()

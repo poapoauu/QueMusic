@@ -127,6 +127,8 @@ struct MediaItemV2 {
     qint64 durationMs = 0;
     QString artworkId;
     QVariantMap externalIds;
+    // Optional collectionKind="chart" classifies a Playlist as a source-owned
+    // chart. It uses the ordinary playlist browse/play capabilities and refs.
     QVariantMap metadata;
     QHash<SourceActionV2, ActionAvailabilityV2> availableActions;
 };

@@ -332,6 +332,23 @@ private slots:
         QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
         for (const auto &request : h.requests("office")) QVERIFY(request.toMap()["filters"].toMap().isEmpty());
     }
+    void categoryRequestsStandardPlaylists()
+    {
+        HubHarness h; QVERIFY(h.init());
+        h.hub->setSelectedSourceInstanceId("task7/home");
+        h.hub->activatePage(1);
+        QTRY_COMPARE(h.requests().size(), 5);
+        bool requestedPlaylists = false;
+        for (const auto &value : h.requests()) {
+            const auto request = value.toMap();
+            if (request.value("section").toInt() == int(PageSectionKindV2::Playlists)) {
+                requestedPlaylists = true;
+                QVERIFY(request.value("filters").toMap().isEmpty());
+                QCOMPARE(request.value("scope").toString(), QStringLiteral("task7/home"));
+            }
+        }
+        QVERIFY(requestedPlaylists);
+    }
     void hubDestructionPreservesBorrowedSession()
     {
         HubHarness h; QVERIFY(h.init()); auto *session = h.session();

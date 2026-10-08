@@ -44,6 +44,9 @@ QJsonObject allowedMap(const QVariantMap &map, const QStringList &strings,
 QJsonObject allowedMetadata(const QVariantMap &map)
 {
     QJsonObject out=allowedMap(map,{"genre"},{"year","trackNumber","discNumber","rating","bitRate","sampleRate"});
+    if (map.value("collectionKind").metaType().id() == QMetaType::QString
+        && map.value("collectionKind").toString() == QStringLiteral("chart"))
+        out.insert(QStringLiteral("collectionKind"), QStringLiteral("chart"));
     const QVariant playlistId=map.value(QStringLiteral("playlistId"));
     const QVariant playlistIndex=map.value(QStringLiteral("playlistIndex"));
     if (playlistId.metaType().id()==QMetaType::QString && !playlistId.toString().isEmpty()
@@ -56,6 +59,9 @@ QJsonObject allowedMetadata(const QVariantMap &map)
 QVariantMap readMetadata(const QJsonObject &object)
 {
     QVariantMap out=allowedMap(object.toVariantMap(),{"genre"},{"year","trackNumber","discNumber","rating","bitRate","sampleRate"}).toVariantMap();
+    if (object.value("collectionKind").isString()
+        && object.value("collectionKind").toString() == QStringLiteral("chart"))
+        out.insert(QStringLiteral("collectionKind"), QStringLiteral("chart"));
     const QJsonValue playlistId=object.value(QStringLiteral("playlistId"));
     const QJsonValue playlistIndex=object.value(QStringLiteral("playlistIndex"));
     const double index=playlistIndex.toDouble(-1);

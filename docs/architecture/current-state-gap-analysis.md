@@ -263,7 +263,7 @@ Home 的“我的收藏歌单”现显示 Adapter 已加载的歌单数并激活
 
 收藏页歌曲、歌单和歌单详情的页面级旧平台回退已移除，Adapter 缺失时仅显示空态；播放、入队、浏览、取消收藏和批量操作走 Capability/Adapter。旧收藏数据没有删除，但尚未映射到插件身份，页面不再展示无法安全操作的旧条目；后续如需恢复应设计明确的认领/迁移流程。原“关注歌手”和“历史记录”标签仍是占位，不能将其计入已完成的插件功能；页面级代码清理也不代表 Phase 6 全部完成。
 
-分类页来源下拉框已去固定平台选项和整数写入；Adapter 列表动作加入逐行 Capability，刷新经 Host Adapter 转交 MusicHub。歌曲标签页的固定地区标签已改为插件 Genre 展示项，旧新歌请求、hash 音质解析、下载菜单和路径队列回退已删除，无 Adapter 时为空。歌单标签页现只展示插件 Playlist 实体，使用 Adapter 浏览和收藏，已删除平台歌单菜单、请求、分页、路径身份收藏和旧详情入口。歌手标签现只展示插件 Artist，原圆形卡片经 Adapter 浏览专辑及歌曲，已删除平台地区筛选和歌手请求。分类详情关闭后恢复分类首页；Host 新增 `closeCategoryBrowse()` / `resetCategoryNavigation()`，不改 Source SDK v2 的 API/ABI。排行榜及其旧详情仍未插件化，分类页不能宣称完成；详情逐级返回和独立歌曲筛选仍待完善。
+分类页来源下拉框已去固定平台选项和整数写入；Adapter 列表动作加入逐行 Capability，刷新经 Host Adapter 转交 MusicHub。歌曲标签页的固定地区标签已改为插件 Genre 展示项，旧新歌请求、hash 音质解析、下载菜单和路径队列回退已删除，无 Adapter 时为空。歌单标签页现只展示插件 Playlist 实体，使用 Adapter 浏览和收藏，已删除平台歌单菜单、请求、分页、路径身份收藏和旧详情入口；分类首页补上 v2 标准 Playlists 查询。歌手标签现只展示插件 Artist，原圆形卡片经 Adapter 浏览专辑及歌曲，已删除平台地区筛选和歌手请求。分类详情关闭后恢复分类首页；Host 新增 `closeCategoryBrowse()` / `resetCategoryNavigation()`。排行榜只识别插件 Playlist 的可选 `metadata.collectionKind="chart"` 白名单标记，复用标准浏览与分页；当前 Navidrome/Local 没有公共榜单，显示空态。旧榜单请求、平台徽标和路径队列详情已删除，该页不再直接引用 MusicApi。Source SDK v2 结构与 ABI 不变；旧 Host/缓存忽略可选标记，分类查询数由四变五。分类页的歌曲独立筛选、详情逐级返回和加载/错误交互仍待完善，不能宣称全部交互验收完成。
 
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
