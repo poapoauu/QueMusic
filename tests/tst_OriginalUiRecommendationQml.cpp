@@ -529,10 +529,12 @@ private slots:
         QObject *list = home->findChild<QObject *>(QStringLiteral("recommendationList"));
         QCOMPARE(list->property("model").value<QObject *>(), adapter.recommendSongs());
         adapter.recommend.setRows(recommendationRows());
+        adapter.recommend.hasMore = true;
+        adapter.recommend.paginationSectionIds = {"recommend-next"};
+        emit adapter.recommend.presentationStateChanged();
         QCoreApplication::processEvents();
         QVERIFY(QMetaObject::invokeMethod(list, "ended"));
-        const QList<QPair<int, QString>> expectedMore{{0, QString{}}};
-        QCOMPARE(adapter.moreRequests, expectedMore);
+        QCOMPARE(adapter.moreRequests.last(), qMakePair(0, QString("recommend-next")));
         QVERIFY(QMetaObject::invokeMethod(list, "clicked", Q_ARG(int, 0)));
         const QList<QVariantMap> expectedPlayed{QVariantMap{{QStringLiteral("_adapterKey"), 41ULL},
                                                              {QStringLiteral("title"), QStringLiteral("Mapped recommendation")},
@@ -553,6 +555,106 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(list, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
         QCOMPARE(adapter.favoriteRows.size(), 1);
         QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+    }
+
+    void homeSourceListsUseScopedPagingAndSafeCategoryActions()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        QQuickWindow renderWindow;
+        renderWindow.resize(810, 540);
+        auto home = loadPage(engine, "pages/HomePage.qml", &adapter, &error);
+        QVERIFY2(home, qPrintable(error));
+        home->setProperty("width", 810); home->setProperty("height", 540);
+        auto *pageItem = qobject_cast<QQuickItem *>(home.get());
+        QVERIFY(pageItem);
+        pageItem->setParentItem(renderWindow.contentItem());
+        renderWindow.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&renderWindow));
+        auto *dailyWindow = home->findChild<QObject *>("dailyRecommendationWindow");
+        QVERIFY(dailyWindow);
+        QVERIFY(QMetaObject::invokeMethod(dailyWindow, "opened", Q_ARG(QVariant, QVariant("Daily")), Q_ARG(QVariant, QVariant(QString{}))));
+        QTRY_VERIFY(home->findChild<QObject *>("recommendationList"));
+        auto *daily = home->findChild<QObject *>("recommendationList");
+        adapter.recommend.setRows(recommendationRows());
+        adapter.recommend.hasMore = true;
+        adapter.recommend.loadingMore = true;
+        adapter.recommend.paginationSectionIds = {"frequent", "rated"};
+        emit adapter.recommend.presentationStateChanged();
+        QVERIFY(!daily->property("loadingMore").toBool());
+        QVERIFY(!daily->property("useLegacyLoadingState").toBool());
+        context.legacyMusicApi()->loadState = 1;
+        emit context.legacyMusicApi()->loadStateChanged();
+        QTRY_VERIFY(daily->property("atYEnd").toBool());
+        const int before = adapter.moreRequests.size();
+        QVERIFY(QMetaObject::invokeMethod(daily, "atYEndChanged"));
+        QCOMPARE(adapter.moreRequests.size(), before + 2);
+        QCOMPARE(adapter.moreRequests.at(before), qMakePair(0, QString("frequent")));
+        QCOMPARE(adapter.moreRequests.at(before + 1), qMakePair(0, QString("rated")));
+        adapter.recommend.paginationSectionIds.clear();
+        emit adapter.recommend.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(daily, "ended"));
+        QCOMPARE(adapter.moreRequests.size(), before + 2);
+        adapter.recommend.loadingMore = false; adapter.recommend.hasMore = false;
+        adapter.recommend.error = {{"failed", QVariantMap{{"detail", "private diagnostic"}}}};
+        adapter.recommend.retrySectionIds = {"newest-failed"};
+        adapter.recommend.setRows({}); emit adapter.recommend.presentationStateChanged();
+        QCOMPARE(daily->property("count").toInt(), 0);
+        QCOMPARE(daily->property("sectionError").toMap(), QVariantMap({{"failed", true}}));
+        QVERIFY(QMetaObject::invokeMethod(daily, "retrySection"));
+        QCOMPARE(adapter.retries.last(), qMakePair(0, QString("newest-failed")));
+        QVERIFY(QMetaObject::invokeMethod(daily, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(daily, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QCOMPARE(adapter.playedRows.size(), 0);
+        QCOMPARE(adapter.enqueuedRows.size(), 0);
+
+        adapter.category.setRows(mixedCategoryRows());
+        QVERIFY(QMetaObject::invokeMethod(home.get(), "browseCategory", Q_ARG(QVariant, QVariant(0))));
+        auto *categoryWindow = home->findChild<QObject *>("recommendationDetailWindow");
+        QVERIFY(categoryWindow);
+        QTRY_VERIFY(home->findChild<QObject *>("homeCategoryDetailList"));
+        auto *detail = home->findChild<QObject *>("homeCategoryDetailList");
+        QVERIFY(!detail->property("showListCount").toBool());
+        QCOMPARE(detail->property("menuModel").toList().size(), 0);
+        adapter.category.paginationSectionIds = {"detail-next"}; adapter.category.hasMore = true;
+        emit adapter.category.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(detail, "ended"));
+        QCOMPARE(adapter.moreRequests.last(), qMakePair(1, QString("detail-next")));
+        auto track = mixedCategoryRows().last().toMap();
+        adapter.category.setRows({track});
+        QVERIFY(QMetaObject::invokeMethod(detail, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.playedRows.last(), track);
+        QVERIFY(QMetaObject::invokeMethod(detail, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QCOMPARE(adapter.enqueuedRows.last(), track);
+        QVERIFY(QMetaObject::invokeMethod(detail, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
+        QCOMPARE(adapter.favoriteRows.last(), qMakePair(track, true));
+        auto unavailable = track;
+        unavailable["canPlay"] = unavailable["canEnqueue"] = unavailable["canFavorite"] = unavailable["canBrowse"] = false;
+        adapter.category.setRows({unavailable});
+        QVERIFY(QMetaObject::invokeMethod(detail, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(detail, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(detail, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
+        QCOMPARE(adapter.playedRows.size(), 1);
+        QCOMPARE(adapter.enqueuedRows.size(), 1);
+        QCOMPARE(adapter.favoriteRows.size(), 1);
+        adapter.category.paginationSectionIds.clear(); adapter.category.hasMore = false;
+        adapter.category.retrySectionIds = {"detail-failed"};
+        adapter.category.error = {{"detail-failed", QVariantMap{{"failed", true}}}};
+        adapter.category.setRows({}); emit adapter.category.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(detail, "retrySection"));
+        QCOMPARE(adapter.retries.last(), qMakePair(1, QString("detail-failed")));
+        QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+        QVERIFY(QMetaObject::invokeMethod(daily, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(detail, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.playedRows.size(), 1);
+        QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&adapter)));
+        const int closed = adapter.closedBrowses;
+        QVERIFY(QMetaObject::invokeMethod(categoryWindow, "closed",
+                                          Q_ARG(QVariant, QVariant(QString{})),
+                                          Q_ARG(QVariant, QVariant(QString{}))));
+        QTRY_COMPARE(adapter.closedBrowses, closed + 1);
+        QVERIFY(!adapter.categoryCanNavigateBack());
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+        QCOMPARE(context.legacyMusicApi()->recommendMoreCalls, 0);
     }
 
     void categoryRowsUsePresentationIdentityForBrowse()
@@ -1091,7 +1193,8 @@ private slots:
         QObject *recommendations = home->findChild<QObject *>(QStringLiteral("recommendationList"));
         QVERIFY(QMetaObject::invokeMethod(recommendations, "ended"));
         QCOMPARE(context.legacyMusicApi()->recommendMoreCalls, 0);
-        QCOMPARE(recommendations->property("isEnd").toBool(), true);
+        QCOMPARE(recommendations->property("count").toInt(), 0);
+        QCOMPARE(recommendations->property("hasMore").toBool(), false);
 
         context.legacyMusicApi()->listModel()->clear();
         auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);

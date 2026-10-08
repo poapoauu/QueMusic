@@ -273,6 +273,8 @@ Home 的“我的收藏歌单”现显示 Adapter 已加载的歌单数并激活
 
 搜索四标签、收藏两标签及其详情随后完成共享分区分页切片：Host 聚合所有匹配分区的分页/重试状态，QListView 通过默认关闭的 `sourcePaging` 增量接入，开启后不再读取最后一行状态或受旧 MusicApi 加载状态阻塞。根页与详情保持原页码及动作身份，空结果仍可定向重试；模型重置和 Adapter 移除时的按钮回调补上空模型保护。Host API 兼容风险：搜索/收藏模型聚合 error 已改为 sectionId -> failed 布尔状态，旧私有诊断读取者需同步调整；Source SDK v2、Source DTO 与 Plugin UI API ABI 不变。Home、File/Download、播放器/歌词等剩余入口及真实音频、实例卸载与手工视觉验收仍待推进。
 
+Home 每日推荐随后接入五类标准推荐分区聚合及共享 `sourcePaging`，删除空 sectionId 的通用更多请求；空结果可定向重试，旧 MusicApi 加载状态不再阻塞插件分页。Home 分类详情支持 Capability 控制的 Track 播放、入队、收藏及非 Track 浏览，关闭后恢复分类首页；空模型/Adapter 回调安全，不显示无可信数据的曲目计数和旧菜单。Host `recommendSongs.error` 同样改为 sectionId -> failed 通用状态，旧私有诊断读取者需同步调整；Source SDK v2/Plugin UI API ABI 不变。主程序构建及六个相关套件通过。私人漫游/雷达、热门歌单及其旧详情仍待迁移，未用 Random 或普通分类歌单冒充；Home 与 Phase 6 均未完成全部验收。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

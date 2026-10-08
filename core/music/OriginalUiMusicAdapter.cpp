@@ -536,7 +536,7 @@ void OriginalUiMusicAdapter::rebuild()
     m_searchAlbums->setItems(searchAlbums);
     m_searchLyrics->setItems(searchLyrics);
     if (m_hub) {
-        m_recommendSongs->setPresentationState(sectionState(m_hub->recommendation(), {
+        m_recommendSongs->setPresentationState(aggregateSectionState(m_hub->recommendation(), {
             PageSectionKindV2::RecentlyPlayed, PageSectionKindV2::FrequentlyPlayed,
             PageSectionKindV2::HighestRated, PageSectionKindV2::Newest, PageSectionKindV2::Random}));
         m_categoryItems->setPresentationState(aggregateSectionState(m_hub->category(), {

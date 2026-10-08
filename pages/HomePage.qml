@@ -33,17 +33,14 @@ Item {
     function capabilitiesFor(row) {
         return musicAdapter && row ? musicAdapter.capabilities(row) : ({})
     }
+    function rowFor(view, index) {
+        return view && view.model && typeof view.model.get === "function"
+                && index >= 0 && index < view.model.count ? view.model.get(index) : null
+    }
     function playLatest() {
         if (queueHistoryStore.latest.replayable && queueHistoryStore.playLatest())
             return true
         mainWarn.tiped("这条播放记录已不在可用队列中，请从来源重新添加", 0)
-        return false
-    }
-    function requestRecommendationMore() {
-        if (musicAdapter && typeof musicAdapter.loadMore === "function") {
-            musicAdapter.loadMore(0, "")
-            return true
-        }
         return false
     }
     function categoryStripItems() {
@@ -809,31 +806,34 @@ Item {
                 objectName: "recommendationList"
                 x: 24
                 y: 128
-                width: hotlistsWindow.width - 32
-                height: hotlistsWindow.height - 128
+                width: dailyRecomWindow.width - 32
+                height: dailyRecomWindow.height - 128
                 model: musicAdapter ? musicAdapter.recommendSongs : null
                 clip: true
                 //reuseItems: true
                 topMargin: 8
                 bottomMargin: 24
+                sourcePaging: true
+                sourceAdapter: musicAdapter
+                sourcePageKind: 0
                 menuModel: []
                 toolText0: ""
                 toolText1: ""
                 toolText0ForRow: function(index) {
-                    return homePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                    return homePage.capabilitiesFor(homePage.rowFor(dailyRecomView, index)).canEnqueue ? "\uf095" : ""
                 }
                 toolText1ForRow: function(index) {
-                    return homePage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+                    return homePage.capabilitiesFor(homePage.rowFor(dailyRecomView, index)).canFavorite ? "\uf0c8" : ""
                 }
 
                 onClicked: (index) => {
-                    const row = model.get(index)
+                    const row = homePage.rowFor(dailyRecomView, index)
                     if (homePage.capabilitiesFor(row).canPlay)
                         musicAdapter.play(row)
                 }
 
                 onToolClicked: (index,tool) => {
-                    const row = model.get(index)
+                    const row = homePage.rowFor(dailyRecomView, index)
                     const caps = homePage.capabilitiesFor(row)
                     if (tool === 0 && caps.canEnqueue)
                         musicAdapter.enqueue(row)
@@ -841,12 +841,6 @@ Item {
                         musicAdapter.setFavorite(row, true)
                 }
 
-                onEnded: {
-                    if (homePage.requestRecommendationMore())
-                        isEnd = false;
-                    else
-                        isEnd = true;
-                }
             }
         }
     }
@@ -934,6 +928,10 @@ Item {
         objectName: "recommendationDetailWindow"
         mainTarget: homeMain
         haveControl: false
+        onVisibleChanged: {
+            if (!visible && musicAdapter && typeof musicAdapter.closeCategoryBrowse === "function")
+                musicAdapter.closeCategoryBrowse()
+        }
         content: QListView {
             id: recomView
             objectName: "homeCategoryDetailList"
@@ -947,26 +945,35 @@ Item {
             topMargin: 8
             bottomMargin: 24
             isList: true
-
-            onEnded: {
-                if (musicAdapter && typeof musicAdapter.loadMore === "function") {
-                    musicAdapter.loadMore(1, "")
-                    isEnd = false
-                } else isEnd = true
+            showListCount: false
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 1
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            toolText0ForRow: function(index) {
+                return homePage.capabilitiesFor(homePage.rowFor(recomView, index)).canEnqueue ? "\uf095" : ""
+            }
+            toolText1ForRow: function(index) {
+                return homePage.capabilitiesFor(homePage.rowFor(recomView, index)).canFavorite ? "\uf0c8" : ""
             }
 
             onClicked: (index) => {
-                if (!musicAdapter || !model)
-                    return
-                const row = model.get(index)
-                if (!row || !homePage.capabilitiesFor(row).canBrowse || !musicAdapter.browse(row))
-                    return
-                recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
-                window.exitIndex = 1
+                const row = homePage.rowFor(recomView, index)
+                const caps = homePage.capabilitiesFor(row)
+                if (row && row.entityType === 0 && caps.canPlay)
+                    musicAdapter.play(row)
+                else if (row && caps.canBrowse && musicAdapter.browse(row)) {
+                    recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
+                    window.exitIndex = 1
+                }
             }
             onToolClicked: (index,tool) => {
-                switch(tool) {
-                }
+                const row = homePage.rowFor(recomView, index)
+                const caps = homePage.capabilitiesFor(row)
+                if (tool === 0 && caps.canEnqueue) musicAdapter.enqueue(row)
+                else if (tool === 1 && caps.canFavorite) musicAdapter.setFavorite(row, true)
             }
         }
     }

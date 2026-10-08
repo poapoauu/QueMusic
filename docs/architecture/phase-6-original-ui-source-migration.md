@@ -72,6 +72,18 @@ Host Adapter 新增稳定展示模型 `categoryArtists` / `categoryPlaylists` / 
 
 空列表回归同时发现原按钮回调在模型重置期间隐式读取 `model.get()` 的 QML 错误；现改为明确引用对应列表并保护空模型。测试覆盖错误分区无行、末行耗尽而其他分区可继续、多分区隔离、加载/失败分区跳过、同步回调改动状态后仍按快照发出后续请求、根/详情页码正确、模型重置及 Adapter 移除后的安全行为。剩余 Home 推荐分页、File/Download/播放器与歌词等旧入口仍需逐项检查；真实服务器音频、完整实例卸载场景和 macOS 手工视觉验收仍未完成。
 
+### Home 推荐分页与分类详情动作
+
+Home 每日推荐现聚合现有五类标准推荐分区（RecentlyPlayed、FrequentlyPlayed、HighestRated、Newest、Random），通过共享 QListView 的 `sourcePaging` 按就绪分区 ID 快照分页，按失败分区 ID 重试。首分区耗尽、其他分区加载中或失败，不再挡住可继续的分区；空结果保留定向重试，Unsupported 不生成重试入口。删除通用 `loadMore(0, "")`，不再受旧 MusicApi 加载状态阻塞。推荐列表尺寸改用自己的弹窗，不再依赖旧热门歌单详情窗口。
+
+Home 分类详情同样启用分区分页/重试，保留 Category 页码 1。Track 在 `canPlay` 时播放，其余可浏览项继续沿用 Adapter 导航；入队与收藏也由逐行 Capability 决定。没有可信曲目数时隐藏计数列，删除默认旧平台菜单；行回调明确读取所属列表，并保护模型重置及 Adapter 移除。详情关闭后复用 `closeCategoryBrowse()` 恢复分类首页，而不是让首页分类条停留在详情结果。
+
+兼容风险：`recommendSongs.error` 与已迁移的搜索/收藏模型一致，改为 `{sectionId: {failed: true}}`，旧私有 Host 诊断读取者需同步调整。未改变推荐行展示身份、Source DTO、Source SDK v2 或 Plugin UI API ABI；QML 和 Host 展示状态需同步更新。
+
+主程序构建及六个相关套件通过。新增 C++ 验收覆盖五类推荐分区聚合、耗尽/加载/Unsupported 隔离、空失败分区和模型重置；QML 使用实际窗口验证旧 MusicApi 忙碌时列表到达底部仍按分区分页，并覆盖推荐/详情页码、空列表重试、Track 播放/入队/收藏身份、无权限拒绝、空 Adapter 和详情关闭恢复导航。测试中的播放动作为 Adapter 夹具断言，不等同真实音频设备验收。
+
+私人漫游、私人雷达、热门歌单及其旧详情仍依赖旧平台 API。本轮没有用 Random 曲目冒充私人推荐，也没有用普通分类歌单冒充热门歌单；Home 尚未完成全部迁移。真实服务器多实例音频、完整实例卸载与 macOS 手工视觉验收仍待完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

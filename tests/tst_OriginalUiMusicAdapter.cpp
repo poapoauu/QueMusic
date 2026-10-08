@@ -766,6 +766,50 @@ private slots:
         QCOMPARE(adapter.searchSongs()->error(), QVariantMap({{"failed-search-tracks", QVariantMap{{"failed", true}}}}));
     }
 
+    void recommendationsAggregateStandardSectionsAndRetainEmptyRetries()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath("settings.ini"), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        auto result = resultWith({makeItem(MediaEntityTypeV2::Track, "source", "source/a", "track")}, "recent-exhausted");
+        result.sections[0].kind = PageSectionKindV2::RecentlyPlayed;
+        auto next = result.sections[0]; next.sectionId = "frequent"; next.kind = PageSectionKindV2::FrequentlyPlayed;
+        next.hasMore = true; next.nextCursor = "private-frequent";
+        result.sections.append(next);
+        next.sectionId = "rated"; next.kind = PageSectionKindV2::HighestRated; next.nextCursor = "private-rated";
+        result.sections.append(next);
+        auto *model = hub.recommendation();
+        const auto generation = model->beginRequest();
+        QVERIFY(model->applyResult(generation, result));
+        PageSectionV2 failed; failed.sectionId = "newest-failed"; failed.kind = PageSectionKindV2::Newest;
+        QVERIFY(model->applyQueryFailure(generation, failed, {SourceErrorKindV2::Network, "network", "private diagnostic"}));
+        failed.sectionId = "random-unsupported"; failed.kind = PageSectionKindV2::Random;
+        QVERIFY(model->applyQueryFailure(generation, failed, {SourceErrorKindV2::Unsupported}));
+        QVERIFY(model->finishGeneration(generation, 3));
+        auto *view = adapter.recommendSongs();
+        QCOMPARE(view->rowCount(), 3);
+        QCOMPARE(view->paginationSectionIds(), QStringList({"frequent", "rated"}));
+        QCOMPARE(view->retrySectionIds(), QStringList({"newest-failed"}));
+        QCOMPARE(view->error(), QVariantMap({{"newest-failed", QVariantMap{{"failed", true}}}}));
+        QVERIFY(model->beginSectionRequest(generation, "frequent"));
+        QVERIFY(view->loadingMore());
+        QCOMPARE(view->paginationSectionIds(), QStringList({"rated"}));
+        QVERIFY(model->beginSectionRequest(generation, "newest-failed"));
+        QVERIFY(view->retrySectionIds().isEmpty());
+        QVERIFY(model->resetGeneration(generation));
+        QCOMPARE(view->rowCount(), 0);
+        QVERIFY(view->paginationSectionIds().isEmpty());
+        QVERIFY(view->retrySectionIds().isEmpty());
+        const auto retryGeneration = model->beginRequest();
+        failed.sectionId = "newest-empty"; failed.kind = PageSectionKindV2::Newest;
+        QVERIFY(model->applyQueryFailure(retryGeneration, failed, {SourceErrorKindV2::Network}));
+        QVERIFY(model->finishGeneration(retryGeneration, 1));
+        QCOMPARE(view->rowCount(), 0);
+        QCOMPARE(view->retrySectionIds(), QStringList({"newest-empty"}));
+    }
+
     void searchAndFavoritesAggregateOnlyTheirMatchingSections()
     {
         QTemporaryDir dir; QVERIFY(dir.isValid());
