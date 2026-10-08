@@ -21,6 +21,7 @@ public:
     bool navigateBack();
     void refresh();
     void loadMore(const QString &sectionId);
+    void retry(const QString &sectionId);
     bool canNavigateBack() const;
     QVariantMap settingsTarget(const QVariantMap &fullItem) const;
 signals:
@@ -35,6 +36,7 @@ private:
     };
     void receive(const QUuid &requestId, quint64 generation, const PageResultV2 &result,
                  std::optional<SourceErrorV2> failure = {});
+    void requestSection(const QString &sectionId, bool append);
     void cancelPending();
     QPointer<SourceRegistry> m_sources;
     QPointer<PageRepository> m_repository;

@@ -200,15 +200,33 @@ bool DirectoryLibraryController::navigateBack()
 
 void DirectoryLibraryController::loadMore(const QString &sectionId)
 {
+    requestSection(sectionId, true);
+}
+
+void DirectoryLibraryController::retry(const QString &sectionId)
+{
+    requestSection(sectionId, false);
+}
+
+void DirectoryLibraryController::requestSection(const QString &sectionId, bool append)
+{
     if (!m_repository || !m_origins.contains(sectionId)) return;
     for (int row = 0; row < m_model->rowCount(); ++row) {
         const auto section = m_model->section(row);
-        if (section.sectionId != sectionId || !section.hasMore || section.nextCursor.isEmpty()) continue;
+        if (section.sectionId != sectionId) continue;
+        const auto errors = m_model->data(m_model->index(row), MusicPageModel::ErrorRole).toMap();
+        if (append && (!section.hasMore || section.nextCursor.isEmpty() || !errors.isEmpty())) return;
+        bool retryable = false;
+        for (const auto &error : errors)
+            retryable |= error.toMap().value("kind").toInt() != int(SourceErrorKindV2::Unsupported);
+        if (!append && !retryable) return;
         auto query = m_origins.value(sectionId);
-        query.cursor = section.nextCursor;
-        if (!m_model->beginSectionRequest(m_generation, sectionId)) return;
-        const auto id = m_repository->requestPage(query, m_generation);
-        m_pending.insert(id, {m_generation, query, sectionId, true, true});
+        // Retry replaces only this section from its original query, like MusicHub.
+        query.cursor = append ? section.nextCursor : QString{};
+        const auto generation = m_generation;
+        if (!m_model->beginSectionRequest(generation, sectionId) || generation != m_generation) return;
+        const auto id = m_repository->requestPage(query, generation);
+        m_pending.insert(id, {generation, query, sectionId, append, true});
         return;
     }
 }

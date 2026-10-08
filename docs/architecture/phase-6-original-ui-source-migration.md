@@ -84,6 +84,18 @@ Home 分类详情同样启用分区分页/重试，保留 Category 页码 1。Tr
 
 私人漫游、私人雷达、热门歌单及其旧详情仍依赖旧平台 API。本轮没有用 Random 曲目冒充私人推荐，也没有用普通分类歌单冒充热门歌单；Home 尚未完成全部迁移。真实服务器多实例音频、完整实例卸载与 macOS 手工视觉验收仍待完成。
 
+### File 目录分区状态与 Capability 收口
+
+2026-10-09：复核确认 File 的目录根/内容、独立 DirectoryLibraryController 及旧歌曲显式认领均已存在，本轮没有重做这些实现。目录展示模型改为聚合全部 Tracks 分区的 `paginationSectionIds` / `retrySectionIds`，不再由首分区或可见行决定分页。根列表与详情按 ID 快照请求，空分区有游标时也能继续；加载中/失败/Unsupported 分区不重复分页，完整刷新期间拒绝分页和重试。两个目录列表关闭旧 MusicApi 加载状态兼容，页脚只显示通用失败及重试入口。
+
+Host 新增 `OriginalUiMusicAdapter.retryDirectorySection()` 和 DirectoryLibraryController 的定向重试。重试沿用原始分区查询，从第一页替换该分区；若此前已加载多页，重试后需要正常分页重新取得后续项，不保留旧分区后页或过期游标。其他实例的成功结果不刷新；未知、健康、Unsupported 或正在请求的分区拒绝重试，返回上级/刷新时仍沿用既有取消与 generation fencing。只有无分区来源的全页失败才保留全页刷新恢复；原显式“刷新”按钮不变。
+
+目录行及失败占位行的 `error` 现只含 `{failed: true}`，模型聚合错误为 `{sectionId: {failed: true}}`，不向 QML 提供实例错误诊断或私有文本。Unsupported-only 内容显示空态而非重试。目录根/详情行回调保护空模型、越界及 Adapter 移除，浏览/播放/入队检查逐行 Capability，不支持入队的歌曲隐藏按钮。旧“我的文件夹”记录、备份/认领流程及下载文件列表没有删除或自动认领，设置入口仍使用现有插件设置目标身份，不把目录身份解释为文件访问权限。
+
+API 风险：QML 与 Host 目录聚合属性和新增重试方法需同步更新，旧私有 error 诊断读取者需调整；未改变 Source SDK v2、Plugin UI API、Source DTO 或插件虚接口 ABI。验收覆盖多实例定向恢复且健康实例不产生请求、重复重试拒绝、分页失败后的分区替换、Unsupported 残留游标、返回上级后的过期回调拒绝、无行分区分页/重试、错误脱敏、加载期间拒绝、无 Capability/空 Adapter 动作安全。真实文件库音频、真实多实例卸载和手工视觉仍待验收；File 旧集合、Download/Player/歌词剩余入口及 Home 私有推荐仍不计为完整迁移。
+
+本切片主程序构建及九个相关套件通过：DirectoryLibraryController、OriginalUiLocalDirectories、LocalDirectoriesQml、MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure。最终目录 QML 回归日志没有 TypeError、ReferenceError 或 FilePage 的属性类型赋值错误；未执行真实设备音频与手工视觉验收。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

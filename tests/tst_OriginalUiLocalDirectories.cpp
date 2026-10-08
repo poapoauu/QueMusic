@@ -17,6 +17,54 @@ public:
 class OriginalUiLocalDirectoriesTest final : public QObject {
     Q_OBJECT
 private slots:
+    void directoryStateDoesNotDependOnVisibleRowsOrExposeDiagnostics()
+    {
+        QTemporaryDir files; QVERIFY(files.isValid());
+        QSettings settings(files.filePath("settings.ini"), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        auto *model = hub.directoryLibrary()->model();
+        const auto generation = model->beginRequest();
+        PageResultV2 result;
+        PageSectionV2 section; section.sectionId = "exhausted"; section.kind = PageSectionKindV2::Tracks;
+        MediaItemV2 directory; directory.ref = {"local", "local/home", "home", MediaEntityTypeV2::Directory, "opaque-root"};
+        directory.title = "Music";
+        section.items = {directory}; result.sections.append(section);
+        section.sectionId = "empty-next"; section.items.clear(); section.hasMore = true; section.nextCursor = "private-cursor";
+        result.sections.append(section);
+        QVERIFY(model->applyResult(generation, result));
+        section.sectionId = "failed"; section.hasMore = false; section.nextCursor.clear();
+        QVERIFY(model->applyQueryFailure(generation, section, {SourceErrorKindV2::Network, "network", "private diagnostic"}));
+        section.sectionId = "unsupported";
+        QVERIFY(model->applyQueryFailure(generation, section, {SourceErrorKindV2::Unsupported}));
+        QVERIFY(model->finishGeneration(generation, 3));
+        auto *view = adapter.directoryItems();
+        QCOMPARE(view->rowCount(), 2); // One real directory and one safe error placeholder.
+        QCOMPARE(view->paginationSectionIds(), QStringList{"empty-next"});
+        QCOMPARE(view->retrySectionIds(), QStringList{"failed"});
+        QCOMPARE(view->error(), QVariantMap({{"failed", QVariantMap{{"failed", true}}}}));
+        for (int i = 0; i < view->rowCount(); ++i) {
+            const auto row = view->get(i);
+            QVERIFY(!row.contains("ref")); QVERIFY(!row.contains("path"));
+            const auto error = row.value("error").toMap();
+            QVERIFY(error.isEmpty() || error == QVariantMap({{"failed", true}}));
+        }
+        QVERIFY(model->beginSectionRequest(generation, "exhausted"));
+        QVERIFY(model->applySectionFailure(generation, "exhausted", {SourceErrorKindV2::Network, "network", "private details"}));
+        QCOMPARE(view->get(0).value("error").toMap(), QVariantMap({{"failed", true}}));
+        QVERIFY(model->beginSectionRequest(generation, "empty-next"));
+        QVERIFY(view->paginationSectionIds().isEmpty());
+        QVERIFY(view->loadingMore());
+        QVERIFY(model->resetGeneration(generation));
+        QCOMPARE(view->rowCount(), 0);
+        QVERIFY(view->paginationSectionIds().isEmpty()); QVERIFY(view->retrySectionIds().isEmpty());
+        const auto unsupportedGeneration = model->beginRequest();
+        QVERIFY(model->applyQueryFailure(unsupportedGeneration, section, {SourceErrorKindV2::Unsupported}));
+        QVERIFY(model->finishGeneration(unsupportedGeneration, 1));
+        QCOMPARE(adapter.directoryState(), QString("empty"));
+        QCOMPARE(view->rowCount(), 0); QVERIFY(view->error().isEmpty());
+    }
     void unsupportedInstanceDoesNotAppearAsBrokenDirectory()
     {
         QTemporaryDir files;

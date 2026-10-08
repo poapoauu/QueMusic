@@ -21,25 +21,33 @@ Item {
         return status !== "matched";
     }
     signal requestPluginSettings(string packageId, string instanceId)
-    function loadMoreDirectorySections(rows) {
-        if (!musicAdapter || !rows) return;
-        var seen = {};
-        for (var i = 0; i < rows.count; ++i) {
-            var row = rows.get(i);
-            if (!row.hasMore || row.loadingMore || !row.sectionId || seen[row.sectionId]
-                || (row.error && Object.keys(row.error).length > 0)) continue;
-            seen[row.sectionId] = true;
-            musicAdapter.loadMoreDirectories(row.sectionId);
-        }
+    function directoryRow(view, index) {
+        return view && view.model && typeof view.model.get === "function"
+                && index >= 0 && index < view.model.count ? view.model.get(index) : null;
+    }
+    function directoryCapabilities(row) {
+        return musicAdapter && row && typeof musicAdapter.capabilities === "function"
+                ? musicAdapter.capabilities(row) : ({});
+    }
+    function requestDirectorySections(retry) {
+        if (!musicAdapter || musicAdapter.directoryState === "loading") return;
+        var rows = musicAdapter.directoryItems;
+        if (!rows) return;
+        var ids = retry ? rows.retrySectionIds : rows.paginationSectionIds;
+        var action = retry ? "retryDirectorySection" : "loadMoreDirectories";
+        if (ids === undefined || typeof musicAdapter[action] !== "function") return;
+        // Requests can synchronously reset presentation rows and section state.
+        var targets = Array.from(ids);
+        for (var id of targets)
+            if (id) musicAdapter[action](id);
+        // A whole-page failure has no section origin to retry.
+        if (retry && targets.length === 0 && Object.keys(rows.error || {}).length === 0
+                && musicAdapter.directoryState === "failed") musicAdapter.refreshDirectories();
     }
     function directoryHasError() {
         var rows = musicAdapter ? musicAdapter.directoryItems : null;
         if (!rows) return false;
-        for (var i = 0; i < rows.count; ++i) {
-            var row = rows.get(i);
-            if (row.isError || (row.error && Object.keys(row.error).length > 0)) return true;
-        }
-        return false;
+        return Object.keys(rows.error || {}).length > 0 || musicAdapter.directoryState === "failed";
     }
     Connections {
         target: window
@@ -473,7 +481,8 @@ Item {
                         height: 38
                         text: "重试"
                         visible: filePage.directoryHasError()
-                        onClicked: if (filePage.musicAdapter) filePage.musicAdapter.refreshDirectories()
+                        enabled: !!filePage.musicAdapter && filePage.musicAdapter.directoryState !== "loading"
+                        onClicked: filePage.requestDirectorySections(true)
                     }
                 }
 
@@ -485,11 +494,17 @@ Item {
                     topMargin: 60
                     headerModel: ["标题","","","菜单"]
                     model: filePage.musicAdapter ? filePage.musicAdapter.directoryItems : null
+                    useLegacyLoadingState: false
+                    hasMore: !!model && model.hasMore
+                    loadingMore: !!model && model.loadingMore && model.paginationSectionIds.length === 0
+                    sectionError: filePage.directoryHasError() ? ({failed: true}) : ({})
+                    retryAction: function() { filePage.requestDirectorySections(true) }
+                    isEnd: count > 0 && !hasMore && !loadingMore && !filePage.directoryHasError()
                     visible: !filePage.musicAdapter || !filePage.musicAdapter.directoryCanNavigateBack
                     function activateRow(rowIndex) {
                         if (!filePage.musicAdapter) return;
-                        var row = model.get(rowIndex);
-                        if (row.isError || row.entityType !== 5) return;
+                        var row = filePage.directoryRow(localFolderView, rowIndex);
+                        if (!row || row.isError || row.entityType !== 5) return;
                         if (filePage.setMode === 2) {
                             var selected = filePage.chooseIndex.indexOf(rowIndex);
                             if (selected < 0) filePage.chooseIndex.push(rowIndex);
@@ -497,19 +512,19 @@ Item {
                             filePage.chooseIndexChanged();
                             return;
                         }
-                        if (filePage.musicAdapter.browseDirectory(row)) {
+                        if (filePage.directoryCapabilities(row).canBrowse && filePage.musicAdapter.browseDirectory(row)) {
                             window.exitIndex = 1;
                             localFolderMusic.opened(row.title, "");
                         }
                     }
                     function manageRow(rowIndex) {
                         if (!filePage.musicAdapter) return;
-                        var row = model.get(rowIndex);
-                        if (row.settingsPackageId)
+                        var row = filePage.directoryRow(localFolderView, rowIndex);
+                        if (row && row.settingsPackageId)
                             filePage.requestPluginSettings(row.settingsPackageId, row.settingsInstanceId || "");
                     }
-                    function loadMoreVisibleSections() { filePage.loadMoreDirectorySections(model); }
-                    onAtYEndChanged: if (atYEnd) loadMoreVisibleSections()
+                    function loadMoreVisibleSections() { filePage.requestDirectorySections(false); }
+                    onAtYEndChanged: if (visible && atYEnd) loadMoreVisibleSections()
                     Connections {
                         target: filePage.musicAdapter
                         function onDirectoryChanged() {
@@ -882,26 +897,35 @@ Item {
                 width: localFolderMusic.width - 32
                 height: localFolderMusic.height - 128
                 model: filePage.musicAdapter ? filePage.musicAdapter.directoryItems : null
+                useLegacyLoadingState: false
+                hasMore: !!model && model.hasMore
+                loadingMore: !!model && model.loadingMore && model.paginationSectionIds.length === 0
+                sectionError: filePage.directoryHasError() ? ({failed: true}) : ({})
+                retryAction: function() { filePage.requestDirectorySections(true) }
+                isEnd: count > 0 && !hasMore && !loadingMore && !filePage.directoryHasError()
                 clip: true
                 headerModel: ["标题","","","菜单"]
                 function activateRow(rowIndex) {
                     if (!filePage.musicAdapter) return;
-                    var row = model.get(rowIndex);
-                    if (row.entityType === 5)
+                    var row = filePage.directoryRow(localFileView, rowIndex);
+                    if (!row) return;
+                    var caps = filePage.directoryCapabilities(row);
+                    if (row.entityType === 5 && caps.canBrowse)
                         filePage.musicAdapter.browseDirectory(row);
-                    else if (row.entityType === 0)
+                    else if (row.entityType === 0 && caps.canPlay)
                         filePage.musicAdapter.play(row);
                 }
                 function enqueueRow(rowIndex) {
-                    if (filePage.musicAdapter)
-                        filePage.musicAdapter.enqueue(model.get(rowIndex));
+                    var row = filePage.directoryRow(localFileView, rowIndex);
+                    if (row && row.entityType === 0 && filePage.directoryCapabilities(row).canEnqueue)
+                        filePage.musicAdapter.enqueue(row);
                 }
-                onAtYEndChanged: if (atYEnd) filePage.loadMoreDirectorySections(model)
+                onAtYEndChanged: if (visible && atYEnd) filePage.requestDirectorySections(false)
                 Connections {
                     target: filePage.musicAdapter
                     function onDirectoryChanged() {
                         if (localFileView.visible && localFileView.atYEnd)
-                            Qt.callLater(filePage.loadMoreDirectorySections, localFileView.model);
+                            Qt.callLater(filePage.requestDirectorySections, false);
                     }
                 }
                 delegate: Rectangle {
@@ -942,7 +966,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         width: 36; height: 36
                         iconCharacter: "\uf095"
-                        visible: model.entityType === 0
+                        visible: model.entityType === 0 && filePage.directoryCapabilities(filePage.directoryRow(localFileView, index)).canEnqueue
                         onClicked: localFileView.enqueueRow(index)
                     }
                 }

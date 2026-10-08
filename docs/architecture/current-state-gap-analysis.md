@@ -275,6 +275,10 @@ Home 的“我的收藏歌单”现显示 Adapter 已加载的歌单数并激活
 
 Home 每日推荐随后接入五类标准推荐分区聚合及共享 `sourcePaging`，删除空 sectionId 的通用更多请求；空结果可定向重试，旧 MusicApi 加载状态不再阻塞插件分页。Home 分类详情支持 Capability 控制的 Track 播放、入队、收藏及非 Track 浏览，关闭后恢复分类首页；空模型/Adapter 回调安全，不显示无可信数据的曲目计数和旧菜单。Host `recommendSongs.error` 同样改为 sectionId -> failed 通用状态，旧私有诊断读取者需同步调整；Source SDK v2/Plugin UI API ABI 不变。主程序构建及六个相关套件通过。私人漫游/雷达、热门歌单及其旧详情仍待迁移，未用 Random 或普通分类歌单冒充；Home 与 Phase 6 均未完成全部验收。
 
+2026-10-09，File 目录增量切片：保留既有独立目录浏览和旧歌曲认领流程；目录根/内容改用所有 Tracks 分区的聚合分页与重试身份，空分区也可继续，失败分区单独从第一页重新查询并替换，不刷新健康实例。无来源的全页失败仍可全页刷新，Unsupported-only 显示空态。目录行/占位错误改为失败布尔标记，移除原始诊断；行动作加入 Capability 和空模型保护。新增 Host `retryDirectorySection()`，QML 与 Host 展示契约需同步更新；Source SDK v2/Plugin UI API ABI 不变。File 旧集合、下载业务、播放器/歌词剩余旧分支及真实音频/手工视觉验收仍待推进，不能据此宣称 Phase 6 完成。
+
+目录切片验收：主程序构建及九个目录/Adapter/MusicHub/QML/结构套件通过，新增测试覆盖健康实例不被重试、重复请求拒绝、失败分区替换、Unsupported 残留游标与过期回调、无行分区状态、错误脱敏和空依赖动作安全；真实设备音频、完整实例卸载与手工视觉验收未执行。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

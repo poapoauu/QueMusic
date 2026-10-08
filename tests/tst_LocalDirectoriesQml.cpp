@@ -44,7 +44,17 @@ public:
     }
     Q_INVOKABLE QUuid play(const QVariantMap &) { ++plays; return QUuid::createUuid(); }
     Q_INVOKABLE QUuid enqueue(const QVariantMap &) { ++enqueues; return QUuid::createUuid(); }
+    Q_INVOKABLE QVariantMap capabilities(const QVariantMap &row) const {
+        return {{"canBrowse", row.value("canBrowse", row.value("entityType").toInt() == 5)},
+                {"canPlay", row.value("canPlay", row.value("entityType").toInt() == 0)},
+                {"canEnqueue", row.value("canEnqueue", row.value("entityType").toInt() == 0)}};
+    }
     Q_INVOKABLE void refreshDirectories() { ++refreshes; }
+    Q_INVOKABLE void retryDirectorySection(const QString &id) {
+        retriedSections.append(id);
+        // Simulate synchronous state changes while QML walks its snapshot.
+        rows.setPresentationState({{"error", QVariantMap{{"failed", QVariantMap{{"failed", true}}}}}});
+    }
     Q_INVOKABLE void loadMoreDirectories(const QString &sectionId) {
         if (!requestedSections.contains(sectionId)) {
             requestedSections.insert(sectionId);
@@ -57,6 +67,7 @@ public:
     bool canBack = false;
     bool installed = true;
     QSet<QString> requestedSections;
+    QStringList retriedSections;
     int activations = 0, browses = 0, backs = 0, plays = 0, enqueues = 0, refreshes = 0, more = 0;
 signals:
     void directoryChanged();
@@ -197,6 +208,8 @@ private slots:
                                            {"sectionId", "directory/a"}, {"hasMore", true}},
                                QVariantMap{{"title", "B"}, {"entityType", 5},
                                            {"sectionId", "directory/b"}, {"hasMore", true}}});
+        adapter.rows.setPresentationState({{"hasMore", true},
+            {"paginationSectionIds", QStringList{"directory/a", "directory/b"}}});
         QVERIFY(QMetaObject::invokeMethod(view, "loadMoreVisibleSections"));
         QCOMPARE(adapter.more, 2);
         adapter.more = 0;
@@ -206,12 +219,58 @@ private slots:
         QTRY_COMPARE(adapter.more, 2);
         musicApi.loadState = false;
         adapter.rows.setItems({QVariantMap{{"title", "目录加载失败"}, {"isError", true}}});
+        adapter.rows.setPresentationState({{"error", QVariantMap{{"directory/failed", QVariantMap{{"failed", true}}}}},
+            {"retrySectionIds", QStringList{"directory/failed", "directory/second"}}});
         emit adapter.directoryChanged();
         auto *retry = filePage->findChild<QObject *>("directoryRetry");
         QVERIFY(retry);
         QTRY_VERIFY(retry->property("visible").toBool());
         QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
-        QCOMPARE(adapter.refreshes, 1);
+        QCOMPARE(adapter.retriedSections, QStringList({"directory/failed", "directory/second"}));
+        QCOMPARE(adapter.refreshes, 0);
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
+        QCOMPARE(adapter.retriedSections.size(), 2);
+        // Paging/retry state survives even when the provider returns no rows.
+        adapter.rows.setItems({});
+        adapter.rows.setPresentationState({{"error", QVariantMap{{"directory/empty", QVariantMap{{"failed", true}}}}},
+            {"retrySectionIds", QStringList{"directory/empty"}}});
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
+        QCOMPARE(adapter.retriedSections.last(), QString("directory/empty"));
+        adapter.state = "loading"; emit adapter.directoryChanged();
+        adapter.rows.setPresentationState({{"hasMore", true},
+            {"paginationSectionIds", QStringList{"directory/loading"}},
+            {"retrySectionIds", QStringList{"directory/loading"}}});
+        QVERIFY(QMetaObject::invokeMethod(view, "loadMoreVisibleSections"));
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
+        QCOMPARE(adapter.more, 2);
+        QCOMPARE(adapter.retriedSections.size(), 3);
+        adapter.state = "failed"; adapter.rows.setPresentationState({}); emit adapter.directoryChanged();
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
+        QCOMPARE(adapter.refreshes, 1); // No origin: retain whole-page recovery.
+        adapter.state = "ready"; emit adapter.directoryChanged();
+        QVERIFY(QMetaObject::invokeMethod(view, "activateRow", Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(QMetaObject::invokeMethod(view, "manageRow", Q_ARG(QVariant, QVariant(0))));
+        QCOMPARE(adapter.browses, 2); QCOMPARE(requested.count(), 2);
+        adapter.rows.setItems({QVariantMap{{"title", "Unavailable directory"}, {"entityType", 5}, {"canBrowse", false}}});
+        QVERIFY(QMetaObject::invokeMethod(view, "activateRow", Q_ARG(QVariant, QVariant(0))));
+        QCOMPARE(adapter.browses, 2);
+        adapter.rows.setItems({QVariantMap{{"title", "Music"}, {"entityType", 5}}});
+        QVERIFY(QMetaObject::invokeMethod(view, "activateRow", Q_ARG(QVariant, QVariant(0))));
+        contents = filePage->findChild<QObject *>("pluginDirectoryContents");
+        QVERIFY(contents);
+        adapter.rows.setItems({QVariantMap{{"title", "Unavailable track"}, {"entityType", 0},
+            {"canPlay", false}, {"canEnqueue", false}}});
+        QVERIFY(QMetaObject::invokeMethod(contents, "activateRow", Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(QMetaObject::invokeMethod(contents, "enqueueRow", Q_ARG(QVariant, QVariant(0))));
+        QCOMPARE(adapter.plays, 1); QCOMPARE(adapter.enqueues, 1);
+        adapter.rows.setItems({});
+        QVERIFY(QMetaObject::invokeMethod(contents, "activateRow", Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(QMetaObject::invokeMethod(contents, "enqueueRow", Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+        QVERIFY(QMetaObject::invokeMethod(contents, "activateRow", Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(QMetaObject::invokeMethod(contents, "enqueueRow", Q_ARG(QVariant, QVariant(0))));
+        QCOMPARE(adapter.plays, 1); QCOMPARE(adapter.enqueues, 1);
+        QVERIFY(filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&adapter)));
         QCOMPARE(window.legacyPlays, 0);
         myFolders.setItems({QVariantMap{{"name", "Personal collection"}}});
         QCOMPARE(myFolders.rowCount(), 1);

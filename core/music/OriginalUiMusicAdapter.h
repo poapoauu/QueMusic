@@ -88,6 +88,7 @@ public:
     Q_INVOKABLE bool directoryBack();
     Q_INVOKABLE void refreshDirectories();
     Q_INVOKABLE void loadMoreDirectories(const QString &sectionId);
+    Q_INVOKABLE void retryDirectorySection(const QString &sectionId);
     Q_INVOKABLE bool pluginAvailable(const QString &packageId) const;
 
 signals:

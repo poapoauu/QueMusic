@@ -53,20 +53,6 @@ QVariantMap browseCapability(const QVariantMap &item)
                      : unavailable(QStringLiteral("music.browseUnsupported"));
 }
 
-QVariantMap sectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds)
-{
-    if (!model) return {};
-    for (int i = 0; i < model->rowCount(); ++i) {
-        const auto index = model->index(i);
-        if (!kinds.contains(model->section(i).kind)) continue;
-        return {{QStringLiteral("sectionId"), model->data(index, MusicPageModel::SectionIdRole)},
-                {QStringLiteral("hasMore"), model->data(index, MusicPageModel::HasMoreRole)},
-                {QStringLiteral("loadingMore"), model->data(index, MusicPageModel::LoadingMoreRole)},
-                {QStringLiteral("error"), model->data(index, MusicPageModel::ErrorRole)}};
-    }
-    return {};
-}
-
 QVariantMap aggregateSectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds)
 {
     if (!model) return {};
@@ -203,11 +189,17 @@ OnlineListModel *OriginalUiMusicAdapter::directoryItems() const { return m_direc
 QString OriginalUiMusicAdapter::directoryState() const
 {
     if (!m_hub || !m_hub->directoryLibrary()) return QStringLiteral("unavailable");
-    switch (m_hub->directoryLibrary()->model()->state()) {
+    auto *model = m_hub->directoryLibrary()->model();
+    switch (model->state()) {
     case PageLoadStateV2::Loading: return QStringLiteral("loading");
     case PageLoadStateV2::Ready: return QStringLiteral("ready");
     case PageLoadStateV2::Empty: return QStringLiteral("empty");
-    case PageLoadStateV2::Failed: return QStringLiteral("failed");
+    case PageLoadStateV2::Failed: {
+        const auto error = model->errorMap();
+        const bool failed = (!error.isEmpty() && error.value("kind").toInt() != int(SourceErrorKindV2::Unsupported))
+            || !aggregateSectionState(model, {PageSectionKindV2::Tracks}).value("error").toMap().isEmpty();
+        return failed ? QStringLiteral("failed") : QStringLiteral("empty");
+    }
     case PageLoadStateV2::Idle: return QStringLiteral("empty");
     }
     return QStringLiteral("unavailable");
@@ -328,6 +320,10 @@ void OriginalUiMusicAdapter::refreshDirectories()
 void OriginalUiMusicAdapter::loadMoreDirectories(const QString &sectionId)
 {
     if (m_hub && m_hub->directoryLibrary()) m_hub->directoryLibrary()->loadMore(sectionId);
+}
+void OriginalUiMusicAdapter::retryDirectorySection(const QString &sectionId)
+{
+    if (m_hub && m_hub->directoryLibrary()) m_hub->directoryLibrary()->retry(sectionId);
 }
 bool OriginalUiMusicAdapter::pluginAvailable(const QString &packageId) const
 {
@@ -569,12 +565,16 @@ void OriginalUiMusicAdapter::rebuildDirectories()
         auto *model = controller->model();
         for (int section = 0; section < model->rowCount(); ++section) {
             const auto index = model->index(section);
-            const QVariantMap state{
+            QVariantMap state{
                 {QStringLiteral("sectionId"), model->data(index, MusicPageModel::SectionIdRole)},
                 {QStringLiteral("hasMore"), model->data(index, MusicPageModel::HasMoreRole)},
                 {QStringLiteral("loadingMore"), model->data(index, MusicPageModel::LoadingMoreRole)},
                 {QStringLiteral("error"), model->data(index, MusicPageModel::ErrorRole)}};
-            const QVariantMap error = state.value(QStringLiteral("error")).toMap();
+            bool failed = false;
+            for (const auto &error : state.value(QStringLiteral("error")).toMap())
+                failed |= error.toMap().value("kind").toInt() != int(SourceErrorKindV2::Unsupported);
+            const QVariantMap error = failed ? QVariantMap{{"failed", true}} : QVariantMap{};
+            state.insert(QStringLiteral("error"), error);
             if (!error.isEmpty() && model->section(section).items.isEmpty()) {
                 rows.append(QVariantMap{{QStringLiteral("title"), tr("目录加载失败")},
                                         {QStringLiteral("isError"), true},
@@ -593,7 +593,7 @@ void OriginalUiMusicAdapter::rebuildDirectories()
                 rows.append(row);
             }
         }
-        m_directoryItems->setPresentationState(sectionState(model, {PageSectionKindV2::Tracks}));
+        m_directoryItems->setPresentationState(aggregateSectionState(model, {PageSectionKindV2::Tracks}));
     } else m_directoryItems->setPresentationState({});
     m_directoryItems->setItems(rows);
 }
