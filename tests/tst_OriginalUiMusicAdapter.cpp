@@ -762,9 +762,62 @@ private slots:
 
         QCOMPARE(adapter.searchSongs()->rowCount(), 0);
         QCOMPARE(adapter.searchSongs()->sectionId(), QStringLiteral("failed-search-tracks"));
-        QCOMPARE(adapter.searchSongs()->error().value(QString{}).toMap()
-                     .value(QStringLiteral("messageKey")).toString(),
-                 QStringLiteral("source.network"));
+        QCOMPARE(adapter.searchSongs()->retrySectionIds(), QStringList({"failed-search-tracks"}));
+        QCOMPARE(adapter.searchSongs()->error(), QVariantMap({{"failed-search-tracks", QVariantMap{{"failed", true}}}}));
+    }
+
+    void searchAndFavoritesAggregateOnlyTheirMatchingSections()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath("settings.ini"), QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        MusicHub hub(nullptr, &scope, &settings);
+        OriginalUiMusicAdapter adapter(&hub, nullptr);
+        for (const bool search : {true, false}) {
+            auto *model = search ? hub.searchResults() : hub.favorites();
+            auto *tracks = search ? adapter.searchSongs() : adapter.favoriteSongs();
+            auto *lists = search ? adapter.searchLists() : adapter.favoriteLists();
+            const auto kind = search ? PageSectionKindV2::Tracks : PageSectionKindV2::FavoriteTracks;
+            auto result = resultWith({makeItem(MediaEntityTypeV2::Track, "source", "source/a", "track")}, "track-a");
+            result.sections[0].kind = kind;
+            result.sections[0].hasMore = true; result.sections[0].nextCursor = "private-a";
+            auto next = result.sections[0]; next.sectionId = "track-b"; next.nextCursor = "private-b";
+            result.sections.append(next);
+            next.sectionId = "track-exhausted"; next.hasMore = false; next.nextCursor.clear();
+            result.sections.append(next);
+            next = result.sections[0]; next.sectionId = "playlist-a"; next.kind = PageSectionKindV2::Playlists;
+            next.items = {makeItem(MediaEntityTypeV2::Playlist, "source", "source/a", "playlist")};
+            result.sections.append(next);
+            const auto generation = model->beginRequest();
+            QVERIFY(model->applyResult(generation, result));
+            PageSectionV2 failed; failed.sectionId = "track-failed"; failed.kind = kind;
+            QVERIFY(model->applyQueryFailure(generation, failed, {SourceErrorKindV2::Network, "network", "private diagnostic"}));
+            failed.sectionId = "track-unsupported";
+            QVERIFY(model->applyQueryFailure(generation, failed, {SourceErrorKindV2::Unsupported}));
+            QVERIFY(model->finishGeneration(generation, 3));
+            QCOMPARE(tracks->rowCount(), 3);
+            QCOMPARE(tracks->paginationSectionIds(), QStringList({"track-a", "track-b"}));
+            QCOMPARE(tracks->retrySectionIds(), QStringList({"track-failed"}));
+            QCOMPARE(tracks->error(), QVariantMap({{"track-failed", QVariantMap{{"failed", true}}}}));
+            QCOMPARE(lists->paginationSectionIds(), QStringList({"playlist-a"}));
+            QVERIFY(lists->retrySectionIds().isEmpty());
+            QVERIFY(lists->error().isEmpty());
+            if (search) {
+                QCOMPARE(adapter.searchLyrics()->paginationSectionIds(), tracks->paginationSectionIds());
+                QCOMPARE(adapter.searchLyrics()->retrySectionIds(), tracks->retrySectionIds());
+                QVERIFY(adapter.searchAlbums()->paginationSectionIds().isEmpty());
+            }
+            QVERIFY(model->beginSectionRequest(generation, "track-a"));
+            QVERIFY(tracks->loadingMore());
+            QCOMPARE(tracks->paginationSectionIds(), QStringList({"track-b"}));
+            QVERIFY(model->beginSectionRequest(generation, "track-failed"));
+            QVERIFY(tracks->retrySectionIds().isEmpty());
+            QVERIFY(model->resetGeneration(generation));
+            QCOMPARE(tracks->rowCount(), 0);
+            QVERIFY(tracks->paginationSectionIds().isEmpty());
+            QVERIFY(tracks->retrySectionIds().isEmpty());
+            QVERIFY(tracks->error().isEmpty());
+        }
     }
 
     void continuesTheFlattenedSearchSectionByItsPresentationId()

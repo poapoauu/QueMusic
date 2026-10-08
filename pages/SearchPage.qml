@@ -32,13 +32,10 @@ Item {
         return musicAdapter && row ? musicAdapter.capabilities(row) : ({})
     }
     function modelFor(name) {
-        return musicAdapter ? musicAdapter[name] : null
+        return musicAdapter ? musicAdapter[name] || null : null
     }
-    function sectionFor(model) {
-        if (!model) return ""
-        if (model.count > 0)
-            return model.get(model.count - 1).sectionId || ""
-        return model.sectionId || ""
+    function rowFor(view, index) {
+        return view && view.model && typeof view.model.get === "function" ? view.model.get(index) : null
     }
     function currentModel() {
         switch (searchTab) {
@@ -49,15 +46,8 @@ Item {
         }
     }
     function retryCurrentSection() {
-        if (musicAdapter)
-            musicAdapter.retry(3, sectionFor(currentModel()))
-    }
-    function loadMore(model, pageKind) {
-        if (!musicAdapter || !model) return
-        const sectionId = sectionFor(model)
-        const last = model.count > 0 ? model.get(model.count - 1) : model
-        if (sectionId && last.hasMore && !last.loadingMore)
-            musicAdapter.loadMore(pageKind, sectionId)
+        const views = [searchSong, searchLists, searchAlbum, searchLyrics]
+        if (views[searchTab]) views[searchTab].retrySection()
     }
     function browseResult(row) {
         if (!musicAdapter || !capabilitiesFor(row).canBrowse || !musicAdapter.browse(row))
@@ -156,24 +146,21 @@ Item {
             toolText0: ""
             toolText1: ""
             toolText0ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchSong, index)).canEnqueue ? "\uf095" : ""
             }
             toolText1ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchSong, index)).canFavorite ? "\uf0c8" : ""
             }
-            sectionId: searchPage.sectionFor(model)
-            hasMore: model && (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore)
-            loadingMore: model && (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore)
-            sectionError: model && (model.count > 0 ? model.get(model.count - 1).error : model.error) || ({})
-            retryAction: function(sectionId) { musicAdapter.retry(3, sectionId) }
-            onEnded: searchPage.loadMore(model, 3)
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 3
             onClicked: (index) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchSong, index)
                 if (searchPage.capabilitiesFor(row).canPlay)
                     musicAdapter.play(row)
             }
             onToolClicked: (index, tool) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchSong, index)
                 const caps = searchPage.capabilitiesFor(row)
                 if (tool === 0 && caps.canEnqueue)
                     musicAdapter.enqueue(row)
@@ -197,17 +184,14 @@ Item {
             toolText0: ""
             toolText1: ""
             toolText1ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchLists, index)).canFavorite ? "\uf0c8" : ""
             }
-            sectionId: searchPage.sectionFor(model)
-            hasMore: model && (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore)
-            loadingMore: model && (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore)
-            sectionError: model && (model.count > 0 ? model.get(model.count - 1).error : model.error) || ({})
-            retryAction: function(sectionId) { musicAdapter.retry(3, sectionId) }
-            onEnded: searchPage.loadMore(model, 3)
-            onClicked: (index) => searchPage.browseResult(model.get(index))
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 3
+            onClicked: (index) => searchPage.browseResult(searchPage.rowFor(searchLists, index))
             onToolClicked: (index, tool) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchLists, index)
                 if (tool === 1 && searchPage.capabilitiesFor(row).canFavorite)
                     musicAdapter.setFavorite(row, true)
             }
@@ -228,17 +212,14 @@ Item {
             toolText0: ""
             toolText1: ""
             toolText0ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchAlbum, index)).canEnqueue ? "\uf095" : ""
             }
-            sectionId: searchPage.sectionFor(model)
-            hasMore: model && (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore)
-            loadingMore: model && (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore)
-            sectionError: model && (model.count > 0 ? model.get(model.count - 1).error : model.error) || ({})
-            retryAction: function(sectionId) { musicAdapter.retry(3, sectionId) }
-            onEnded: searchPage.loadMore(model, 3)
-            onClicked: (index) => searchPage.browseResult(model.get(index))
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 3
+            onClicked: (index) => searchPage.browseResult(searchPage.rowFor(searchAlbum, index))
             onToolClicked: (index, tool) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchAlbum, index)
                 if (tool === 0 && searchPage.capabilitiesFor(row).canEnqueue)
                     musicAdapter.enqueue(row)
             }
@@ -258,24 +239,21 @@ Item {
             toolText0: ""
             toolText1: ""
             toolText0ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchLyrics, index)).canEnqueue ? "\uf095" : ""
             }
             toolText1ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchLyrics, index)).canFavorite ? "\uf0c8" : ""
             }
-            sectionId: searchPage.sectionFor(model)
-            hasMore: model && (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore)
-            loadingMore: model && (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore)
-            sectionError: model && (model.count > 0 ? model.get(model.count - 1).error : model.error) || ({})
-            retryAction: function(sectionId) { musicAdapter.retry(3, sectionId) }
-            onEnded: searchPage.loadMore(model, 3)
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 3
             onClicked: (index) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchLyrics, index)
                 if (searchPage.capabilitiesFor(row).canPlay)
                     musicAdapter.play(row)
             }
             onToolClicked: (index, tool) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchLyrics, index)
                 const caps = searchPage.capabilitiesFor(row)
                 if (tool === 0 && caps.canEnqueue)
                     musicAdapter.enqueue(row)
@@ -306,6 +284,7 @@ Item {
         }
         QListView {
             objectName: "searchAdapterDetailList"
+            id: searchDetailList
             x: 24
             y: 184
             width: searchAdapterDetailWindow.width - 32
@@ -317,31 +296,28 @@ Item {
             menuModel: []
             toolText0: ""
             toolText1: ""
-            sectionId: searchPage.sectionFor(model)
-            hasMore: model && (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore)
-            loadingMore: model && (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore)
-            sectionError: model && (model.count > 0 ? model.get(model.count - 1).error : model.error) || ({})
-            retryAction: function(sectionId) { musicAdapter.retry(1, sectionId) }
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 1
             toolText0ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchDetailList, index)).canEnqueue ? "\uf095" : ""
             }
             toolText1ForRow: function(index) {
-                return searchPage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+                return searchPage.capabilitiesFor(searchPage.rowFor(searchDetailList, index)).canFavorite ? "\uf0c8" : ""
             }
             onClicked: (index) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchDetailList, index)
                 if (searchPage.capabilitiesFor(row).canPlay)
                     musicAdapter.play(row)
             }
             onToolClicked: (index, tool) => {
-                const row = model.get(index)
+                const row = searchPage.rowFor(searchDetailList, index)
                 const caps = searchPage.capabilitiesFor(row)
                 if (tool === 0 && caps.canEnqueue)
                     musicAdapter.enqueue(row)
                 else if (tool === 1 && caps.canFavorite)
                     musicAdapter.setFavorite(row, true)
             }
-            onEnded: searchPage.loadMore(model, 1)
         }
     }
 }

@@ -67,7 +67,7 @@ QVariantMap sectionState(MusicPageModel *model, const QList<PageSectionKindV2> &
     return {};
 }
 
-QVariantMap categorySectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds)
+QVariantMap aggregateSectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds)
 {
     if (!model) return {};
     QString firstId;
@@ -539,21 +539,21 @@ void OriginalUiMusicAdapter::rebuild()
         m_recommendSongs->setPresentationState(sectionState(m_hub->recommendation(), {
             PageSectionKindV2::RecentlyPlayed, PageSectionKindV2::FrequentlyPlayed,
             PageSectionKindV2::HighestRated, PageSectionKindV2::Newest, PageSectionKindV2::Random}));
-        m_categoryItems->setPresentationState(categorySectionState(m_hub->category(), {
+        m_categoryItems->setPresentationState(aggregateSectionState(m_hub->category(), {
             PageSectionKindV2::Genres, PageSectionKindV2::Artists,
             PageSectionKindV2::Albums, PageSectionKindV2::Tracks, PageSectionKindV2::Playlists}));
-        m_categorySongs->setPresentationState(categorySectionState(m_hub->category(), {PageSectionKindV2::Tracks}));
-        m_categoryArtists->setPresentationState(categorySectionState(m_hub->category(), {PageSectionKindV2::Artists}));
+        m_categorySongs->setPresentationState(aggregateSectionState(m_hub->category(), {PageSectionKindV2::Tracks}));
+        m_categoryArtists->setPresentationState(aggregateSectionState(m_hub->category(), {PageSectionKindV2::Artists}));
         // Charts are a presentation classification, not a distinct v2 query/cursor.
-        const auto playlistsState = categorySectionState(m_hub->category(), {PageSectionKindV2::Playlists});
+        const auto playlistsState = aggregateSectionState(m_hub->category(), {PageSectionKindV2::Playlists});
         m_categoryPlaylists->setPresentationState(playlistsState);
         m_categoryCharts->setPresentationState(playlistsState);
-        m_favoriteSongs->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::FavoriteTracks}));
-        m_favoriteLists->setPresentationState(sectionState(m_hub->favorites(), {PageSectionKindV2::Playlists}));
-        m_searchSongs->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
-        m_searchLists->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Playlists}));
-        m_searchAlbums->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Albums}));
-        m_searchLyrics->setPresentationState(sectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
+        m_favoriteSongs->setPresentationState(aggregateSectionState(m_hub->favorites(), {PageSectionKindV2::FavoriteTracks}));
+        m_favoriteLists->setPresentationState(aggregateSectionState(m_hub->favorites(), {PageSectionKindV2::Playlists}));
+        m_searchSongs->setPresentationState(aggregateSectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
+        m_searchLists->setPresentationState(aggregateSectionState(m_hub->searchResults(), {PageSectionKindV2::Playlists}));
+        m_searchAlbums->setPresentationState(aggregateSectionState(m_hub->searchResults(), {PageSectionKindV2::Albums}));
+        m_searchLyrics->setPresentationState(aggregateSectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
     }
     rebuildDirectories();
     emit categoryStatusChanged();

@@ -11,10 +11,12 @@
 class FakeListModel final : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
-    Q_PROPERTY(QString sectionId MEMBER sectionId)
-    Q_PROPERTY(bool hasMore MEMBER hasMore)
-    Q_PROPERTY(bool loadingMore MEMBER loadingMore)
-    Q_PROPERTY(QVariantMap error MEMBER error)
+    Q_PROPERTY(QString sectionId MEMBER sectionId NOTIFY presentationStateChanged)
+    Q_PROPERTY(bool hasMore MEMBER hasMore NOTIFY presentationStateChanged)
+    Q_PROPERTY(bool loadingMore MEMBER loadingMore NOTIFY presentationStateChanged)
+    Q_PROPERTY(QVariantMap error MEMBER error NOTIFY presentationStateChanged)
+    Q_PROPERTY(QStringList paginationSectionIds MEMBER paginationSectionIds NOTIFY presentationStateChanged)
+    Q_PROPERTY(QStringList retrySectionIds MEMBER retrySectionIds NOTIFY presentationStateChanged)
 public:
     explicit FakeListModel(QVariantList rows = {}, QObject *parent = nullptr)
         : QAbstractListModel(parent), m_rows(std::move(rows))
@@ -55,8 +57,11 @@ public:
     bool hasMore = true;
     bool loadingMore = false;
     QVariantMap error;
+    QStringList paginationSectionIds;
+    QStringList retrySectionIds;
 signals:
     void countChanged();
+    void presentationStateChanged();
 private:
     QVariantList m_rows; QHash<int, QByteArray> m_roles;
 };
@@ -99,6 +104,9 @@ public:
         searchListRows.sectionId = QStringLiteral("search-lists");
         searchAlbumRows.sectionId = QStringLiteral("search-albums");
         searchLyricRows.sectionId = QStringLiteral("search-lyrics");
+        songs.sectionId = QStringLiteral("favorite-songs");
+        for (auto *model : {&songs, &lists, &categoryRows, &searchRows, &searchListRows, &searchAlbumRows, &searchLyricRows})
+            model->paginationSectionIds = {model->sectionId};
     }
     QObject *favoriteSongs() { return &songs; }
     QObject *favoriteLists() { return &lists; }
@@ -152,8 +160,15 @@ public:
     }
     Q_INVOKABLE void activatePage(int page) { activated << page; }
     Q_INVOKABLE void search(const QString &text, int tab = 0) { searches << qMakePair(text, tab); }
-    Q_INVOKABLE void loadMore(int page, const QString &section) { more << qMakePair(page, section); }
+    Q_INVOKABLE void loadMore(int page, const QString &section) {
+        more << qMakePair(page, section);
+        if (pagingMutationModel) {
+            pagingMutationModel->paginationSectionIds.clear();
+            emit pagingMutationModel->presentationStateChanged();
+        }
+    }
     Q_INVOKABLE void retry(int page, const QString &section) { retries << qMakePair(page, section); }
+    FakeListModel *pagingMutationModel = nullptr;
     Q_INVOKABLE bool browse(const QVariantMap &value) { browsed << value; return true; }
     Q_INVOKABLE QUuid play(const QVariantMap &value) { played << value; return QUuid::createUuid(); }
     Q_INVOKABLE QUuid enqueue(const QVariantMap &value) { enqueued << value; return QUuid::createUuid(); }
@@ -298,15 +313,19 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(songView, "ended"));
         QCOMPARE(adapter.more.constLast(), qMakePair(2, QStringLiteral("favorite-songs")));
         const qsizetype requestsAfterFirstPage = adapter.more.size();
-        QVERIFY(songView->setProperty("loadingMore", true));
+        adapter.songs.loadingMore = true;
+        adapter.songs.paginationSectionIds.clear();
+        emit adapter.songs.presentationStateChanged();
         QVERIFY(QMetaObject::invokeMethod(songView, "ended"));
         QCOMPARE(adapter.more.size(), requestsAfterFirstPage);
-        QVERIFY(songView->setProperty("loadingMore", false));
-        QVERIFY(songView->setProperty("hasMore", false));
+        adapter.songs.loadingMore = false;
+        adapter.songs.hasMore = false;
+        emit adapter.songs.presentationStateChanged();
         QVERIFY(QMetaObject::invokeMethod(songView, "ended"));
         QCOMPARE(adapter.more.size(), requestsAfterFirstPage);
-        QVERIFY(songView->setProperty("sectionError", QVariantMap{{QStringLiteral("adapter/home"),
-            QVariantMap{{QStringLiteral("messageKey"), QStringLiteral("source.network")}}}}));
+        adapter.songs.error = {{"favorite-songs", QVariantMap{{"failed", true}}}};
+        adapter.songs.retrySectionIds = {"favorite-songs"};
+        emit adapter.songs.presentationStateChanged();
         QObject *retryArea = songView->findChild<QObject *>(QStringLiteral("sectionRetryArea"));
         QVERIFY(retryArea);
         QVERIFY(retryArea->property("enabled").toBool());
@@ -410,11 +429,116 @@ private slots:
         QCOMPARE(context.musicApi.legacyPlaylistRequests, 0);
         QVERIFY(QMetaObject::invokeMethod(albums, "ended"));
         QCOMPARE(adapter.more.constLast(), qMakePair(3, QStringLiteral("search-albums")));
+        adapter.searchAlbumRows.error = {{"search-albums", QVariantMap{{"failed", true}}}};
+        adapter.searchAlbumRows.retrySectionIds = {"search-albums"};
+        emit adapter.searchAlbumRows.presentationStateChanged();
         QVERIFY(QMetaObject::invokeMethod(page.get(), "retryCurrentSection"));
         QCOMPARE(adapter.retries.constLast(), qMakePair(3, QStringLiteral("search-albums")));
         QCOMPARE(context.musicApi.legacySearches, 0);
         QCOMPARE(context.musicApi.legacyPlays, 0);
         QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+    }
+
+    void searchAndFavoriteListsUseAggregateStateEvenWithStaleOrMissingRows()
+    {
+        for (const bool search : {true, false}) {
+            QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
+            auto page = load(engine, search ? "pages/SearchPage.qml" : "pages/FavouritePage.qml", &adapter, &error);
+            QVERIFY2(page, qPrintable(error));
+            QList<FakeListModel *> models = search
+                ? QList<FakeListModel *>{&adapter.searchRows, &adapter.searchListRows, &adapter.searchAlbumRows, &adapter.searchLyricRows}
+                : QList<FakeListModel *>{&adapter.songs, &adapter.lists};
+            const QStringList names = search
+                ? QStringList{"searchSongsList", "searchListsList", "searchAlbumsList", "searchLyricsList"}
+                : QStringList{"favoriteSongsList", "favoritePlaylistsList"};
+            const int pageKind = search ? 3 : 2;
+            for (int i = 0; i < models.size(); ++i) {
+                auto *model = models[i];
+                auto *view = page->findChild<QObject *>(names[i]);
+                QVERIFY2(view, qPrintable(names[i]));
+                auto stale = FakeAdapter::row("Stale last row", "wrong-last-section");
+                stale["hasMore"] = false;
+                model->setRows({stale});
+                model->sectionId = "exhausted-first";
+                model->hasMore = true; model->loadingMore = true;
+                model->paginationSectionIds = {"ready-a", "ready-b"};
+                emit model->presentationStateChanged();
+                QVERIFY(view->property("hasMore").toBool());
+                QVERIFY(!view->property("loadingMore").toBool());
+                QVERIFY(!view->property("useLegacyLoadingState").toBool());
+                const int before = adapter.more.size();
+                adapter.pagingMutationModel = model;
+                QVERIFY(QMetaObject::invokeMethod(view, "ended"));
+                adapter.pagingMutationModel = nullptr;
+                QCOMPARE(adapter.more.size(), before + 2);
+                QCOMPARE(adapter.more.at(before), qMakePair(pageKind, QString("ready-a")));
+                QCOMPARE(adapter.more.at(before + 1), qMakePair(pageKind, QString("ready-b")));
+                model->paginationSectionIds.clear(); emit model->presentationStateChanged();
+                QVERIFY(QMetaObject::invokeMethod(view, "ended"));
+                QCOMPARE(adapter.more.size(), before + 2);
+                model->loadingMore = false;
+                model->error = {{"failed-a", QVariantMap{{"detail", "private diagnostic"}}}};
+                model->retrySectionIds = {"failed-a", "failed-b"};
+                model->setRows({}); emit model->presentationStateChanged();
+                QCOMPARE(view->property("count").toInt(), 0);
+                QCOMPARE(view->property("sectionError").toMap(), QVariantMap({{"failed", true}}));
+                const int retries = adapter.retries.size();
+                QVERIFY(QMetaObject::invokeMethod(view, "retrySection"));
+                QCOMPARE(adapter.retries.size(), retries + 2);
+                QCOMPARE(adapter.retries.at(retries), qMakePair(pageKind, QString("failed-a")));
+                QCOMPARE(adapter.retries.at(retries + 1), qMakePair(pageKind, QString("failed-b")));
+                model->retrySectionIds.clear(); model->loadingMore = true; emit model->presentationStateChanged();
+                QVERIFY(QMetaObject::invokeMethod(view, "retrySection"));
+                QCOMPARE(adapter.retries.size(), retries + 2);
+            }
+            QCOMPARE(context.musicApi.legacyPlays, 0);
+            QCOMPARE(context.musicApi.legacySearches, 0);
+            const int before = adapter.more.size();
+            QVERIFY(page->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+            auto *view = page->findChild<QObject *>(names.first());
+            QVERIFY(view);
+            QVERIFY(QMetaObject::invokeMethod(view, "ended"));
+            QVERIFY(QMetaObject::invokeMethod(view, "clicked", Q_ARG(int, 0)));
+            QVERIFY(QMetaObject::invokeMethod(view, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+            QCOMPARE(adapter.more.size(), before);
+            QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+        }
+    }
+
+    void searchAndFavoriteDetailsUseCategorySectionScope()
+    {
+        for (const bool search : {true, false}) {
+            QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
+            auto page = load(engine, search ? "pages/SearchPage.qml" : "pages/FavouritePage.qml", &adapter, &error);
+            QVERIFY2(page, qPrintable(error));
+            auto *parentList = page->findChild<QObject *>(search ? "searchListsList" : "favoritePlaylistsList");
+            QVERIFY(parentList);
+            QVERIFY(QMetaObject::invokeMethod(parentList, "clicked", Q_ARG(int, 0)));
+            auto *detail = page->findChild<QObject *>(search ? "searchAdapterDetailList" : "favoriteAdapterDetailList");
+            QVERIFY(detail);
+            auto &model = adapter.categoryRows;
+            model.paginationSectionIds = {"detail-a", "detail-b"};
+            emit model.presentationStateChanged();
+            const int before = adapter.more.size();
+            QVERIFY(QMetaObject::invokeMethod(detail, "ended"));
+            QCOMPARE(adapter.more.size(), before + 2);
+            QCOMPARE(adapter.more.at(before), qMakePair(1, QString("detail-a")));
+            QCOMPARE(adapter.more.at(before + 1), qMakePair(1, QString("detail-b")));
+            model.paginationSectionIds.clear(); model.loadingMore = true;
+            emit model.presentationStateChanged();
+            QVERIFY(QMetaObject::invokeMethod(detail, "ended"));
+            QCOMPARE(adapter.more.size(), before + 2);
+            model.loadingMore = false; model.hasMore = false;
+            model.error = {{"detail-failed", QVariantMap{{"detail", "private diagnostic"}}}};
+            model.retrySectionIds = {"detail-failed"};
+            model.setRows({}); emit model.presentationStateChanged();
+            QVERIFY(QMetaObject::invokeMethod(detail, "retrySection"));
+            QCOMPARE(adapter.retries, (QList<QPair<int, QString>>{{1, "detail-failed"}}));
+            QCOMPARE(detail->property("sectionError").toMap(), QVariantMap({{"failed", true}}));
+            QVERIFY(!detail->property("useLegacyLoadingState").toBool());
+            QCOMPARE(context.musicApi.legacyPlaylistRequests, 0);
+            QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+        }
     }
 
     void downloadPageLoadsWithoutCrossPageReferenceErrors()

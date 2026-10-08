@@ -24,14 +24,20 @@ ListView {
     // particular item. Returning an empty string hides that item's button.
     property var toolText0ForRow: null
     property var toolText1ForRow: null
-    property string sectionId: ""
-    property bool hasMore: true
-    property bool loadingMore: false
-    property bool useLegacyLoadingState: true
-    property var sectionError: ({})
-    property var retryAction: null
+    // Opt-in Host source paging. Legacy callers retain their existing defaults.
+    property bool sourcePaging: false
+    property var sourceAdapter: null
+    property int sourcePageKind: -1
+    property string sectionId: sourcePaging ? sourceSectionId() : ""
+    property bool hasMore: sourcePaging ? !!sourceStateValue("hasMore") : true
+    property bool loadingMore: sourcePaging ? !!sourceStateValue("loadingMore")
+        && (!model || model.paginationSectionIds === undefined || model.paginationSectionIds.length === 0) : false
+    property bool useLegacyLoadingState: !sourcePaging
+    property var sectionError: sourcePaging && sourceStateValue("error")
+        && Object.keys(sourceStateValue("error")).length > 0 ? ({failed: true}) : ({})
+    property var retryAction: sourcePaging ? function() { view.requestSourceSections(true) } : null
     property alias menu: menu
-    property bool isEnd: false
+    property bool isEnd: sourcePaging && count > 0 && !hasMore && !loadingMore
     contentWidth: view.width - 16
     synchronousDrag: true
     reuseItems: true
@@ -40,6 +46,30 @@ ListView {
     signal menuClicked(int index,int choice)
     signal toolClicked(int index,int tool)//从右往左2（菜单)，1（喜欢），0（通用）
     signal ended()
+
+    function sourceStateValue(key) {
+        if (!model) return undefined
+        if (model.paginationSectionIds !== undefined || model.count === 0) return model[key]
+        return model.get(model.count - 1)[key]
+    }
+    function sourceSectionId() {
+        if (!model) return ""
+        if (model.paginationSectionIds !== undefined || model.count === 0) return model.sectionId || ""
+        return model.get(model.count - 1).sectionId || model.sectionId || ""
+    }
+    function requestSourceSections(retry) {
+        if (!sourcePaging || !sourceAdapter || !model || sourcePageKind < 0) return
+        const action = retry ? "retry" : "loadMore"
+        if (typeof sourceAdapter[action] !== "function") return
+        const ids = retry ? model.retrySectionIds : model.paginationSectionIds
+        // Snapshot before requests synchronously change model state. An empty
+        // aggregate is terminal, not permission to use the legacy fallback.
+        const targets = ids !== undefined ? Array.from(ids)
+                      : !loadingMore && (retry || hasMore) && sectionId ? [sectionId] : []
+        for (const id of targets)
+            if (id) sourceAdapter[action](sourcePageKind, id)
+    }
+    onEnded: if (sourcePaging) requestSourceSections(false)
 
     function retrySection() {
         if (typeof view.retryAction === "function")

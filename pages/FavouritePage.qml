@@ -19,6 +19,9 @@ Item {
     function modelFor(name) {
         return musicAdapter ? musicAdapter[name] || null : null
     }
+    function rowFor(view, index) {
+        return view && view.model && typeof view.model.get === "function" ? view.model.get(index) : null
+    }
 
     function selectedRows(model) {
         var rows = []
@@ -34,18 +37,10 @@ Item {
                 ? musicAdapter.capabilities(selectedRows(model)) : ({})
     }
 
-    function sectionFor(model) {
-        if (!model) return ""
-        if (model.count > 0)
-            return model.get(model.count - 1).sectionId || ""
-        return model.sectionId || ""
-    }
-
     function retryCurrentSection() {
         if (!musicAdapter || favouriteChildPage.lastIndex > 1) return
-        var model = favouriteChildPage.lastIndex === 1
-                ? modelFor("favoriteLists") : modelFor("favoriteSongs")
-        musicAdapter.retry(2, sectionFor(model))
+        const view = favouriteChildPage.lastIndex === 1 ? lists : songs
+        view.retrySection()
     }
 
     Component.onCompleted: {
@@ -132,21 +127,14 @@ Item {
             toolText0: ""
             toolText1: ""
             toolText0ForRow: function(index) {
-                return favouritePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                return favouritePage.capabilitiesFor(favouritePage.rowFor(songs, index)).canEnqueue ? "\uf095" : ""
             }
             toolText1ForRow: function(index) {
-                return favouritePage.capabilitiesFor(model.get(index)).canUnfavorite ? "\uf0c8" : ""
+                return favouritePage.capabilitiesFor(favouritePage.rowFor(songs, index)).canUnfavorite ? "\uf0c8" : ""
             }
-            sectionId: favouritePage.sectionFor(model)
-            hasMore: model ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : false
-            loadingMore: model ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
-            sectionError: model ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
-            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(2, sectionId) } : null
-
-            onEnded: {
-                if (musicAdapter && sectionId && hasMore && !loadingMore)
-                    musicAdapter.loadMore(2, sectionId)
-            }
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 2
 
             onClicked: (index) => {
                 if (!musicAdapter || !model) return
@@ -195,18 +183,11 @@ Item {
             toolText0: ""
             toolText1: ""
             toolText1ForRow: function(index) {
-                return favouritePage.capabilitiesFor(model.get(index)).canUnfavorite ? "\uf0c8" : ""
+                return favouritePage.capabilitiesFor(favouritePage.rowFor(lists, index)).canUnfavorite ? "\uf0c8" : ""
             }
-            sectionId: favouritePage.sectionFor(model)
-            hasMore: model ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : false
-            loadingMore: model ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
-            sectionError: model ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
-            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(2, sectionId) } : null
-
-            onEnded: {
-                if (musicAdapter && sectionId && hasMore && !loadingMore)
-                    musicAdapter.loadMore(2, sectionId)
-            }
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 2
 
             onClicked: (index) => {
                 if (!musicAdapter || !model) return
@@ -379,6 +360,7 @@ Item {
         }
         QListView {
             objectName: "favoriteAdapterDetailList"
+            id: favoriteDetailList
             x: 24
             y: 184
             width: favoriteAdapterDetailWindow.width - 32
@@ -390,16 +372,14 @@ Item {
             menuModel: []
             toolText0: ""
             toolText1: ""
-            sectionId: favouritePage.sectionFor(model)
-            hasMore: model ? (model.count > 0 ? model.get(model.count - 1).hasMore : model.hasMore) : false
-            loadingMore: model ? (model.count > 0 ? model.get(model.count - 1).loadingMore : model.loadingMore) : false
-            sectionError: model ? (model.count > 0 ? model.get(model.count - 1).error : model.error) : ({})
-            retryAction: musicAdapter ? function(sectionId) { musicAdapter.retry(1, sectionId) } : null
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 1
             toolText0ForRow: function(index) {
-                return favouritePage.capabilitiesFor(model.get(index)).canEnqueue ? "\uf095" : ""
+                return favouritePage.capabilitiesFor(favouritePage.rowFor(favoriteDetailList, index)).canEnqueue ? "\uf095" : ""
             }
             toolText1ForRow: function(index) {
-                return favouritePage.capabilitiesFor(model.get(index)).canFavorite ? "\uf0c8" : ""
+                return favouritePage.capabilitiesFor(favouritePage.rowFor(favoriteDetailList, index)).canFavorite ? "\uf0c8" : ""
             }
             onClicked: (index) => {
                 if (!musicAdapter || !model) return
@@ -414,10 +394,6 @@ Item {
                     musicAdapter.enqueue(row)
                 else if (tool === 1 && favouritePage.capabilitiesFor(row).canFavorite)
                     musicAdapter.setFavorite(row, true)
-            }
-            onEnded: {
-                if (musicAdapter && sectionId && hasMore && !loadingMore)
-                    musicAdapter.loadMore(1, sectionId)
             }
         }
     }
