@@ -55,6 +55,7 @@ public:
     // details bind their own instance. Back history is in-memory, bounded at 32.
     Q_INVOKABLE bool browse(const QVariantMap &item);
     Q_INVOKABLE bool navigateBack();
+    Q_INVOKABLE void resetCategoryNavigation();
     // Asset input is item.ref (five fields); browse/router input is the full item.
     // IDs correlate independent delegates, including deferred invalid-input errors.
     Q_INVOKABLE QUuid loadArtwork(const QVariantMap &media);

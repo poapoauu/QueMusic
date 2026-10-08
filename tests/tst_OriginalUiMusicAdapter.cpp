@@ -676,6 +676,30 @@ private slots:
                  (QVariantMap{{QStringLiteral("playlistId"), QStringLiteral("playlist-42")}}));
     }
 
+    void closingBrowseRestoresCategoryRoot()
+    {
+        RoutingHarness harness;
+        QVERIFY(harness.init());
+        accept(harness.hub->recommendation(), resultWith({
+            routedItem(MediaEntityTypeV2::Playlist, QStringLiteral("playlist-42")),
+            routedItem(MediaEntityTypeV2::Playlist, QStringLiteral("playlist-43"))},
+            QStringLiteral("recommend")));
+        QVERIFY(harness.adapter->browse(harness.adapter->recommendSongs()->get(0)));
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 1);
+        QVERIFY(harness.adapter->browse(harness.adapter->recommendSongs()->get(1)));
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 2);
+        QVERIFY(harness.hub->canNavigateBack());
+        harness.adapter->closeCategoryBrowse();
+        QVERIFY(!harness.hub->canNavigateBack());
+        QVERIFY(harness.hub->categoryContext().isEmpty());
+        QTRY_COMPARE(harness.session()->property("pageRequests").toList().size(), 6);
+        const auto requests = harness.session()->property("pageRequests").toList();
+        for (int i = 2; i < requests.size(); ++i)
+            QVERIFY(requests.at(i).toMap().value(QStringLiteral("filters")).toMap().isEmpty());
+        harness.adapter->closeCategoryBrowse();
+        QCOMPARE(harness.session()->property("pageRequests").toList().size(), 6);
+    }
+
     void favoriteRoutesThePrivateTrackIdentity()
     {
         RoutingHarness harness;

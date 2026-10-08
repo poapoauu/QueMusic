@@ -60,6 +60,7 @@ public:
     Q_INVOKABLE void loadMore(int pageKind, const QString &sectionId);
     Q_INVOKABLE void retry(int pageKind, const QString &sectionId);
     Q_INVOKABLE bool browse(const QVariantMap &presentationItem);
+    Q_INVOKABLE void closeCategoryBrowse();
     Q_INVOKABLE QUuid play(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &presentationItem);
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &presentationItem, bool favorite);

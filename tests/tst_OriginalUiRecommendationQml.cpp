@@ -109,6 +109,7 @@ public:
     Q_INVOKABLE void refreshPage(int page) { refreshedPages << page; }
     Q_INVOKABLE void loadMore(int page, const QString &section) { moreRequests << qMakePair(page, section); }
     Q_INVOKABLE bool browse(const QVariantMap &row) { browsedRows << row; return true; }
+    Q_INVOKABLE void closeCategoryBrowse() { ++closedBrowses; }
     Q_INVOKABLE void play(const QVariantMap &row) { playedRows << row; }
     Q_INVOKABLE void enqueue(const QVariantMap &row) { enqueuedRows << row; }
     Q_INVOKABLE void setFavorite(const QVariantMap &row, bool favorite) { favoriteRows << qMakePair(row, favorite); }
@@ -122,6 +123,7 @@ public:
     }
 
     FakeListModel recommend;
+    int closedBrowses = 0;
     FakeListModel category;
     FakeListModel favorites;
     QList<int> activatedPages;
@@ -575,8 +577,67 @@ private slots:
         QObject *lists = playlist->findChild<QObject *>(QStringLiteral("categoryBrowseList"));
         QVERIFY(lists);
         QCOMPARE(lists->property("count").toInt(), 0);
+        QObject *artists = playlist->findChild<QObject *>(QStringLiteral("categoryArtistCards"));
+        QVERIFY(artists);
+        QCOMPARE(artists->property("count").toInt(), 0);
         QVERIFY(QMetaObject::invokeMethod(lists, "ended"));
         QCOMPARE(context.legacyMusicApi()->newSongsMoreCalls, 0);
+    }
+
+    void artistNavigationBrowsesAlbumsThenPlaysTracks()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto playlist = loadPage(engine, QStringLiteral("pages/PlaylistPage.qml"), &adapter, &error);
+        QVERIFY2(playlist, qPrintable(error));
+        const QVariantMap artist{{"title", "Plugin artist"}, {"cover", QString{}},
+                                  {"entityType", 2}, {"_adapterKey", 81ULL},
+                                  {"canPlay", false}, {"canEnqueue", false}, {"canBrowse", true}};
+        QVariantList rows = mixedCategoryRows();
+        rows.append(artist);
+        adapter.category.setRows(rows);
+        QObject *cards = playlist->findChild<QObject *>(QStringLiteral("categoryArtistCards"));
+        QVERIFY(cards);
+        QTRY_COMPARE(cards->property("count").toInt(), 1);
+        QVariant browsed;
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseArtist",
+                                          Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(browsed.toBool());
+        QCOMPARE(adapter.browsedRows.first(), artist);
+        QObject *detail = playlist->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailWindow"));
+        QVERIFY(detail);
+        QTRY_VERIFY(detail->property("visible").toBool());
+        QObject *list = detail->findChild<QObject *>(QStringLiteral("adapterPlaylistDetailList"));
+        QVERIFY(list);
+        const QVariantMap album{{"title", "Plugin album"}, {"cover", QString{}},
+                                 {"entityType", 1}, {"_adapterKey", 82ULL},
+                                 {"canPlay", false}, {"canEnqueue", false}, {"canBrowse", true}};
+        adapter.category.setRows({album});
+        QTRY_COMPARE(cards->property("count").toInt(), 0);
+        QVERIFY(QMetaObject::invokeMethod(list, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.browsedRows.size(), 2);
+        QCOMPARE(adapter.browsedRows.last(), album);
+        QCOMPARE(adapter.playedRows.size(), 0);
+        const QVariantMap track{{"title", "Plugin track"}, {"cover", QString{}},
+                                 {"entityType", 0}, {"_adapterKey", 83ULL}, {"canPlay", true}};
+        adapter.category.setRows({track});
+        QVERIFY(QMetaObject::invokeMethod(list, "clicked", Q_ARG(int, 0)));
+        QCOMPARE(adapter.playedRows.size(), 1);
+        QCOMPARE(adapter.playedRows.first(), track);
+        QVariantMap unavailable = artist;
+        unavailable["canBrowse"] = false;
+        adapter.category.setRows({unavailable});
+        QVERIFY(QMetaObject::invokeMethod(playlist.get(), "browseArtist",
+                                          Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(!browsed.toBool());
+        QCOMPARE(adapter.browsedRows.size(), 2);
+        QObject *more = playlist->findChild<QObject *>(QStringLiteral("categoryArtistsMoreButton"));
+        QVERIFY(more);
+        QVERIFY(QMetaObject::invokeMethod(more, "clicked"));
+        QVERIFY(adapter.moreRequests.contains(qMakePair(1, QString{})));
+        emit context.windowObject()->exit();
+        QTRY_VERIFY(!detail->property("visible").toBool());
+        QCOMPARE(adapter.closedBrowses, 1);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
     }
 
     void adapterDetailKeepsOnlyEnqueueActionAvailable()

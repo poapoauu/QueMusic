@@ -187,6 +187,10 @@ bool OriginalUiMusicAdapter::browse(const QVariantMap &row)
     return m_hub && !item.isEmpty() && permits(item, QStringLiteral("canBrowse"))
         && m_hub->browse(item);
 }
+void OriginalUiMusicAdapter::closeCategoryBrowse()
+{
+    if (m_hub) m_hub->resetCategoryNavigation();
+}
 
 QUuid OriginalUiMusicAdapter::play(const QVariantMap &row)
 {

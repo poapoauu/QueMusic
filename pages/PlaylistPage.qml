@@ -61,6 +61,18 @@ Item {
         }
         return rows
     }
+    function categoryArtists() {
+        const rows = []
+        if (!musicAdapter || !musicAdapter.categoryItems) return rows
+        for (let i = 0; i < musicAdapter.categoryItems.count; ++i) {
+            const row = musicAdapter.categoryItems.get(i)
+            if (row.entityType === 2) rows.push(row)
+        }
+        return rows
+    }
+    function browseArtist(index) {
+        return browsePresentation(categoryArtists()[index])
+    }
     function browsePresentation(row) {
         if (!musicAdapter) return false
         if (!row || !musicAdapter.capabilities(row).canBrowse || !musicAdapter.browse(row))
@@ -136,7 +148,7 @@ Item {
             blurSource: playlistChildPage.pageList[playlistChildPage.lastIndex]
             onTabChange: (index) => {
                 playlistChildPage.stack(index)
-                if (index === 1 && musicAdapter)
+                if ((index === 1 || index === 3) && musicAdapter)
                     musicAdapter.activatePage(1)
             }
         }
@@ -404,7 +416,6 @@ Item {
                                 onClicked: {
                                     MusicApi.playlistSong.clear();
                                     MusicApi.globalid = model.hash;
-                                    playListSongsWindow.listType = "toplist";
                                     MusicApi.getMusicToplist(1, 20, Number(model.hash), model.source);
                                     playListSongsWindow.opened(model);
                                     window.exitIndex = 2;
@@ -420,78 +431,11 @@ Item {
             visible: false
             width: playlistChildPage.width
             height: playlistChildPage.height
-            property int singerTypeIndex: 0
-            property int singerPage: 1
-            // 歌手类型入口：area 按平台映射（酷狗 / 网易云）
-            property var singerTypes: [
-                { title: "华语", kg: 1, ne: 7 },
-                { title: "欧美", kg: 2, ne: 96 },
-                { title: "日本", kg: 5, ne: 8 },
-                { title: "韩国", kg: 4, ne: 16 },
-                { title: "热门歌手", kg: 3, ne: 0 }
-            ]
-            function loadSingers(typeIndex) {
-                singerTypeIndex = typeIndex;
-                singerPage = 1;
-                MusicApi.singerList.clear();
-                var area = MusicApi.songSource === 0 ? singerTypes[typeIndex].kg : singerTypes[typeIndex].ne;
-                if(area === 0) {
-                    MusicApi.getHotSingers(1, 30, MusicApi.songSource);
-                } else {
-                    MusicApi.getSingerCategory(area, 1, 30, MusicApi.songSource);
-                }
-            }
-            Component.onCompleted: {
-                loadSingers(0);
-            }
-            // 歌手类型标签
-            Flow {
-                id: singerTypeFlow
-                y: 72
-                spacing: 8
-                width: parent.width
-                Repeater {
-                    model: album.singerTypes
-                    delegate: Rectangle {
-                        width: 76
-                        height: 32
-                        radius: 16
-                        color: album.singerTypeIndex === index ? Style.themes.themeColor : Style.themes.primaryColor
-                        border.color: Style.themes.sideColor
-                        border.width: 1
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 16
-                            color: Style.themes.hoverColor
-                            opacity: singerTypeArea.containsMouse ? 1 : 0
-                            z: 1
-                            Behavior on opacity { NumberAnimation { duration: 80 } }
-                        }
-                        Text {
-                            anchors.fill: parent
-                            text: modelData.title
-                            elide: Text.ElideRight
-                            z: 2
-                            font.pixelSize: Style.settings.text
-                            color: album.singerTypeIndex === index ? Style.themes.fullColor : Style.themes.textColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        MouseArea {
-                            id: singerTypeArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: album.loadSingers(index)
-                        }
-                    }
-                }
-            }
-            // 歌手网格（可滚动 + 分页）
             Flickable {
                 id: singerFlick
-                y: 104
+                y: 72
                 width: parent.width
-                height: parent.height - 152
+                height: parent.height - y
                 clip: true
                 contentWidth: width
                 contentHeight: singerColumn.implicitHeight + 24
@@ -504,7 +448,8 @@ Item {
                         width: parent.width
                         spacing: 20
                         Repeater {
-                            model: MusicApi.singerList
+                            objectName: "categoryArtistCards"
+                            model: playlistPage.categoryArtists()
                             delegate: Item {
                                 width: 96
                                 height: 132
@@ -514,13 +459,13 @@ Item {
                                     width: 96
                                     height: 96
                                     radius: 48
-                                    source: model.cover.replace("{size}","128") || "qrc:/QueMusic/resources/app/musicpic.png"
+                                    source: modelData.cover || "qrc:/QueMusic/resources/app/musicpic.png"
                                 }
                                 Text {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     y: 100
                                     width: parent.width
-                                    text: model.title
+                                    text: modelData.title || ""
                                     elide: Text.ElideRight
                                     horizontalAlignment: Text.AlignHCenter
                                     font.pixelSize: Style.settings.text
@@ -530,14 +475,7 @@ Item {
                                     id: singerArea
                                     anchors.fill: parent
                                     hoverEnabled: true
-                                    onClicked: {
-                                        MusicApi.playlistSong.clear();
-                                        MusicApi.globalid = model.hash;
-                                        playListSongsWindow.listType = "singer";
-                                        MusicApi.getSingerSongs(model.hash, 1, 20, MusicApi.songSource);
-                                        playListSongsWindow.opened(model);
-                                        window.exitIndex = 2;
-                                    }
+                                    onClicked: playlistPage.browseArtist(index)
                                 }
                             }
                         }
@@ -546,28 +484,15 @@ Item {
                         width: parent.width
                         height: 60
                         QButton {
+                            objectName: "categoryArtistsMoreButton"
                             anchors.centerIn: parent
                             height: 40
                             width: 120
                             radius: 20
                             iconCharacter: "\uf0f8"
                             text: "更多"
-                            onClicked: {
-                                if(MusicApi.loadState) return;
-                                if(MusicApi.singerList.count % 30 !== 0) {
-                                    mainWarn.tiped("没有更多了",0);
-                                    return;
-                                }
-                                album.singerPage += 1;
-                                var area = MusicApi.songSource === 0
-                                    ? album.singerTypes[album.singerTypeIndex].kg
-                                    : album.singerTypes[album.singerTypeIndex].ne;
-                                if(area === 0) {
-                                    MusicApi.getHotSingers(album.singerPage, 30, MusicApi.songSource);
-                                } else {
-                                    MusicApi.getSingerCategory(area, album.singerPage, 30, MusicApi.songSource);
-                                }
-                            }
+                            enabled: musicAdapter !== null
+                            onClicked: playlistPage.loadMoreCategory()
                         }
                     }
                 }
@@ -575,13 +500,12 @@ Item {
         }
     }
 
-    // 歌单/榜单/歌手歌曲共用窗口
+    // 尚未迁移的旧榜单详情
     PlayListWindow {
         id: playListSongsWindow
         objectName: "playlistDetailWindow"
         mainTarget: playlistChildPage
         winIndex: 2
-        property string listType: "playlist"   // playlist 歌单 / singer 歌手 / toplist 榜单
         content: Item {
             QListView {
                 id: playListsView
@@ -638,22 +562,10 @@ Item {
                             if(MusicApi.loadState) return;
                             var id = MusicApi.globalid;
                             var page = MusicApi.playlistSong.count / 20 + 1;
-                            if(playListSongsWindow.listType === "singer") {
-                                if(MusicApi.playlistSong.count % 20 === 0)
-                                    MusicApi.getSingerSongs(id, page, 20, MusicApi.songSource);
-                                else
-                                    mainWarn.tiped("没有更多了",0);
-                            } else if(playListSongsWindow.listType === "toplist") {
-                                if(MusicApi.playlistSong.count % 20 === 0)
-                                    MusicApi.getMusicToplist(page, 20, id, MusicApi.songSource);
-                                else
-                                    mainWarn.tiped("没有更多了",0);
-                            } else {
-                                if(MusicApi.playlistSong.count % 20 === 0)
-                                    MusicApi.getPlaylistSongs(id, page, 20, MusicApi.songSource);
-                                else
-                                    mainWarn.tiped("没有更多了",0);
-                            }
+                            if(MusicApi.playlistSong.count % 20 === 0)
+                                MusicApi.getMusicToplist(page, 20, id, MusicApi.songSource);
+                            else
+                                mainWarn.tiped("没有更多了",0);
                         }
                     }
                 }
@@ -667,6 +579,11 @@ Item {
         mainTarget: playlistChildPage
         winIndex: 2
         haveControl: false
+        onVisibleChanged: {
+            if (!visible && musicAdapter
+                    && typeof musicAdapter.closeCategoryBrowse === "function")
+                musicAdapter.closeCategoryBrowse()
+        }
         content: QListView {
             objectName: "adapterPlaylistDetailList"
             x: 24
@@ -686,8 +603,11 @@ Item {
             onClicked: (index) => {
                 if (!musicAdapter) return
                 const row = model.get(index)
-                if (musicAdapter.capabilities(row).canPlay)
+                const caps = musicAdapter.capabilities(row)
+                if (caps.canPlay)
                     musicAdapter.play(row)
+                else if (caps.canBrowse)
+                    playlistPage.browsePresentation(row)
             }
             onToolClicked: (index, tool) => {
                 if (!musicAdapter || tool !== 0) return

@@ -503,6 +503,14 @@ bool MusicHub::navigateBack()
     d->stack.removeLast(); d->invalidate(1, true);
     emit categoryContextChanged(); d->refresh(1); return true;
 }
+void MusicHub::resetCategoryNavigation()
+{
+    if (d->stack.isEmpty()) return;
+    d->stack.clear();
+    d->invalidate(1, true);
+    emit categoryContextChanged();
+    d->refresh(1);
+}
 QUuid MusicHub::loadArtwork(const QVariantMap &media) { return d->asset(media, false); }
 QUuid MusicHub::loadLyrics(const QVariantMap &media) { return d->asset(media, true); }
 void MusicHub::cancelAsset(const QUuid &id) { d->assetRequests.remove(id); d->assets->cancel(id); }
