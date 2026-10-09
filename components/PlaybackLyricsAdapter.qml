@@ -32,6 +32,27 @@ QtObject {
     readonly property bool playing: sourceMode ? !!(sourceActive && controls && controls.playing) : legacyPlaying
     readonly property bool active: sourceMode ? sourceActive : legacyActive
     readonly property bool seekable: sourceMode ? !!(sourceActive && controls && controls.seekable) : legacyActive
+    readonly property var favorite: sourceMode && sourceActive && musicAdapter ? musicAdapter.currentFavorite || {} : ({})
+    readonly property bool favoriteEnabled: !!(sourceMode && sourceActive && favorite.token && !favorite.pending
+                                               && (favorite.canFavorite || favorite.canUnfavorite))
+
+    // Return a choice request, never infer a missing read-state as "not favorite".
+    function toggleFavorite() {
+        if (!favoriteEnabled) return "disabled";
+        if (favorite.state === "favorite" && favorite.canUnfavorite)
+            return setFavorite(false, favorite.token) ? "submitted" : "disabled";
+        if (favorite.state === "notFavorite" && favorite.canFavorite)
+            return setFavorite(true, favorite.token) ? "submitted" : "disabled";
+        return "choose";
+    }
+
+    function setFavorite(value, token) {
+        if (!favoriteEnabled || typeof value !== "boolean" || !token || token !== favorite.token
+                || !musicAdapter || typeof musicAdapter.setCurrentFavorite !== "function"
+                || !(value ? favorite.canFavorite : favorite.canUnfavorite)) return false;
+        musicAdapter.setCurrentFavorite(value, token);
+        return true;
+    }
 
     function togglePlayback() {
         if (sourceMode) {

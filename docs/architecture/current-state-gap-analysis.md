@@ -291,7 +291,7 @@ Home 每日推荐随后接入五类标准推荐分区聚合及共享 `sourcePagi
 
 桌面播放器随后移除直接 mainMedia 读写，播放/暂停、时间、可跳转状态与进度统一经过 Host 展示/控制桥接；底部播放器时间与进度复用同一桥接。Source 停播或控制 Adapter 缺失时不启动旧播放器；上一首/下一首/随机动作也不切回旧队列，用户可显式从队列选择 Source 恢复。Source 模式倍速仍作用于 Core；真正启动旧平台播放才切回兼容模式。收藏、下载、Windows SMTC、频谱及其他平台专用信息尚未完整迁移，不能宣称播放器已完全统一。
 
-当前播放收藏的 Host 契约已增量接入：Coordinator 在播放/权限事件中缓存经过 Plugin/Server/Account/Media 交集及 Provider 检查的收藏权限，非 QML 的 `currentActionItem()` 提供当前队列项动作快照。Adapter 的 `currentFavorite` 只公开 canFavorite/canUnfavorite/state/pending/failed，`setCurrentFavorite()` 沿用 Router 复核，按请求 ID/generation/完整媒体身份隔离结果并去重重入点击。初始状态 unknown，只有插件返回 bool 才标记收藏/未收藏；不从旧收藏数据库或历史记录推断。原按钮将在下一切片接入，故此处不计为收藏 UI 已完成。Source SDK v2/Plugin UI API ABI 不变；新增 Host C++ API 需与展示层同步构建。主程序及四个相关套件通过。
+当前播放收藏的 Host 契约已增量接入：Coordinator 在播放/权限事件中缓存经过 Plugin/Server/Account/Media 交集及 Provider 检查的收藏权限，非 QML 的 `currentActionItem()` 提供当前队列项动作快照。Adapter 的 `currentFavorite` 只公开 canFavorite/canUnfavorite/state/pending/failed 和不含音源身份的播放 token，`setCurrentFavorite()` 沿用 Router 复核，按请求 ID/generation/完整媒体身份隔离结果并去重重入点击。初始状态 unknown，只有插件返回 bool 才标记最后确认收藏/未收藏；不从旧收藏数据库或历史记录推断。原按钮已接入：已知状态单击切换，未知状态用原 QMenu 显式选择操作，无权限/pending/停播/缺 Adapter 禁用；菜单保存 token，切歌后关闭且旧动作拒绝。legacy 数据库只在显式兼容模式使用。SDK 仍没有统一读取收藏状态的 Provider，不能把最后确认结果视为跨重播或外部修改后的权威读状态。Source SDK v2/Plugin UI API ABI 不变；新增 Host C++ API 需与展示层同步构建。
 
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 

@@ -1,6 +1,8 @@
 #include <QFile>
 #include <QGuiApplication>
+#include <QColor>
 #include <QTest>
+#include <QUuid>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
 
@@ -95,6 +97,8 @@ private slots:
     void mainWiringKeepsSecurePlaybackBelowTheOriginalUi();
     void sourceLyricsNeverFallBackToLegacyDataOrClock();
     void sourceTransportNeverTouchesLegacyPlayer();
+    void currentFavoriteRequiresCapabilitiesAndTheMenuPlaybackToken();
+    void actualFavoriteButtonShowsChoicesAndRejectsAStaleMenu();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -102,10 +106,19 @@ class LyricsAdapterDouble final : public QObject {
     Q_PROPERTY(QVariantList currentLyrics MEMBER lines NOTIFY changed)
     Q_PROPERTY(QString currentLyricsState MEMBER state NOTIFY changed)
     Q_PROPERTY(QUrl currentCover MEMBER cover NOTIFY changed)
+    Q_PROPERTY(QVariantMap currentFavorite MEMBER favorite NOTIFY changed)
 public:
     QVariantList lines;
     QString state = "empty";
     QUrl cover;
+    QVariantMap favorite;
+    int favoriteCalls = 0;
+    bool lastFavorite = false;
+    QString lastFavoriteToken;
+    Q_INVOKABLE QUuid setCurrentFavorite(bool value, const QString &token) {
+        ++favoriteCalls; lastFavorite = value; lastFavoriteToken = token;
+        favorite.insert("pending", true); emit changed(); return QUuid::createUuid();
+    }
     int retries = 0;
     Q_INVOKABLE void retryCurrentLyrics() { ++retries; state = "loading"; emit changed(); }
 signals:
@@ -194,6 +207,117 @@ void OriginalUiPlaybackQmlTest::sourceTransportNeverTouchesLegacyPlayer()
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(legacy.pauseCalls, 1);
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 500))); QCOMPARE(legacy.position, 500);
     QCOMPARE(controls.sought, 640);
+}
+
+void OriginalUiPlaybackQmlTest::currentFavoriteRequiresCapabilitiesAndTheMenuPlaybackToken()
+{
+    QQmlEngine engine; LyricsAdapterDouble music;
+    music.favorite = {{"canFavorite", true}, {"canUnfavorite", true}, {"state", "unknown"},
+                      {"pending", false}, {"failed", false}, {"token", "current-A"}};
+    QQmlComponent component(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> adapter(component.createWithInitialProperties({
+        {"musicAdapter", QVariant::fromValue<QObject *>(&music)}, {"sourceMode", true}, {"sourceActive", true}}));
+    QVERIFY2(adapter, qPrintable(component.errorString()));
+    QVariant result;
+    QVERIFY(adapter->property("favoriteEnabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "toggleFavorite", Q_RETURN_ARG(QVariant, result)));
+    QCOMPARE(result.toString(), QString("choose")); QCOMPARE(music.favoriteCalls, 0);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "setFavorite", Q_RETURN_ARG(QVariant, result),
+        Q_ARG(QVariant, true), Q_ARG(QVariant, "current-A")));
+    QVERIFY(result.toBool()); QCOMPARE(music.favoriteCalls, 1); QVERIFY(music.lastFavorite);
+    QCOMPARE(music.lastFavoriteToken, QString("current-A")); QVERIFY(!adapter->property("favoriteEnabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "setFavorite", Q_ARG(QVariant, false), Q_ARG(QVariant, "current-A")));
+    QCOMPARE(music.favoriteCalls, 1); // Pending double-click rejected.
+    music.favorite["pending"] = false; music.favorite["state"] = "favorite"; emit music.changed();
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "toggleFavorite", Q_RETURN_ARG(QVariant, result)));
+    QCOMPARE(result.toString(), QString("submitted")); QCOMPARE(music.favoriteCalls, 2); QVERIFY(!music.lastFavorite);
+    music.favorite["pending"] = false; music.favorite["state"] = "unknown"; music.favorite["token"] = "current-B"; emit music.changed();
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "setFavorite", Q_ARG(QVariant, true), Q_ARG(QVariant, "current-A")));
+    QCOMPARE(music.favoriteCalls, 2); // Open menu from the old occurrence is no longer valid.
+    music.favorite["canFavorite"] = false; emit music.changed();
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "setFavorite", Q_ARG(QVariant, true), Q_ARG(QVariant, "current-B")));
+    QCOMPARE(music.favoriteCalls, 2);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "setFavorite", Q_ARG(QVariant, false), Q_ARG(QVariant, "current-B")));
+    QCOMPARE(music.favoriteCalls, 3);
+    music.favorite["pending"] = false; music.favorite["canUnfavorite"] = false; emit music.changed();
+    QVERIFY(!adapter->property("favoriteEnabled").toBool());
+    music.favorite["canFavorite"] = true; emit music.changed();
+    QVERIFY(adapter->setProperty("sourceActive", false));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "setFavorite", Q_ARG(QVariant, true), Q_ARG(QVariant, "current-B")));
+    QCOMPARE(music.favoriteCalls, 3);
+    QVERIFY(adapter->setProperty("sourceActive", true));
+    QVERIFY(adapter->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(!adapter->property("favoriteEnabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "toggleFavorite", Q_RETURN_ARG(QVariant, result)));
+    QCOMPARE(result.toString(), QString("disabled"));
+    QVERIFY(adapter->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&music)));
+    QVERIFY(adapter->setProperty("sourceMode", false));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "setFavorite", Q_ARG(QVariant, true), Q_ARG(QVariant, "current-B")));
+    QCOMPARE(music.favoriteCalls, 3);
+}
+
+void OriginalUiPlaybackQmlTest::actualFavoriteButtonShowsChoicesAndRejectsAStaleMenu()
+{
+    QQmlEngine engine; LyricsAdapterDouble music;
+    music.favorite = {{"canFavorite", true}, {"canUnfavorite", true}, {"state", "unknown"},
+                      {"pending", false}, {"failed", false}, {"token", "A"}};
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"musicAdapter", QVariant::fromValue<QObject *>(&music)}, {"sourceMode", true}, {"sourceActive", true}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.lastIndexOf("SButton {", source.indexOf("id: likeButton")); QVERIFY(start >= 0);
+    int depth = 0, end = start;
+    for (; end < source.size(); ++end) {
+        if (source[end] == '{') ++depth;
+        else if (source[end] == '}' && --depth == 0) { ++end; break; }
+    }
+    // Run the actual button handlers/bindings with lightweight visual controls;
+    // this is not a screenshot or a proof of the real popup rendering.
+    const auto qml = QStringLiteral(R"(import QtQuick
+Item {
+    id: musicControlMin
+    property var presentation
+    property bool legacyFavorite: false
+    property var playListModel: ({playListIndex: -1, count: 0})
+    property var styleFixture: ({themes: {themeColor: "#00ff00", textColor: "#222222", hoverColor: "#cccccc"}})
+    property QtObject window: QtObject { property bool sourceLyricsMode: true; property var lyricsAdapter: musicControlMin.presentation }
+    component SButton: Item { signal clicked(); property string iconCharacter; property real radius; property color buttonColor;
+        property color hoverColor; property color iconColor; property bool shadowEnabled; property bool hovered: false }
+    component QTip: Item { property string text }
+    component QMenu: Item { property list<string> model: []; property bool masked; property var blurSource;
+        property int popupCalls: 0; property int closeCalls: 0; signal clicked(int index);
+        function popup() { ++popupCalls } function close() { ++closeCalls } }
+%1
+})").arg(source.mid(start, end - start));
+    auto fixture = qml;
+    fixture.replace("Style.themes", "musicControlMin.styleFixture.themes");
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/favorite-button-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *button = root->findChild<QObject *>("currentPlaybackFavoriteButton"); QVERIFY(button);
+    auto *menu = root->findChild<QObject *>("currentPlaybackFavoriteMenu"); QVERIFY(menu);
+    QVERIFY(button->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked")); QCOMPARE(music.favoriteCalls, 0);
+    QCOMPARE(menu->property("model").toStringList(), QStringList({"收藏", "取消收藏"}));
+    QCOMPARE(menu->property("playbackToken").toString(), QString("A"));
+    music.favorite["token"] = "B"; emit music.changed();
+    QVERIFY(menu->property("closeCalls").toInt() > 0);
+    QVERIFY(QMetaObject::invokeMethod(menu, "clicked", Q_ARG(int, 0))); QCOMPARE(music.favoriteCalls, 0);
+    music.favorite["canFavorite"] = false; emit music.changed();
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QCOMPARE(menu->property("model").toStringList(), QStringList({"取消收藏"}));
+    QVERIFY(QMetaObject::invokeMethod(menu, "clicked", Q_ARG(int, 0)));
+    QCOMPARE(music.favoriteCalls, 1); QVERIFY(!music.lastFavorite); QCOMPARE(music.lastFavoriteToken, QString("B"));
+    QVERIFY(!button->property("enabled").toBool());
+    music.favorite["pending"] = false; music.favorite["state"] = "favorite"; emit music.changed();
+    QCOMPARE(button->property("iconColor").value<QColor>(), QColor("#00ff00"));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked")); QCOMPARE(music.favoriteCalls, 2);
+    QVERIFY(!music.lastFavorite);
+    QVERIFY(bridge->setProperty("sourceActive", false)); QVERIFY(!button->property("enabled").toBool());
 }
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,
@@ -322,6 +446,10 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     const auto controlsText = QString::fromUtf8(controlsFile.readAll());
     QCOMPARE(controlsText.count(QStringLiteral("if (window.sourceLyricsMode && !window.securePlaybackCurrent)")), 3);
     QVERIFY(controlsText.contains(QStringLiteral("onMoved: window.lyricsAdapter.seek(value)")));
+    QVERIFY(controlsText.contains(QStringLiteral("enabled: window.sourceLyricsMode ? window.lyricsAdapter.favoriteEnabled")));
+    QVERIFY(controlsText.contains(QStringLiteral("window.lyricsAdapter.setFavorite(values[index], playbackToken)")));
+    QVERIFY(controlsText.contains(QStringLiteral("sourceFavoriteMenu.playbackToken = info.token")));
+    QVERIFY(!controlsText.contains(QStringLiteral("likeButton.iconColor =")));
 
     for (const QString &path : {QStringLiteral("/layout/PlayerMaxCenter.qml"), QStringLiteral("/components/DesktopLyrics.qml")}) {
         QFile lyricsFile(QStringLiteral(QUEMUSIC_SOURCE_DIR) + path);

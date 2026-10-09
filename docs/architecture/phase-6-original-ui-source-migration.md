@@ -160,6 +160,16 @@ Adapter 新增 `currentFavorite` 和 `setCurrentFavorite()`，展示只含 canFa
 
 主程序构建与四个相关套件通过：OriginalUiMusicAdapter、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration。新增验收覆盖页面模型替换后仍路由当前队列身份、初始未知/确认后状态、pending 去重与重入、失败保持状态、多实例同 ID、切歌与重播结果隔离、Hub 移除、权限撤销/恢复且不停止播放、实例禁用、观察者停播前拒绝分发，以及恢复队列不提升权限。真实服务器收藏和按钮视觉留待后续验收。
 
+### 原播放器收藏按钮接入
+
+保留原按钮、主题色和 QMenu，Source 模式由 Host 私有展示桥接读取 currentFavorite 与权限。状态已确认时单击执行相反动作；初始未知或只有单向权限时提供明确的“收藏/取消收藏”菜单，不把 unknown 当作未收藏。pending、无权限、停播和缺 Adapter 禁用 Source 收藏，不访问旧数据库或当前旧队列。失败仅显示通用重试提示；图标只反映当前 generation 的最后确认结果，不乐观更新。
+
+currentFavorite 新增不含 source/account/ref 的 opaque token；setCurrentFavorite 可携带 expectedToken。菜单保留打开时的 token，切歌、停播、Source/legacy 模式改变时关闭旧菜单；QML 与 Host 两端都验证令牌，防止将旧菜单操作应用到另一首歌或同 occurrence 的新播放代次。旧无 token 的 Host 即时调用仍兼容，但原 UI 一律传 token。Source SDK v2/Plugin UI API ABI 不变，Host 方法签名和展示状态需同步构建。
+
+兼容模式保留旧收藏行为，旧图标改为独立 legacyFavorite 状态，不再命令式覆盖 Source 图标绑定；越界或没有旧队列项时拒绝。新增实际展示桥接和从 PlayerControl 提取的原按钮 QML 逻辑测试（轻量视觉控件夹具）覆盖未知菜单、不同行为权限、确认后单击/主题色、pending 去重、停播/缺 Adapter/legacy 隔离、旧菜单 token 拒绝与关闭；Host 回归增加多实例切换/重播后的 stale token 拒绝。该夹具不证明真实 QMenu 布局/鼠标视觉，真实服务器收藏、外部状态读取与手工视觉仍待验收。
+
+收藏按钮切片主程序构建与八个联合回归套件通过：OriginalUiMusicAdapter、OriginalUiPlaybackQml、OriginalUiActionsQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration、MusicHub。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

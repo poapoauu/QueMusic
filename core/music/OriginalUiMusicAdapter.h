@@ -53,7 +53,7 @@ public:
     QString currentLyricsState() const;
     QUrl currentCover() const;
     QVariantMap currentFavorite() const;
-    Q_INVOKABLE QUuid setCurrentFavorite(bool favorite);
+    Q_INVOKABLE QUuid setCurrentFavorite(bool favorite, const QString &expectedToken = {});
     Q_INVOKABLE void retryCurrentLyrics();
 
     OnlineListModel *recommendSongs() const;

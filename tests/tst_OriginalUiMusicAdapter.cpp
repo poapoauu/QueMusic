@@ -317,7 +317,7 @@ private slots:
         QVERIFY(h.adapter->currentFavorite().value("canFavorite").toBool());
         QVERIFY(h.adapter->currentFavorite().value("canUnfavorite").toBool());
         QCOMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
-        QCOMPARE(h.adapter->currentFavorite().keys(), QStringList({"canFavorite", "canUnfavorite", "failed", "pending", "state"}));
+        QCOMPARE(h.adapter->currentFavorite().keys(), QStringList({"canFavorite", "canUnfavorite", "failed", "pending", "state", "token"}));
         QCOMPARE(h.playback->metaObject()->indexOfMethod("currentActionItem()"), -1);
         QVERIFY(!h.playback->currentItem().contains("availableActions"));
         // Presentation page replacement must not discard current queue-owned identity.
@@ -360,7 +360,10 @@ private slots:
         QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
         QVERIFY(!h.adapter->setCurrentFavorite(true).isNull());
         const auto providerId = home->property("favoriteRequests").toList().last().toMap().value("id").toUuid();
+        const auto oldToken = h.adapter->currentFavorite().value("token").toString();
         QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(1)).isNull()); QTRY_COMPARE(h.sink.plays, 2);
+        QVERIFY(h.adapter->setCurrentFavorite(true, oldToken).isNull());
+        QVERIFY(office->property("favoriteRequests").toList().isEmpty());
         emit home->actionCompleted(providerId, {SourceActionV2::Favorite, a.ref, {{"favorite", true}}});
         QTest::qWait(20);
         QCOMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
@@ -369,7 +372,9 @@ private slots:
         QTRY_COMPARE(h.adapter->currentFavorite().value("state").toString(), QString("favorite"));
         QCOMPARE(office->property("favoriteRef").toMap(), mediaRefV2ToVariantMap(b.ref));
         const auto generation = h.playback->currentGeneration();
+        const auto officeToken = h.adapter->currentFavorite().value("token").toString();
         QVERIFY(!h.playback->playQueueEntry(1).isNull());
+        QVERIFY(h.adapter->setCurrentFavorite(false, officeToken).isNull());
         QVERIFY(h.playback->currentGeneration() != generation);
         QTRY_COMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
         h.hub.reset(); QVERIFY(!h.adapter->currentFavorite().value("canFavorite").toBool());

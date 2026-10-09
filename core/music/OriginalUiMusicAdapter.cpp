@@ -212,7 +212,8 @@ QVariantMap OriginalUiMusicAdapter::currentFavorite() const
     return {{"canFavorite", !item.isEmpty() && permits(item, QStringLiteral("canFavorite"))},
             {"canUnfavorite", !item.isEmpty() && permits(item, QStringLiteral("canUnfavorite"))},
             {"state", same ? m_favoriteState : QStringLiteral("unknown")},
-            {"pending", same && !m_favoriteRequest.isNull()}, {"failed", same && m_favoriteFailed}};
+            {"pending", same && !m_favoriteRequest.isNull()}, {"failed", same && m_favoriteFailed},
+            {"token", !item.isEmpty() ? m_playback->currentGeneration().toString(QUuid::WithoutBraces) : QString{}}};
 }
 void OriginalUiMusicAdapter::syncCurrentFavorite(bool notify)
 {
@@ -231,8 +232,10 @@ bool OriginalUiMusicAdapter::favoriteRequestIsCurrent(const QUuid &id) const
         && m_playback->currentGeneration() == m_favoriteGeneration
         && m_playback->currentActionItem().value("ref").toMap() == m_favoriteMedia;
 }
-QUuid OriginalUiMusicAdapter::setCurrentFavorite(bool favorite)
+QUuid OriginalUiMusicAdapter::setCurrentFavorite(bool favorite, const QString &expectedToken)
 {
+    if (!expectedToken.isEmpty() && (!m_playback
+        || expectedToken != m_playback->currentGeneration().toString(QUuid::WithoutBraces))) return {};
     const QPointer<OriginalUiMusicAdapter> guard(this);
     syncCurrentFavorite(false);
     if (!guard || !m_hub || !m_playback || !m_favoriteRequest.isNull()) return {};

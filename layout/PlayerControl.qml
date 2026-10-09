@@ -16,6 +16,15 @@ Rectangle {
     property int musicInfoX: 100
     property int cycleIndex: Options.playSettings.cycleIndex
     property int playerRateIndex: 2
+    property bool legacyFavorite: false
+    function syncLegacyFavorite() {
+        if (window.sourceLyricsMode) return;
+        const index = playListModel.playListIndex;
+        if (index < 0 || index >= playListModel.count) { legacyFavorite = false; return; }
+        const row = playListModel.get(index);
+        legacyFavorite = !!(row && row.path && favoritesSong.isFavorite(row.path, "song"));
+    }
+    Component.onCompleted: syncLegacyFavorite()
 
     // 播放顺序持久化（跨平台：QSettings → 系统配置目录）
     onCycleIndexChanged: {
@@ -36,14 +45,12 @@ Rectangle {
     Connections {
         target: playListModel
         function onPlayListIndexChanged() {
-            if (musicControlMin.securePlaybackActive)
-                return;
-            if(favoritesSong.isFavorite(playListModel.get(playListModel.playListIndex).path, "song")) {
-                likeButton.iconColor = Style.themes.themeColor;
-            } else {
-                likeButton.iconColor = Style.themes.textColor;
-            }
+            musicControlMin.syncLegacyFavorite();
         }
+    }
+    Connections {
+        target: window
+        function onSourceLyricsModeChanged() { sourceFavoriteMenu.close(); musicControlMin.syncLegacyFavorite(); }
     }
 
     Rectangle {
@@ -262,6 +269,9 @@ Rectangle {
         }
         SButton {
             id: likeButton
+            objectName: "currentPlaybackFavoriteButton"
+            enabled: window.sourceLyricsMode ? window.lyricsAdapter.favoriteEnabled
+                                            : (playListModel.playListIndex >= 0 && playListModel.playListIndex < playListModel.count)
             x: 132
             y: 5
             iconCharacter: "\uf0c8"
@@ -270,27 +280,61 @@ Rectangle {
             radius: 40
             buttonColor: "transparent"
             hoverColor: Style.themes.hoverColor
-            iconColor: Style.themes.textColor
+            iconColor: (window.sourceLyricsMode ? window.lyricsAdapter.favorite.state === "favorite" : musicControlMin.legacyFavorite)
+                       ? Style.themes.themeColor : Style.themes.textColor
             shadowEnabled: false
             onClicked: {
-                if (musicControlMin.securePlaybackActive)
+                if (window.sourceLyricsMode) {
+                    if (window.lyricsAdapter.toggleFavorite() === "choose") {
+                        const info = window.lyricsAdapter.favorite;
+                        let labels = [], values = [];
+                        if (info.canFavorite) { labels.push("收藏"); values.push(true); }
+                        if (info.canUnfavorite) { labels.push("取消收藏"); values.push(false); }
+                        sourceFavoriteMenu.playbackToken = info.token;
+                        sourceFavoriteMenu.values = values;
+                        sourceFavoriteMenu.model = labels;
+                        sourceFavoriteMenu.popup();
+                    }
                     return;
+                }
+                if (playListModel.playListIndex < 0 || playListModel.playListIndex >= playListModel.count) return;
                 if(playListModel.get(playListModel.playListIndex).source !== -1) {
-                    console.log("收藏的hash/id:",playListModel.get(playListModel.playListIndex).path);
                     if (favoritesSong.isFavorite(playListModel.get(playListModel.playListIndex).path, "song")) {
                         favoritesSong.removeFavorite(playListModel.get(playListModel.playListIndex).path, "song");
                         mainWarn.tiped("取消收藏",0);
-                        iconColor = Style.themes.textColor;
+                        musicControlMin.legacyFavorite = false;
                     } else {
                         favoritesSong.addFavorite(playListModel.get(playListModel.playListIndex).path, window.musicTitle, window.musicArtist, mainMedia.urlStr, playListModel.get(playListModel.playListIndex).source, Math.floor(mainMedia.duration / 1000), "song");
                         mainWarn.tiped("成功收藏",1);
-                        iconColor = Style.themes.themeColor;
+                        musicControlMin.legacyFavorite = true;
                     }
                 }
             }
             QTip {
                 visible: parent.hovered
-                text: "收藏"
+                text: !window.sourceLyricsMode ? "收藏" : window.lyricsAdapter.favorite.pending ? "正在处理收藏"
+                      : window.lyricsAdapter.favorite.failed ? "收藏操作失败，点击重试"
+                      : window.lyricsAdapter.favorite.state === "favorite" ? "取消收藏"
+                      : window.lyricsAdapter.favorite.state === "notFavorite" ? "收藏" : "收藏操作"
+            }
+            QMenu {
+                id: sourceFavoriteMenu
+                objectName: "currentPlaybackFavoriteMenu"
+                property string playbackToken: ""
+                property var values: []
+                masked: true
+                blurSource: null
+                onClicked: (index) => {
+                    if (index >= 0 && index < values.length)
+                        window.lyricsAdapter.setFavorite(values[index], playbackToken);
+                }
+                Connections {
+                    target: window.lyricsAdapter
+                    function onFavoriteChanged() {
+                        if (sourceFavoriteMenu.playbackToken && sourceFavoriteMenu.playbackToken !== window.lyricsAdapter.favorite.token)
+                            sourceFavoriteMenu.close();
+                    }
+                }
             }
         }
         SButton {
