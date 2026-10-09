@@ -317,6 +317,21 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 主程序构建及前述 9 项联合回归通过；实际生产处理器测试覆盖成功、失败/异常/空结果、捕获拒绝、重复提交、源往返、同源重新打开、状态变化及失败后重试。写盘和抓图为可控测试替身，尚需真实 macOS 权限、窗口/GPU 捕获及图片内容验收。
 - 本切片关闭上一切片的未检查写入结果差距，补充已识别的视图变化边界；不据此宣称全部图形生命周期或 Phase 6 验收完成。SDK v2 / Source 插件 ABI / Plugin UI API 未改，后续进行全量构建/测试核验并继续其余页面迁移。
 
+### 全量回归检查点（2026-10-09）
+
+基于代码提交 `23b3315`，现有 macOS / Qt 6.11.1 `build-phase3` 的全目标增量构建成功，全部 71 项 CTest 通过（141.85 秒）。执行命令：
+
+```sh
+cmake --build build-phase3 -j 6
+ctest --test-dir build-phase3 --output-on-failure
+```
+
+覆盖独立 Plugin UI 导入/加载与生命周期、SDK v2 契约、Settings Schema、Plugin/SourceInstance 注册、Capability/Action Router、Core/Coordinator、频谱、原 UI、队列历史、Local 索引/插件/目录迁移以及 Navidrome。macOS 本地插件包、增量包同步和移动后 Local bundle 测试也通过。测试后工作树保持干净。
+
+这是现有构建目录的全目标增量验证，不是从零构建、跨 OS/编译器 ABI 矩阵、真实 Navidrome 服务、物理播放或原生视觉验收；封面导出结果测试仍为受控替身，真实图片内容/权限/GPU 捕获需手工验证。
+
+下一开发切片回到首页剩余私人漫游/雷达与热门歌单：先对照现有 v2 的通用页面/动作契约，明确可表达的 Source 数据和不支持状态，再迁移原卡片及详情入口。不能把普通推荐列表冒充私人漫游，也不能用旧平台路径伪造插件播放项。仍在使用的网易/酷狗账号 UI 保留到对应插件具备迁移条件，最终删除目标不变。Phase 6 未整体完成，后续顺序保持如下。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
