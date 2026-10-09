@@ -5,6 +5,7 @@
 #include "MusicPageModel.h"
 #include "PlaybackCoordinator.h"
 #include "OnlineListModel.h"
+#include "core/media/TimedLyrics.h"
 
 #include <QRegularExpression>
 #include <utility>
@@ -102,6 +103,35 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
       m_directoryItems(new OnlineListModel(this))
 {
     if (!m_hub) return;
+    if (m_playback) {
+        connect(m_playback, &PlaybackCoordinator::currentChanged, this, [this] { syncCurrentLyrics(); });
+        connect(m_playback, &QObject::destroyed, this, [this] { m_playback = nullptr; clearCurrentLyrics(); });
+        connect(m_hub, &MusicHub::sourceOptionsChanged, this, [this] { syncCurrentLyrics(); });
+        connect(m_hub, &MusicHub::lyricsReady, this, [this](QUuid id, QVariantMap media, const QString &text) {
+            if (!lyricsRequestIsCurrent(id) || media != m_lyricsMedia) return;
+            m_lyricsRequest = {};
+            if (text.size() > 65536) {
+                m_currentLyricsState = QStringLiteral("failed");
+            } else {
+                auto lines = TimedLyrics::parseLrc(text);
+                if (lines.isEmpty() && !text.trimmed().isEmpty())
+                    lines.append(QVariantMap{{"time", 0LL}, {"text", text.trimmed()}});
+                if (lines.size() > 4096) m_currentLyricsState = QStringLiteral("failed");
+                else {
+                    m_currentLyrics = lines;
+                    m_currentLyricsState = lines.isEmpty() ? QStringLiteral("empty") : QStringLiteral("ready");
+                }
+            }
+            emit currentLyricsChanged();
+        });
+        connect(m_hub, &MusicHub::assetFailed, this, [this](QUuid id, QVariantMap error) {
+            if (!lyricsRequestIsCurrent(id)) return;
+            m_lyricsRequest = {};
+            m_currentLyricsState = error.value("kind").toInt() == int(SourceErrorKindV2::Unsupported)
+                ? QStringLiteral("empty") : QStringLiteral("failed");
+            emit currentLyricsChanged();
+        });
+    }
     const auto observe = [this](MusicPageModel *model) {
         connect(model, &QAbstractItemModel::modelReset, this, &OriginalUiMusicAdapter::rebuild);
         connect(model, &QAbstractItemModel::rowsInserted, this, [this] { rebuild(); });
@@ -125,6 +155,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
             this, &OriginalUiMusicAdapter::selectedSourceInstanceIdChanged);
     connect(m_hub, &QObject::destroyed, this, [this] {
         m_hub = nullptr;
+        clearCurrentLyrics();
         clearPresentationState();
         emit categoryStatusChanged();
         emit categoryNavigationChanged();
@@ -133,6 +164,50 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         emit selectedSourceInstanceIdChanged();
     });
     rebuild();
+    syncCurrentLyrics();
+}
+
+OriginalUiMusicAdapter::~OriginalUiMusicAdapter() { cancelCurrentLyrics(); }
+QVariantList OriginalUiMusicAdapter::currentLyrics() const { return m_currentLyrics; }
+QString OriginalUiMusicAdapter::currentLyricsState() const { return m_currentLyricsState; }
+void OriginalUiMusicAdapter::cancelCurrentLyrics()
+{
+    const auto id = std::exchange(m_lyricsRequest, QUuid{});
+    if (m_hub && !id.isNull()) m_hub->cancelAsset(id);
+}
+void OriginalUiMusicAdapter::clearCurrentLyrics()
+{
+    cancelCurrentLyrics();
+    m_lyricsGeneration = {}; m_lyricsMedia.clear(); m_currentLyrics.clear();
+    m_currentLyricsState = QStringLiteral("idle"); emit currentLyricsChanged();
+}
+bool OriginalUiMusicAdapter::lyricsRequestIsCurrent(const QUuid &id) const
+{
+    return !id.isNull() && id == m_lyricsRequest && m_playback && m_hub
+        && m_lyricsGeneration == m_playback->currentGeneration()
+        && m_lyricsMedia == m_playback->currentItem().value("ref").toMap()
+        && !m_playback->currentItem().value("unavailable").toBool();
+}
+void OriginalUiMusicAdapter::syncCurrentLyrics(bool force)
+{
+    const auto item = m_playback ? m_playback->currentItem() : QVariantMap{};
+    const auto generation = m_playback ? m_playback->currentGeneration() : QUuid{};
+    const auto media = item.value("ref").toMap();
+    if (!m_hub || generation.isNull() || media.isEmpty() || item.value("unavailable").toBool()) {
+        clearCurrentLyrics(); return;
+    }
+    if (!force && generation == m_lyricsGeneration && media == m_lyricsMedia) return;
+    cancelCurrentLyrics();
+    m_lyricsGeneration = generation; m_lyricsMedia = media; m_currentLyrics.clear();
+    m_currentLyricsState = QStringLiteral("loading"); emit currentLyricsChanged();
+    // A presentation callback can synchronously switch/stop the current playback.
+    if (m_hub && m_playback && generation == m_playback->currentGeneration()
+        && generation == m_lyricsGeneration && media == m_lyricsMedia)
+        m_lyricsRequest = m_hub->loadLyrics(media);
+}
+void OriginalUiMusicAdapter::retryCurrentLyrics()
+{
+    if (m_currentLyricsState == QStringLiteral("failed")) syncCurrentLyrics(true);
 }
 
 OnlineListModel *OriginalUiMusicAdapter::recommendSongs() const { return m_recommendSongs; }

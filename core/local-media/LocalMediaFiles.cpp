@@ -2,6 +2,7 @@
 // Copyright (c) 2026 QueMusic Contributors
 //
 #include "LocalMediaFiles.h"
+#include "core/media/TimedLyrics.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -39,48 +40,7 @@ QVariantMap lyricLine(qint64 time, const QString &text)
 
 QVariantList LocalMediaFiles::parseLrc(const QString &contents)
 {
-    static const QRegularExpression timestamp(
-        QStringLiteral(R"(\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\])"));
-
-    QVariantList lyrics;
-    const QString normalized = contents.startsWith(QChar(0xFEFF))
-        ? contents.mid(1)
-        : contents;
-    const QStringList lines = normalized.split(QRegularExpression(QStringLiteral("[\\r\\n]")),
-                                               Qt::KeepEmptyParts);
-
-    for (const QString &line : lines) {
-        QRegularExpressionMatchIterator matches = timestamp.globalMatch(line);
-        QString text = line;
-        bool hasTimestamp = false;
-        QList<qint64> times;
-        while (matches.hasNext()) {
-            const QRegularExpressionMatch match = matches.next();
-            hasTimestamp = true;
-            const qint64 minutes = match.captured(1).toLongLong();
-            const qint64 seconds = match.captured(2).toLongLong();
-            QString fraction = match.captured(3);
-            while (fraction.size() < 3)
-                fraction.append(QLatin1Char('0'));
-            const qint64 milliseconds = fraction.isEmpty() ? 0 : fraction.left(3).toLongLong();
-            times.append((minutes * 60 + seconds) * 1000 + milliseconds);
-        }
-
-        if (!hasTimestamp)
-            continue;
-        text.remove(timestamp);
-        text = text.trimmed();
-        if (text.isEmpty())
-            continue;
-        for (const qint64 time : times)
-            lyrics.append(lyricLine(time, text));
-    }
-
-    std::stable_sort(lyrics.begin(), lyrics.end(), [](const QVariant &left, const QVariant &right) {
-        return left.toMap().value(QStringLiteral("time")).toLongLong()
-             < right.toMap().value(QStringLiteral("time")).toLongLong();
-    });
-    return lyrics;
+    return TimedLyrics::parseLrc(contents);
 }
 
 static QVariantList parsePlainLyrics(const QString &text)

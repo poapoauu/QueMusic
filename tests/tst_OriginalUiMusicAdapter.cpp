@@ -100,7 +100,18 @@ public:
         return id;
     }
     QUuid fetchArtwork(const MediaRefV2 &) override { return {}; }
-    QUuid fetchLyrics(const MediaRefV2 &) override { return {}; }
+    QUuid fetchLyrics(const MediaRefV2 &media) override {
+        const auto id = QUuid::createUuid();
+        auto requests = property("lyricsRequests").toList();
+        requests.append(QVariantMap{{"id", id}, {"ref", mediaRefV2ToVariantMap(media)}});
+        setProperty("lyricsRequests", requests);
+        emit requestStarted(id);
+        if (property("holdLyrics").toBool()) return id;
+        if (property("unsupportedLyrics").toBool()) emit requestFailed(id, {SourceErrorKindV2::Unsupported});
+        else if (property("failLyrics").toBool()) emit requestFailed(id, {SourceErrorKindV2::Network, "network", "private diagnostics"});
+        else emit actionCompleted(id, {SourceActionV2::Lyrics, media, {{"lyrics", property("lyrics").toString()}}});
+        return id;
+    }
 
 private:
     SourceConfigurationV2 m_configuration;
@@ -279,6 +290,71 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void currentLyricsAreFencedByPlaybackAndRemainPresentationOnly()
+    {
+        RoutingHarness h; QVERIFY(h.init());
+        auto *session = h.session(); QVERIFY(session);
+        session->setProperty("holdLyrics", true);
+        const auto first = routedItem(MediaEntityTypeV2::Track, "lyrics-first");
+        accept(h.hub->category(), resultWith({first}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(session->property("lyricsRequests").toList().size(), 1);
+        const auto firstId = session->property("lyricsRequests").toList().last().toMap().value("id").toUuid();
+        const auto second = routedItem(MediaEntityTypeV2::Track, "lyrics-second");
+        accept(h.hub->category(), resultWith({second}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(session->property("lyricsRequests").toList().size(), 2);
+        const auto secondId = session->property("lyricsRequests").toList().last().toMap().value("id").toUuid();
+        emit session->actionCompleted(firstId, {SourceActionV2::Lyrics, first.ref, {{"lyrics", QString("[00:01]Stale")}}});
+        QTest::qWait(20);
+        QVERIFY(h.adapter->currentLyrics().isEmpty()); QCOMPARE(h.adapter->currentLyricsState(), QString("loading"));
+        emit session->actionCompleted(secondId, {SourceActionV2::Lyrics, second.ref,
+            {{"lyrics", QString("[00:02.50]Second\n[00:01.123][00:03]First")}}});
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("ready"));
+        const auto lines = h.adapter->currentLyrics(); QCOMPARE(lines.size(), 3);
+        QCOMPARE(lines[0].toMap().value("time").toLongLong(), 1123);
+        QCOMPARE(lines[1].toMap().value("time").toLongLong(), 2500);
+        QCOMPARE(lines[2].toMap().value("time").toLongLong(), 3000);
+        for (const auto &line : lines) QCOMPARE(line.toMap().keys(), QStringList({"text", "time"}));
+        QVERIFY(h.playback->stop());
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("idle"));
+        QVERIFY(h.adapter->currentLyrics().isEmpty());
+        const auto third = routedItem(MediaEntityTypeV2::Track, "lyrics-third");
+        accept(h.hub->category(), resultWith({third}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(session->property("lyricsRequests").toList().size(), 3);
+        QVERIFY(h.registry.disableInstance("adapter/home"));
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("idle"));
+        QVERIFY(h.adapter->currentLyrics().isEmpty());
+    }
+
+    void currentLyricsRetryAndUnsupportedHaveNoLegacyFallback()
+    {
+        RoutingHarness h; QVERIFY(h.init());
+        auto *session = h.session(); QVERIFY(session);
+        session->setProperty("failLyrics", true);
+        accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "lyrics-retry")}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("failed"));
+        session->setProperty("failLyrics", false); session->setProperty("lyrics", "Plain lyrics");
+        h.adapter->retryCurrentLyrics(); h.adapter->retryCurrentLyrics();
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("ready"));
+        QCOMPARE(session->property("lyricsRequests").toList().size(), 2);
+        QCOMPARE(h.adapter->currentLyrics(), QVariantList({QVariantMap{{"time", 0LL}, {"text", "Plain lyrics"}}}));
+        session->setProperty("unsupportedLyrics", true);
+        accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "lyrics-unsupported")}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("empty"));
+        QVERIFY(h.adapter->currentLyrics().isEmpty()); h.adapter->retryCurrentLyrics();
+        QCOMPARE(session->property("lyricsRequests").toList().size(), 3);
+        session->setProperty("unsupportedLyrics", false); session->setProperty("lyrics", QString(65537, QLatin1Char('x')));
+        accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "lyrics-too-large")}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("failed"));
+        QVERIFY(h.adapter->currentLyrics().isEmpty());
+        h.hub.reset();
+        QCOMPARE(h.adapter->currentLyricsState(), QString("idle"));
+    }
     void directoryEntityOffersGenericBrowseCapability()
     {
         QTemporaryDir dir;

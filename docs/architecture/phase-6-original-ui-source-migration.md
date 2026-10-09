@@ -100,6 +100,16 @@ API 风险：QML 与 Host 目录聚合属性和新增重试方法需同步更新
 
 2026-10-09：播放器标题和多歌手菜单原来仍写入 MusicApi 搜索模型，而 SearchPage 已只接收 Adapter，导致入口与结果页脱节。现保留原菜单和跳转交互，调用 `window.musicAdapter.search(text, 0)`，空文本或缺少 Adapter 时不发请求，不再清空旧平台模型或写入平台搜索标签。此切片仅统一搜索入口，尚未完成播放器收藏、封面、歌词等剩余迁移，Source SDK v2/Plugin UI API 无变更。结构回归检查两个菜单共用的函数不再引用旧搜索 API；主程序构建与搜索动作/播放桥接回归验收继续使用已有套件。
 
+### 当前播放歌词的 Host 展示契约
+
+2026-10-09：Host Adapter 新增 `currentLyrics`、`currentLyricsState` 与 `retryCurrentLyrics()`，只提供 `{time, text}` 行和 idle/loading/ready/empty/failed 状态。请求使用 Coordinator 当前媒体身份，经现有 MusicHub/MediaAssetRepository 向插件取歌词；不会读取本地文件、搜索平台、请求网络 URL 或把原始 SourceError 交给 QML。每次切歌取消旧请求，并验证请求 ID、当前 generation 和完整媒体身份；停播、实例禁用、Host/Coordinator 销毁清理展示。失败可显式重试，加载中不重复重试，Unsupported 进入空态。
+
+通用 LRC 解析从 LocalMediaFiles 提取为无文件/网络依赖的共享 TimedLyrics，保留既有本地解析行为。本地插件仍负责发现/读取歌词文件；Host 仅解析插件返回的文本。无时间戳文本作为一条完整非同步歌词展示，不猜造逐行时间；Host 限制文本 64 Ki 个 UTF-16 单元和 4096 个展示行，超限失败而非截断成可用歌词。翻译和逐字协议未扩展，不能从旧平台数据补全插件歌词。
+
+此切片先完成资源与展示层，原全屏/桌面歌词将在下一切片接入；不据此宣称歌词 UI 已迁移。新增的是 Host API，Source SDK v2 和 Plugin UI API ABI 不变。真实插件边界夹具覆盖延迟旧歌词拒绝、切歌与停播清理、实例禁用、LRC 时间/多时间戳排序、纯文本、失败重试去重、Unsupported 空态、超限文本、Hub 销毁和仅展示字段；本地歌词解析回归保持通过。
+
+歌词展示层切片主程序构建及四个相关套件通过：OriginalUiMusicAdapter、PlaybackCoordinator、LocalLyrics、LocalSource。尚未执行真实音频设备或手工歌词视觉验收。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

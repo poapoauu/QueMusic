@@ -281,6 +281,8 @@ Home 每日推荐随后接入五类标准推荐分区聚合及共享 `sourcePagi
 
 播放器标题/歌手菜单的搜索入口已改为现有 Adapter 搜索，不再写入旧平台搜索模型，保留原菜单与结果页跳转；缺少 Adapter/空文本时拒绝请求。播放器收藏、封面与歌词旧分支仍待迁移，这不代表播放器已完全统一。
 
+当前播放歌词的 Host 契约已增量接入：Adapter 提供仅 time/text 的行、状态与失败重试，经既有 MusicHub 资源仓库取得插件文本，按当前 generation/媒体身份/请求 ID 拒绝旧结果；停播、禁用及销毁清理。纯 LRC 解析提取为共享无 IO 工具，Host 不发现或读取本地歌词。Source SDK v2/Plugin UI API 不变；全屏/桌面歌词 UI 尚需绑定该契约，翻译/逐字信息不能由旧平台补全。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口
