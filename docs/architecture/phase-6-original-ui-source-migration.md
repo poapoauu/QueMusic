@@ -236,6 +236,16 @@ Adapter cancelDownloadTask 仅用 opaque taskId 查找私有 Router 请求，不
 
 Source 下载会话展示与取消已具备，字节进度、跨启动记录恢复及安全重试仍未实现；SDK v2/Plugin UI API ABI 不变。后续按原顺序继续播放器选项、频谱与其他旧入口隔离，不把 Download 或 Phase 6 标为整体完成。
 
+### 播放器选项的 Core/兼容路径隔离
+
+检查实际代码确认：旧选项的自动播放只改 mainMedia.autoPlay，固定音质档位只写旧平台 soundQuality；间距补偿/均衡器只是旧占位。设备选择仅绑定 main.qml 的旧 AudioOutput，当前 QtPlaybackController 后端自行构造默认 QAudioOutput，没有设备选择 API。不能把这些选项继续显示为已支持的 Source/Core 功能。
+
+原播放器选项弹窗和主题保留。Source 模式隐藏旧自动播放、固定音质、自定义设备与未实现占位，默认设备行禁用并说明当前使用系统默认输出；控件表达式和 handlers 再隔离，Source 停播或程序化触发也不能读写旧配置。显式兼容模式保留原选项行为。这不是 Source 自定义设备、自动播放策略、EQ 或 gap compensation 的功能实现；插件特定音质规则未来仍应由其 Settings Schema/Plugin UI 配置，不把固定档位推广到所有 Source。
+
+倍速增量通过 Host 私有展示桥接统一路由：Source 只调用 typed Core，显式 legacy 才赋值旧播放器；缺控制器拒绝并禁用 UI。保留 0.1–4.0 原交互范围，严格拒绝字符串、非有限值、越界数值与无效预设索引，仅成功路由后更新预设选择。倍速属于 Core 全局播放设置，Source 停播时可提前配置，不触发播放或读取旧身份。
+
+主程序构建及十二个联合套件通过：MusicHub、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiPlaybackQml、OriginalUiStructure、PlaybackCoordinator、QtPlaybackController、PlaybackControlsAdapterQml、LegacyQueueQml、MediaActionRouterV2、QueueHistoryIntegration、NavidromeSource。新增测试提取实际选项 QML、使用真实展示桥接和轻量视觉控件夹具，验证 Source 停播时零旧自动播放读取/写入、旧配置与占位 handlers 拒绝、默认设备状态、合法倍速/自定义/非法输入、缺 Core 不回退及显式兼容切换。真实弹窗视觉、物理设备选择与倍速音频仍需手工验收；没有改变 SDK v2/Plugin UI API。下一步继续频谱及剩余旧入口迁移，Source 自定义输出设备需要独立 Core 契约和对应测试，Phase 6 未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

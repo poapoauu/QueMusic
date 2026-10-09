@@ -780,6 +780,7 @@ Rectangle {
 
     QOptionDialog {
         id: playerOptionDialog
+        objectName: "currentPlaybackOptionsDialog"
         title: "播放器选项"
         dialogContentHeight: 430
         options: Column {
@@ -791,16 +792,16 @@ Rectangle {
                 controlWidth: 120
                 width: parent.width
                 QDrop {
+                    objectName: "playbackRatePreset"
+                    enabled: window.lyricsAdapter.rateEnabled
                     height: 36; width: 120
                     anchors.right: parent.right
                     choice: musicControlMin.playerRateIndex
                     model: ["0.5x","0.75x","1x-默认","1.25x","1.5x","2x","自定义"]
                     onTransformed: (choiced) => {
-                        if (window.sourceLyricsMode)
-                            playbackAdapter.setPlaybackRate([0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced]);
-                        else
-                            mainMedia.playbackRate = [0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced];
-                        musicControlMin.playerRateIndex = choiced;
+                        if (typeof choiced !== "number" || !Number.isInteger(choiced) || choiced < 0 || choiced > 6) return;
+                        if (window.lyricsAdapter.setPlaybackRate([0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced]))
+                            musicControlMin.playerRateIndex = choiced;
                     }
                 }
             }
@@ -811,6 +812,8 @@ Rectangle {
                 width: parent.width
                 opacity: musicControlMin.playerRateIndex === 6 ? 1 : 0.5
                 QSlider {
+                    objectName: "playbackRateCustom"
+                    enabled: window.lyricsAdapter.rateEnabled && musicControlMin.playerRateIndex === 6
                     height: 36; width: 160
                     anchors.right: parent.right
                     from: 0.1
@@ -820,86 +823,97 @@ Rectangle {
                     valueText: value.toFixed(1)
                     value: musicControlMin.currentPlaybackRate
                     onMoved: {
-                        if(musicControlMin.playerRateIndex === 6) {
-                            if (window.sourceLyricsMode)
-                                playbackAdapter.setPlaybackRate(value);
-                            else
-                                mainMedia.playbackRate = value;
-                        }
+                        if (musicControlMin.playerRateIndex === 6)
+                            window.lyricsAdapter.setPlaybackRate(value);
                     }
                 }
             }
 
             SettingItem {
                 label: "切换音乐自动播放"
+                visible: !window.sourceLyricsMode
                 controlWidth: 120
                 width: parent.width
                 QSwitch {
+                    objectName: "legacyAutoPlayOption"
+                    enabled: !window.sourceLyricsMode
                     height: 36; width: 120
                     anchors.right: parent.right
-                    switchTrue: mainMedia.autoPlay
-                    onToggled: mainMedia.autoPlay = !mainMedia.autoPlay
+                    switchTrue: window.sourceLyricsMode ? false : mainMedia.autoPlay
+                    onToggled: { if (!window.sourceLyricsMode) mainMedia.autoPlay = !mainMedia.autoPlay; }
                 }
             }
 
             SettingItem {
                 label: "启用间距补偿"
+                visible: !window.sourceLyricsMode
                 controlWidth: 120
                 width: parent.width
                 QSwitch {
+                    objectName: "legacyGapCompensationOption"
+                    enabled: !window.sourceLyricsMode
                     height: 36; width: 120
                     anchors.right: parent.right
                     switchTrue: false
-                    onToggled: switchTrue = !switchTrue
+                    onToggled: { if (!window.sourceLyricsMode) switchTrue = !switchTrue; }
                 }
             }
 
             SettingItem {
                 label: "音质"
+                visible: !window.sourceLyricsMode
                 controlWidth: 120
                 width: parent.width
                 QDrop {
+                    objectName: "legacyQualityOption"
+                    enabled: !window.sourceLyricsMode
                     height: 36; width: 160
                     anchors.right: parent.right
-                    choice: Options.settings.soundQuality
+                    choice: window.sourceLyricsMode ? 0 : Options.settings.soundQuality
                     model: ["标准-144k","高清-320k","无损-500+k"]
                     onTransformed: (choiced) => {
-                        Options.settings.soundQuality = choiced
+                        if (!window.sourceLyricsMode) Options.settings.soundQuality = choiced
                     }
                 }
             }
 
             SettingItem {
-                label: "使用默认输出设备"
+                label: window.sourceLyricsMode ? "Source 使用系统默认输出设备" : "使用默认输出设备"
                 controlWidth: 120
                 width: parent.width
                 QSwitch {
+                    objectName: "legacyDefaultOutputOption"
+                    enabled: !window.sourceLyricsMode
                     height: 36; width: 120
                     anchors.right: parent.right
-                    switchTrue: Options.settings.useDefaultDevice
-                    onToggled: Options.settings.useDefaultDevice = !Options.settings.useDefaultDevice
+                    switchTrue: window.sourceLyricsMode ? true : Options.settings.useDefaultDevice
+                    onToggled: { if (!window.sourceLyricsMode) Options.settings.useDefaultDevice = !Options.settings.useDefaultDevice; }
                 }
             }
 
             SettingItem {
                 label: "自定输出设备"
+                visible: !window.sourceLyricsMode
                 controlWidth: 120
                 width: parent.width
-                opacity: Options.settings.useDefaultDevice ? 0.5 : 1
+                opacity: window.sourceLyricsMode || Options.settings.useDefaultDevice ? 0.5 : 1
                 QDrop {
+                    objectName: "legacyCustomOutputOption"
+                    enabled: !window.sourceLyricsMode
                     height: 36; width: 160
                     anchors.right: parent.right
-                    choice: Options.settings.audioDevice
-                    model: musicDevices.audioOutputs
+                    choice: window.sourceLyricsMode ? 0 : Options.settings.audioDevice
+                    model: window.sourceLyricsMode ? [] : musicDevices.audioOutputs
                     useId: true
                     onTransformed: (choiced) => {
-                        Options.settings.audioDevice = choiced
+                        if (!window.sourceLyricsMode) Options.settings.audioDevice = choiced
                     }
                 }
             }
 
             SettingItem {
                 label: "均衡器"
+                visible: !window.sourceLyricsMode
                 controlWidth: 120
                 width: parent.width
                 QButton {

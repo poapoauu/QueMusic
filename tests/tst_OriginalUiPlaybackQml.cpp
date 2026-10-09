@@ -7,6 +7,7 @@
 #include <QtQml/QQmlEngine>
 
 #include <memory>
+#include <limits>
 #include "../cpp/WindowsSmtcManager.h"
 #include "../core/playback/QtPlaybackController.h"
 
@@ -24,7 +25,15 @@ class LegacyPlayerDouble final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool playing MEMBER playing)
     Q_PROPERTY(qint64 position MEMBER position)
+    Q_PROPERTY(qreal playbackRate MEMBER playbackRate)
+    Q_PROPERTY(bool autoPlay READ autoPlay WRITE setAutoPlay)
 public:
+    bool autoPlay() const { ++autoPlayReads; return autoPlayValue; }
+    void setAutoPlay(bool value) { ++autoPlayWrites; autoPlayValue = value; }
+    mutable int autoPlayReads = 0;
+    int autoPlayWrites = 0;
+    bool autoPlayValue = true;
+    qreal playbackRate = 1;
     int refreshCalls = 0;
     bool playing = false;
     qint64 position = 0;
@@ -68,6 +77,7 @@ public:
     int playCalls = 0;
     int pauseCalls = 0;
     int stopCalls = 0;
+    int rateCalls = 0;
     qint64 sought = -1;
 
     Q_INVOKABLE void play() { ++playCalls; }
@@ -75,7 +85,7 @@ public:
     Q_INVOKABLE void stop() { ++stopCalls; }
     Q_INVOKABLE void seek(qint64 value) { sought = value; }
     Q_INVOKABLE void setVolume(qreal value) { volume = value; }
-    Q_INVOKABLE void setPlaybackRate(qreal value) { playbackRate = value; }
+    Q_INVOKABLE void setPlaybackRate(qreal value) { ++rateCalls; playbackRate = value; emit playbackRateChanged(); }
     Q_INVOKABLE void setMuted(bool value) { muted = value; }
 
 signals:
@@ -105,6 +115,7 @@ private slots:
     void actualInfoDialogUsesOnlyCurrentDisplayFields();
     void actualDownloadButtonNeverFallsBackAfterSourceStops();
     void actualSourceDownloadDialogKeepsTheCapturedPlaybackToken();
+    void actualPlayerOptionsNeverConfigureTheLegacyPlayerInSourceMode();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -139,6 +150,105 @@ public:
 signals:
     void changed();
 };
+
+void OriginalUiPlaybackQmlTest::actualPlayerOptionsNeverConfigureTheLegacyPlayerInSourceMode()
+{
+    QQmlEngine engine; PlaybackControllerDouble controls; LegacyPlayerDouble legacy;
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    QVERIFY2(bridgeComponent.isReady(), qPrintable(bridgeComponent.errorString()));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"controls", QVariant::fromValue<QObject *>(&controls)}, {"legacyPlayer", QVariant::fromValue<QObject *>(&legacy)},
+        {"sourceMode", true}, {"sourceActive", false}})); QVERIFY(bridge);
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.lastIndexOf("QOptionDialog {", source.indexOf("id: playerOptionDialog")); QVERIFY(start >= 0);
+    int depth = 0; auto end = start;
+    for (; end < source.size(); ++end) {
+        if (source[end] == '{') ++depth;
+        else if (source[end] == '}' && --depth == 0) { ++end; break; }
+    }
+    auto dialog = source.mid(start, end - start);
+    dialog.replace("Style.", "musicControlMin.styleFixture.");
+    dialog.replace("Options.", "musicControlMin.optionsFixture.");
+    dialog.replace("mainMedia.", "musicControlMin.legacyPlayer.");
+    dialog.replace("musicDevices.", "musicControlMin.devicesFixture.");
+    const auto fixture = QStringLiteral(R"(import QtQuick
+Item {
+    id: musicControlMin
+    property var presentation
+    property var legacyPlayer
+    property int playerRateIndex: 2
+    readonly property real currentPlaybackRate: presentation.playbackRate
+    property var styleFixture: ({settings: {labelRadius: 6}})
+    property var optionsFixture: ({settings: {soundQuality: 2, useDefaultDevice: false, audioDevice: 1}})
+    property var devicesFixture: ({audioOutputs: ["default", "custom"]})
+    property QtObject window: QtObject {
+        property var lyricsAdapter: musicControlMin.presentation
+        property bool sourceLyricsMode: musicControlMin.presentation.sourceMode
+    }
+    component QOptionDialog: Item {
+        property string title; property real dialogContentHeight; property alias options: optionHost.data
+        Item { id: optionHost; width: 400 }
+    }
+    component SettingItem: Item { property string label; property real controlWidth }
+    component QDrop: Item { property var choice; property var model; property bool useId; signal transformed(var choiced) }
+    component QSlider: Item {
+        property real from; property real to; property real stepSize; property bool leftText
+        property string valueText; property real value; signal moved()
+    }
+    component QSwitch: Item { property bool switchTrue; signal toggled() }
+    component QButton: Item { property real radius; property string text; property bool shadowEnabled }
+%1
+})").arg(dialog);
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/player-options-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({
+        {"presentation", QVariant::fromValue(bridge.get())}, {"legacyPlayer", QVariant::fromValue<QObject *>(&legacy)}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *preset = root->findChild<QObject *>("playbackRatePreset");
+    auto *custom = root->findChild<QObject *>("playbackRateCustom"); QVERIFY(preset); QVERIFY(custom);
+    auto *autoPlay = root->findChild<QObject *>("legacyAutoPlayOption"); QVERIFY(autoPlay);
+    auto *gap = root->findChild<QObject *>("legacyGapCompensationOption"); QVERIFY(gap);
+    auto *quality = root->findChild<QObject *>("legacyQualityOption"); QVERIFY(quality);
+    auto *defaultOutput = root->findChild<QObject *>("legacyDefaultOutputOption"); QVERIFY(defaultOutput);
+    auto *customOutput = root->findChild<QObject *>("legacyCustomOutputOption"); QVERIFY(customOutput);
+    for (auto *item : {autoPlay, gap, quality, defaultOutput, customOutput}) QVERIFY(!item->property("enabled").toBool());
+    QCOMPARE(legacy.autoPlayReads, 0); QVERIFY(defaultOutput->property("switchTrue").toBool());
+    QVERIFY(QMetaObject::invokeMethod(autoPlay, "toggled")); QVERIFY(QMetaObject::invokeMethod(gap, "toggled"));
+    QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 0)));
+    QVERIFY(QMetaObject::invokeMethod(defaultOutput, "toggled"));
+    QVERIFY(QMetaObject::invokeMethod(customOutput, "transformed", Q_ARG(QVariant, 0)));
+    QCOMPARE(legacy.autoPlayWrites, 0); QCOMPARE(legacy.autoPlayReads, 0); QVERIFY(!gap->property("switchTrue").toBool());
+    const auto originalSettings = root->property("optionsFixture").toMap();
+    QCOMPARE(originalSettings.value("settings").toMap().value("soundQuality").toInt(), 2);
+    QCOMPARE(originalSettings.value("settings").toMap().value("audioDevice").toInt(), 1);
+    QVERIFY(!originalSettings.value("settings").toMap().value("useDefaultDevice").toBool());
+    QVERIFY(preset->property("enabled").toBool()); // Core rate is a global setting even when stopped.
+    QVERIFY(QMetaObject::invokeMethod(preset, "transformed", Q_ARG(QVariant, 3)));
+    QCOMPARE(controls.playbackRate, 1.25); QCOMPARE(controls.rateCalls, 1); QCOMPARE(legacy.playbackRate, 1.0);
+    for (const QVariant &index : QVariantList{-1, 7, 1.5, QString("3")})
+        QVERIFY(QMetaObject::invokeMethod(preset, "transformed", Q_ARG(QVariant, index)));
+    QCOMPARE(controls.rateCalls, 1); QCOMPARE(root->property("playerRateIndex").toInt(), 3);
+    QVERIFY(QMetaObject::invokeMethod(preset, "transformed", Q_ARG(QVariant, 6)));
+    QVERIFY(custom->property("enabled").toBool()); QVERIFY(custom->setProperty("value", 2.7));
+    QVERIFY(QMetaObject::invokeMethod(custom, "moved")); QCOMPARE(controls.playbackRate, 2.7);
+    const auto rateCalls = controls.rateCalls;
+    for (double value : {-1.0, 0.0, 4.1, std::numeric_limits<double>::quiet_NaN()}) {
+        QVERIFY(custom->setProperty("value", value)); QVERIFY(QMetaObject::invokeMethod(custom, "moved"));
+    }
+    QCOMPARE(controls.rateCalls, rateCalls);
+    QVERIFY(bridge->setProperty("controls", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(!preset->property("enabled").toBool()); QVERIFY(!custom->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(preset, "transformed", Q_ARG(QVariant, 0)));
+    QCOMPARE(root->property("playerRateIndex").toInt(), 6); QCOMPARE(legacy.playbackRate, 1.0);
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QVERIFY(autoPlay->property("enabled").toBool()); QVERIFY(quality->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(autoPlay, "toggled")); QCOMPARE(legacy.autoPlayWrites, 1); QVERIFY(!legacy.autoPlayValue);
+    QVERIFY(QMetaObject::invokeMethod(preset, "transformed", Q_ARG(QVariant, 5))); QCOMPARE(legacy.playbackRate, 2.0);
+    QCOMPARE(controls.rateCalls, rateCalls);
+    QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
+    QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
 
 void OriginalUiPlaybackQmlTest::sourceLyricsNeverFallBackToLegacyDataOrClock()
 {

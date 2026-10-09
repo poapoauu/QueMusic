@@ -52,6 +52,16 @@ QtObject {
                                                && (favorite.canFavorite || favorite.canUnfavorite))
     readonly property var download: sourceMode && sourceActive && musicAdapter ? musicAdapter.currentDownload || {} : ({})
     readonly property bool downloadEnabled: !!(sourceMode && sourceActive && download.token && download.canDownload && !download.pending)
+    readonly property bool rateEnabled: sourceMode
+        ? !!(controls && typeof controls.setPlaybackRate === "function") : !!legacyPlayer
+
+    function setPlaybackRate(value) {
+        // Preserve the original UI range; never coerce strings or invalid numbers.
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0.1 || value > 4 || !rateEnabled) return false;
+        if (sourceMode) controls.setPlaybackRate(value);
+        else legacyPlayer.playbackRate = value;
+        return true;
+    }
 
     function saveDownload(destination, token) {
         if (!downloadEnabled || !token || token !== download.token || !String(destination || "")

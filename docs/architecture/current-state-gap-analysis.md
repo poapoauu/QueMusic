@@ -493,6 +493,10 @@ DownloadPage 后续由 MainContent 持续绑定 Adapter，在原下载中/已下
 
 Router 后续增加 Host-only cancelDownload，Adapter 通过 opaque taskId 查找私有请求，下载页提供进行中取消与取消终态展示。复用 v2 session.cancel 和既有延后/租约保护，拒绝陌生、非下载、已完成或重复请求；迟到成功不能覆盖取消，关闭实例等生命周期失败优先。切歌后的取消不影响当前曲目/另一实例，取消与移除记录均不由 Host 删除用户文件；当前曲目可重新选择新目标提交。主程序构建和九个联合套件通过，包括取消回调销毁 Router、卸载 Busy、实例关闭、文件保留及实际 QML 状态保护。Source SDK v2/Plugin UI API ABI 未改；真实服务器、原生 UI、字节进度、跨启动记录与安全重试仍未验收/实现，Phase 6 继续推进播放器剩余入口迁移。
 
+### 后续增量：播放器选项路径隔离
+
+实际代码进一步确认旧自动播放/音质/自定义设备只改旧播放器与旧设置，Source Core 独立构造默认 QAudioOutput，尚无自定义设备 API；间距补偿/EQ 也是旧占位。Source 模式现隐藏这些旧/未实现选项，默认设备行明确禁用，bindings 和 handlers 双重阻止旧配置读写；兼容模式保留。倍速改为统一展示桥接，Source 只走 Core 全局设置、缺控制器拒绝，严格验证原 0.1–4.0 范围和预设索引。主程序构建及十二个相关套件通过，实际选项 QML/真实桥接夹具验证停播、程序化触发、无效输入、缺 Core 和显式 legacy 隔离。Source 自定义设备、自动播放策略、EQ/gap compensation 仍需独立 Core 实现；插件专属音质仍应交给 Settings Schema/Plugin UI。真实设备/音频/弹窗视觉未验收，SDK v2 与 Plugin UI API ABI 不变，后续继续频谱与剩余入口迁移。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：
