@@ -246,6 +246,15 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 
 主程序构建及十二个联合套件通过：MusicHub、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiPlaybackQml、OriginalUiStructure、PlaybackCoordinator、QtPlaybackController、PlaybackControlsAdapterQml、LegacyQueueQml、MediaActionRouterV2、QueueHistoryIntegration、NavidromeSource。新增测试提取实际选项 QML、使用真实展示桥接和轻量视觉控件夹具，验证 Source 停播时零旧自动播放读取/写入、旧配置与占位 handlers 拒绝、默认设备状态、合法倍速/自定义/非法输入、缺 Core 不回退及显式兼容切换。真实弹窗视觉、物理设备选择与倍速音频仍需手工验收；没有改变 SDK v2/Plugin UI API。下一步继续频谱及剩余旧入口迁移，Source 自定义输出设备需要独立 Core 契约和对应测试，Phase 6 未整体完成。
 
+### 频谱迁移第一切片：安全分析器与 Legacy 隔离
+
+- 将 FFT 管线收敛到 Host-private `AudioSpectrumAnalyzer`：后台任务只持有 PCM 值副本；最多一个运行任务和一个最新待处理窗口，采样窗口有界。
+- reset、禁用、频段变化及销毁均隔离旧任务结果；支持 Float/Int16/Int32/UInt8，清理非法 PCM，输出有限且有界的镜像频谱与原尺寸几何路径。
+- `GetWave` 保留 Legacy QML 接口，但重新绑定/销毁时解除其拥有的采样输出，使用自动线程连接和附件代次拒绝旧输出。重入绑定以最新绑定为准。
+- 原播放器频谱改读 `PlaybackLyricsAdapter.wavePath`；Source 模式解除 Legacy 采样并返回空路径。此切片尚未接入 Core PCM，不将旧曲目频谱冒充 Source 频谱。
+- 验证：主程序构建及 spectrum、PlaybackCoordinator、QtPlaybackController、controls QML、original playback QML、UI structure、queue/history 共 7 项回归通过。包括延迟完成、销毁、重入及真实 Qt PCM 信号测试；不代表物理音频/GPU 视觉验收。
+- SDK v2、Source 插件 ABI 与 Plugin UI API 不变；新增 Host 内部静态库，应用需同步重建。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

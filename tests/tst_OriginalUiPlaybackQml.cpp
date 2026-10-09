@@ -116,6 +116,7 @@ private slots:
     void actualDownloadButtonNeverFallsBackAfterSourceStops();
     void actualSourceDownloadDialogKeepsTheCapturedPlaybackToken();
     void actualPlayerOptionsNeverConfigureTheLegacyPlayerInSourceMode();
+    void spectrumBridgeRejectsLegacyFramesInStickySourceMode();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -248,6 +249,28 @@ Item {
     QCOMPARE(controls.rateCalls, rateCalls);
     QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::spectrumBridgeRejectsLegacyFramesInStickySourceMode()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    const QVariantList legacy{QPointF(1, 2), QPointF(3, 4)};
+    std::unique_ptr<QObject> bridge(component.createWithInitialProperties({
+        {"sourceMode", true}, {"sourceActive", true}, {"legacyWavePath", legacy}})); QVERIFY(bridge);
+    QVERIFY(bridge->property("wavePath").toList().isEmpty());
+    QVERIFY(bridge->setProperty("sourceActive", false)); QVERIFY(bridge->property("wavePath").toList().isEmpty());
+    QVERIFY(bridge->setProperty("legacyWavePath", QVariantList{QPointF(5, 6)}));
+    QVERIFY(bridge->property("wavePath").toList().isEmpty());
+    QVERIFY(bridge->setProperty("sourceMode", false)); QCOMPARE(bridge->property("wavePath").toList(), QVariantList{QPointF(5, 6)});
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto main = QString::fromUtf8(file.readAll());
+    QVERIFY(main.contains("mediaPlayer: window.sourceLyricsMode ? null : mainMedia"));
+    QVERIFY(main.contains("enabled: !window.sourceLyricsMode && Style.settings.waveDisplay && mainMedia.playing"));
+    QFile maxFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerMaxCenter.qml")); QVERIFY(maxFile.open(QIODevice::ReadOnly));
+    const auto max = QString::fromUtf8(maxFile.readAll()); QVERIFY(!max.contains("getWave.wavePath"));
+    QVERIFY(max.contains("path: window.lyricsAdapter.wavePath"));
 }
 
 void OriginalUiPlaybackQmlTest::sourceLyricsNeverFallBackToLegacyDataOrClock()

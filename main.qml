@@ -51,6 +51,7 @@ Window {
         sourceItem: playbackCoordinator ? playbackCoordinator.currentItem : ({})
         legacyDetails: ({title: window.musicTitle, artist: window.musicArtist, album: mainMedia.album,
                          fileName: mainMedia.noTitle, date: mainMedia.date, format: mainMedia.type})
+        legacyWavePath: window.sourceLyricsMode ? [] : getWave.wavePath
     }
     width: 1140
     height: 720
@@ -940,10 +941,9 @@ Window {
     // 主媒体
     GetWave {
         id: getWave
-        mediaPlayer: mainMedia
-        enabled: Style.settings.waveDisplay && mainMedia.playing
+        mediaPlayer: window.sourceLyricsMode ? null : mainMedia
+        enabled: !window.sourceLyricsMode && Style.settings.waveDisplay && mainMedia.playing
         bands: 128
-        //audioBufferOutput: mainMedia.audioBufferOutput
     }
     MediaPlayer {
         property string noTitle
@@ -955,7 +955,6 @@ Window {
         property bool onMedia: mediaStatus !== MediaPlayer.NoMedia
         id: mainMedia
         audioOutput: volumeValue
-        //audioBufferOutput: getWave.audioBufferOutput
 
         source: ""
         autoPlay: Options.settings.autoPlay

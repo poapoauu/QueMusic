@@ -411,6 +411,12 @@ target_compile_features(quemusic_queue_history_store PUBLIC cxx_std_17)
 target_include_directories(quemusic_queue_history_store PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(quemusic_queue_history_store PUBLIC quemusic_playback_coordinator)
 
+add_library(quemusic_audio_spectrum STATIC
+    core/playback/AudioSpectrumAnalyzer.cpp core/playback/AudioSpectrumAnalyzer.h)
+target_compile_features(quemusic_audio_spectrum PUBLIC cxx_std_17)
+target_include_directories(quemusic_audio_spectrum PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(quemusic_audio_spectrum PUBLIC Qt6::Multimedia Qt6::Concurrent)
+
 add_library(quemusic_qt_playback_controller STATIC
     core/playback/QtPlaybackController.cpp
     core/playback/QtPlaybackController.h)
@@ -418,7 +424,7 @@ target_compile_features(quemusic_qt_playback_controller PUBLIC cxx_std_17)
 target_include_directories(quemusic_qt_playback_controller PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/playback)
 target_link_libraries(quemusic_qt_playback_controller PUBLIC
-    quemusic_playback_coordinator Qt6::Multimedia)
+    quemusic_playback_coordinator quemusic_audio_spectrum Qt6::Multimedia)
 
 add_library(quemusic_music_hub STATIC
     core/music/MusicHub.cpp core/music/MusicHub.h
@@ -879,6 +885,11 @@ if(BUILD_TESTING)
     add_dependencies(quemusic_playback_coordinator_test quemusic_playback_fixture)
     add_test(NAME quemusic_playback_coordinator_test COMMAND quemusic_playback_coordinator_test)
     set_tests_properties(quemusic_playback_coordinator_test PROPERTIES TIMEOUT 30)
+
+    qt_add_executable(quemusic_audio_spectrum_test tests/tst_AudioSpectrum.cpp cpp/GetWave.cpp cpp/GetWave.h)
+    target_link_libraries(quemusic_audio_spectrum_test PRIVATE quemusic_audio_spectrum Qt6::Qml Qt6::Test)
+    add_test(NAME quemusic_audio_spectrum_test COMMAND quemusic_audio_spectrum_test)
+    set_tests_properties(quemusic_audio_spectrum_test PROPERTIES TIMEOUT 30)
 
     qt_add_executable(quemusic_qt_playback_controller_test
         tests/tst_QtPlaybackController.cpp)

@@ -497,6 +497,12 @@ Router 后续增加 Host-only cancelDownload，Adapter 通过 opaque taskId 查�
 
 实际代码进一步确认旧自动播放/音质/自定义设备只改旧播放器与旧设置，Source Core 独立构造默认 QAudioOutput，尚无自定义设备 API；间距补偿/EQ 也是旧占位。Source 模式现隐藏这些旧/未实现选项，默认设备行明确禁用，bindings 和 handlers 双重阻止旧配置读写；兼容模式保留。倍速改为统一展示桥接，Source 只走 Core 全局设置、缺控制器拒绝，严格验证原 0.1–4.0 范围和预设索引。主程序构建及十二个相关套件通过，实际选项 QML/真实桥接夹具验证停播、程序化触发、无效输入、缺 Core 和显式 legacy 隔离。Source 自定义设备、自动播放策略、EQ/gap compensation 仍需独立 Core 实现；插件专属音质仍应交给 Settings Schema/Plugin UI。真实设备/音频/弹窗视觉未验收，SDK v2 与 Plugin UI API ABI 不变，后续继续频谱与剩余入口迁移。
 
+### 后续增量：频谱安全管线与旧播放器隔离
+
+已完成有界、可失效的 Host-private PCM/FFT 分析器以及 `GetWave` 生命周期修复。原 UI 频谱改由安全数据适配器投影，Source 模式不再绑定旧播放器、不再读取旧波形；当前 Source 空频谱是明确的迁移中状态，Core PCM 接入仍待下一切片完成。
+
+验收：主程序构建与 7 项联合回归通过，覆盖四种 PCM、有限几何输出、队列上界、旧任务隔离、销毁与重新绑定。未执行物理音频和 GPU 视觉验收。无需改变 SDK v2 或插件 ABI；新增 Host 库需同步构建。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

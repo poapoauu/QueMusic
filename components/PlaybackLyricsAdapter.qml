@@ -19,6 +19,9 @@ QtObject {
     property string legacyCover: ""
     property var sourceItem: ({})
     property var legacyDetails: ({})
+    property var legacyWavePath: []
+    // Core visualization is not wired yet; Source must never reuse a legacy frame.
+    readonly property var wavePath: sourceMode ? [] : legacyWavePath
     // Display-only projection. Never copy arbitrary metadata, identities or resources.
     readonly property var details: {
         if (sourceMode) {

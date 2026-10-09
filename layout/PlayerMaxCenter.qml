@@ -65,7 +65,7 @@ Item {
             startX: 0
             startY: waveItem.height
             PathPolyline {
-                path: getWave.wavePath
+                path: window.lyricsAdapter.wavePath
             }
         }
     }
