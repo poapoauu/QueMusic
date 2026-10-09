@@ -112,6 +112,11 @@ private slots:
         const QString main = readSource(QStringLiteral("main.qml"));
         QCOMPARE(main.count(QStringLiteral("window.musicAdapter.search(")), 3);
         QVERIFY(!main.contains(QStringLiteral("MusicApi.searchSongs(")));
+        const QString player = readSource(QStringLiteral("layout/PlayerControl.qml"));
+        QVERIFY(player.contains(QStringLiteral("window.musicAdapter.search(mainSearchInput.text, 0)")));
+        QVERIFY(!player.contains(QStringLiteral("MusicApi.searchSongs(")));
+        QVERIFY(!player.contains(QStringLiteral("MusicApi.searchSongsResults")));
+        QVERIFY(!player.contains(QStringLiteral("MusicApi.nowIndex")));
 
         const QString search = readSource(QStringLiteral("pages/SearchPage.qml"));
         QVERIFY(search.contains(QStringLiteral("objectName: \"searchSongsList\"")));

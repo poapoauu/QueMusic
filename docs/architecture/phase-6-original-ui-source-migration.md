@@ -96,6 +96,10 @@ API 风险：QML 与 Host 目录聚合属性和新增重试方法需同步更新
 
 本切片主程序构建及九个相关套件通过：DirectoryLibraryController、OriginalUiLocalDirectories、LocalDirectoriesQml、MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure。最终目录 QML 回归日志没有 TypeError、ReferenceError 或 FilePage 的属性类型赋值错误；未执行真实设备音频与手工视觉验收。
 
+### 播放器标题/歌手搜索入口
+
+2026-10-09：播放器标题和多歌手菜单原来仍写入 MusicApi 搜索模型，而 SearchPage 已只接收 Adapter，导致入口与结果页脱节。现保留原菜单和跳转交互，调用 `window.musicAdapter.search(text, 0)`，空文本或缺少 Adapter 时不发请求，不再清空旧平台模型或写入平台搜索标签。此切片仅统一搜索入口，尚未完成播放器收藏、封面、歌词等剩余迁移，Source SDK v2/Plugin UI API 无变更。结构回归检查两个菜单共用的函数不再引用旧搜索 API；主程序构建与搜索动作/播放桥接回归验收继续使用已有套件。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

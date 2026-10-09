@@ -68,11 +68,11 @@ Rectangle {
 
     // 统一搜索入口
     function doSearchSongsMessage(name) {
-        MusicApi.searchSongsResults.clear();
-        mainSearchInput.text = name;
-        MusicApi.nowIndex = 0;
+        if (typeof name !== "string" || !name.trim() || !window.musicAdapter
+                || typeof window.musicAdapter.search !== "function") return;
+        mainSearchInput.text = name.trim();
         mainContent.contentIndexed(6);
-        MusicApi.searchSongs(name, MusicApi.nowIndex, 1, 20);
+        window.musicAdapter.search(mainSearchInput.text, 0);
         window.exitIndex = 1;
     }
 
