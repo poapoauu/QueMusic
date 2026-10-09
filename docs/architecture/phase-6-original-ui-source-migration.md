@@ -272,6 +272,13 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 完整生产 QML 组件的 offscreen 测试（仅视觉控件/Theme 为 stand-in，真实 Slider/Binding/事件逻辑）覆盖播放/暂停、时钟、拖动、不可 seek、停止、缺失适配器、纯文本标题、队列动作与显式 Legacy。主程序构建和 7 项联合回归通过；不等价于原生桌面窗口/GPU 手工验收。
 - 下一切片检查普通桌面播放器的标题/歌手旧字段及相同进度范围问题；SDK / 插件 ABI 不变。
 
+### 普通桌面播放器：元数据投影及进度范围同步
+
+- `DesktopPlayerWindow` 标题/歌手改读安全 details，使用 PlainText；Source 空态清空，不依赖 main 中仍用于兼容的可变标题字段。
+- 普通桌面与原底栏 Slider 的位置绑定都增加对实际范围的依赖。duration 扩大但 position 未变时恢复正确位置；拖动期间仍暂停后台位置同步，释放后恢复。
+- 实际生产 Text/Slider/Binding 片段的双场景测试覆盖 Source 空态到当前项、范围缩小/恢复、拖动/释放、停播、Legacy 往返及纯文本元数据。主程序构建及 7 项联合回归通过；不代表手工视觉/音频验收。
+- SDK / 插件 ABI 不变。底栏标题及其搜索菜单仍读取兼容 window 字段，后续应改由同一安全 details 驱动；其余平台业务迁移仍按总体顺序推进。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

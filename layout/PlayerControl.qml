@@ -116,6 +116,7 @@ Rectangle {
         Slider {
             z: 2
             id: progressSlider
+            objectName: "originalPlayerSeekSlider"
             anchors.fill: parent
             width: musicControlMin.width
             from: 0
@@ -124,7 +125,7 @@ Rectangle {
             Binding {
                 target: progressSlider
                 property: "value"
-                value: musicControlMin.currentPosition
+                value: Math.min(progressSlider.to, Math.max(0, musicControlMin.currentPosition))
                 when: !progressSlider.pressed
                 restoreMode: Binding.RestoreNone
             }

@@ -68,11 +68,13 @@ Window {
         // 标题
         Text {
             id: playerTitle
+            objectName: "desktopPlayerTitle"
             x: 102
             y: 12
             width: playerCard.width - 102 - 48
             height: 22
-            text: window.musicTitle
+            text: window.lyricsAdapter.details.title || ""
+            textFormat: Text.PlainText
             elide: Text.ElideRight
             font.bold: true
             font.pixelSize: 14
@@ -83,11 +85,13 @@ Window {
         // 艺术家
         Text {
             id: playerArtist
+            objectName: "desktopPlayerArtist"
             x: 102
             y: 34
             width: playerCard.width - 102 - 48
             height: 18
-            text: window.musicArtist
+            text: window.lyricsAdapter.details.artist || ""
+            textFormat: Text.PlainText
             elide: Text.ElideRight
             font.pixelSize: 12
             verticalAlignment: Text.AlignVCenter
@@ -97,6 +101,7 @@ Window {
         // 进度条
         Slider {
             id: seekSlider
+            objectName: "desktopPlayerSeekSlider"
             x: 102
             y: 55
             width: playerCard.width - 102 - 14
@@ -107,7 +112,7 @@ Window {
             Binding {
                 target: seekSlider
                 property: "value"
-                value: window.lyricsAdapter.position
+                value: Math.min(seekSlider.to, Math.max(0, window.lyricsAdapter.position))
                 when: !seekSlider.pressed
                 restoreMode: Binding.RestoreNone
             }

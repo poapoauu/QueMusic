@@ -515,6 +515,12 @@ Router 后续增加 Host-only cancelDownload，Adapter 通过 opaque taskId 查�
 
 普通 `DesktopPlayerWindow` 的标题/歌手仍读旧 window 字段，且它和底栏存在相同范围变化风险，作为下一有界切片继续处理；不能据此删除其他仍在使用的 Legacy 业务。
 
+### 后续增量：普通桌面元数据与两处进度范围已收敛
+
+普通桌面播放器的标题/歌手已接安全 details，并在 Source 空态清空、按纯文本显示。它与原底栏的真实 Slider/Binding 均验证 duration 变化、拖动及 Source/Legacy 切换，修复范围恢复而 position 未变时进度不能恢复的问题。主程序构建及 7 项联合回归通过，尚无真实音频或原生窗口/GPU 手工验收。
+
+剩余差距：底栏标题/歌手及搜索菜单仍消费兼容 window 字段；main 的兼容状态维护及平台专用业务并未因此完成清理。后续先统一这些显示/搜索入口，再继续页面和平台插件化；不删除尚在使用的 Legacy 行为。Source SDK v2 和插件 ABI 不变。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

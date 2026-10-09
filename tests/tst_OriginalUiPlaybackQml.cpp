@@ -122,6 +122,8 @@ private slots:
     void spectrumBridgeRejectsLegacyFramesInStickySourceMode();
     void actualSpectrumBindingControlsCoreFromOriginalDisplayPreference();
     void actualDesktopSpotUsesSafePlaybackPresentation();
+    void originalProgressRangesFollowPresentationChanges_data();
+    void originalProgressRangesFollowPresentationChanges();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -254,6 +256,100 @@ Item {
     QCOMPARE(controls.rateCalls, rateCalls);
     QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::originalProgressRangesFollowPresentationChanges_data()
+{
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<bool>("desktop");
+    QTest::newRow("desktop-player") << QString("components/DesktopPlayerWindow.qml") << true;
+    QTest::newRow("original-bottom-bar") << QString("layout/PlayerControl.qml") << false;
+}
+
+void OriginalUiPlaybackQmlTest::originalProgressRangesFollowPresentationChanges()
+{
+    QFETCH(QString, path); QFETCH(bool, desktop);
+    QQmlEngine engine; PlaybackControllerDouble controls; LegacyPlayerDouble legacy;
+    controls.position = 4200; controls.duration = 5000;
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"controls", QVariant::fromValue<QObject *>(&controls)}, {"legacyPlayer", QVariant::fromValue<QObject *>(&legacy)},
+        {"sourceMode", true}, {"sourceActive", false}, {"sourceItem", QVariantMap{{"title", "<b>Source</b>"},
+            {"artists", QStringList{"Artist A", "Artist B"}}}}, {"legacyDetails", QVariantMap{{"title", "Old"}, {"artist", "Old Artist"}}},
+        {"legacyPosition", 8000}, {"legacyDuration", 10000}, {"legacyActive", true}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/") + path); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto extract = [&source](const QString &type, const QString &id) {
+        const auto declaration = source.indexOf("id: " + id);
+        const auto start = source.lastIndexOf(type + " {", declaration);
+        if (declaration < 0 || start < 0) return QString();
+        int depth = 0;
+        for (auto end = start; end < source.size(); ++end) {
+            if (source[end] == '{') ++depth;
+            else if (source[end] == '}' && --depth == 0) return source.mid(start, end + 1 - start);
+        }
+        return QString();
+    };
+    auto fragment = extract("Slider", desktop ? "seekSlider" : "progressSlider"); QVERIFY(!fragment.isEmpty());
+    if (desktop) {
+        QVERIFY(!source.contains("window.musicTitle")); QVERIFY(!source.contains("window.musicArtist"));
+        const auto title = extract("Text", "playerTitle"), artist = extract("Text", "playerArtist");
+        QVERIFY(!title.isEmpty()); QVERIFY(!artist.isEmpty()); fragment += title + artist;
+    }
+    auto fixture = QStringLiteral(R"(import QtQuick
+import QtQuick.Controls.Basic
+Item { id: musicControlMin; width: 320; height: 90
+    required property var presentation
+    property QtObject window: QtObject { property var lyricsAdapter: musicControlMin.presentation }
+    readonly property real currentPosition: presentation.position
+    readonly property real currentDuration: presentation.duration
+    readonly property string mediaTime: String(currentPosition)
+    property QtObject playerCard: QtObject { property real width: 320 }
+    property QtObject sliderControl: QtObject { property real width: 320 }
+    property var styleFixture: ({themes: {primaryColor: "#222222", secondaryColor: "#444444", sideColor: "#333333",
+        themeColor: "#00ff00", fontColor: "#ffffff", textColor: "#ffffff"}})
+%1
+})").arg(fragment);
+    fixture.replace("Style.", "musicControlMin.styleFixture.");
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/original-progress-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *slider = root->findChild<QObject *>(desktop ? "desktopPlayerSeekSlider" : "originalPlayerSeekSlider"); QVERIFY(slider);
+    QObject *title = nullptr, *artist = nullptr;
+    if (desktop) {
+        title = root->findChild<QObject *>("desktopPlayerTitle"); artist = root->findChild<QObject *>("desktopPlayerArtist");
+        QVERIFY(title); QVERIFY(artist); QVERIFY(title->property("text").toString().isEmpty());
+        QVERIFY(artist->property("text").toString().isEmpty());
+    }
+    QCOMPARE(slider->property("to").toReal(), 1.0); QCOMPARE(slider->property("value").toReal(), 0.0);
+    QVERIFY(bridge->setProperty("sourceActive", true));
+    QCOMPARE(slider->property("to").toReal(), 5000.0); QCOMPARE(slider->property("value").toReal(), 4200.0);
+    if (desktop) {
+        QCOMPARE(title->property("text").toString(), QString("<b>Source</b>"));
+        QCOMPARE(artist->property("text").toString(), QString("Artist A, Artist B"));
+        QCOMPARE(title->property("textFormat").toInt(), 0); QCOMPARE(artist->property("textFormat").toInt(), 0);
+    }
+    controls.duration = 1000; emit controls.durationChanged();
+    QCOMPARE(slider->property("value").toReal(), 1000.0);
+    controls.duration = 5000; emit controls.durationChanged();
+    QCOMPARE(slider->property("value").toReal(), 4200.0); // Position did not change.
+    QVERIFY(slider->setProperty("pressed", true)); QVERIFY(slider->setProperty("value", 3000));
+    controls.position = 2500; emit controls.positionChanged();
+    QCOMPARE(slider->property("value").toReal(), 3000.0);
+    QVERIFY(QMetaObject::invokeMethod(slider, "moved")); QCOMPARE(controls.sought, 3000);
+    QVERIFY(slider->setProperty("pressed", false)); QCOMPARE(slider->property("value").toReal(), 2500.0);
+    QVERIFY(bridge->setProperty("sourceActive", false));
+    QCOMPARE(slider->property("value").toReal(), 0.0); QVERIFY(!slider->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(slider, "moved")); QCOMPARE(controls.sought, 3000); QCOMPARE(legacy.position, 0);
+    if (desktop) { QVERIFY(title->property("text").toString().isEmpty()); QVERIFY(artist->property("text").toString().isEmpty()); }
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QCOMPARE(slider->property("to").toReal(), 10000.0); QCOMPARE(slider->property("value").toReal(), 8000.0);
+    if (desktop) { QCOMPARE(title->property("text").toString(), QString("Old")); QCOMPARE(artist->property("text").toString(), QString("Old Artist")); }
+    QVERIFY(bridge->setProperty("sourceMode", true));
+    QVERIFY(bridge->setProperty("sourceActive", true));
+    QCOMPARE(slider->property("value").toReal(), 2500.0);
 }
 
 void OriginalUiPlaybackQmlTest::actualDesktopSpotUsesSafePlaybackPresentation()
