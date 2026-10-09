@@ -5,6 +5,7 @@ QtObject {
     id: root
     property var musicAdapter: null
     property var controls: null
+    property var legacyPlayer: null
     // Sticky until a genuine legacy playback is explicitly started by Host.
     property bool sourceMode: false
     property bool sourceActive: false
@@ -30,6 +31,22 @@ QtObject {
     readonly property real playbackRate: sourceMode ? (controls ? controls.playbackRate : 1) : legacyRate
     readonly property bool playing: sourceMode ? !!(sourceActive && controls && controls.playing) : legacyPlaying
     readonly property bool active: sourceMode ? sourceActive : legacyActive
+    readonly property bool seekable: sourceMode ? !!(sourceActive && controls && controls.seekable) : legacyActive
+
+    function togglePlayback() {
+        if (sourceMode) {
+            if (!sourceActive || !controls) return;
+            if (controls.playing) controls.pause(); else controls.play();
+        } else if (legacyPlayer) {
+            if (legacyPlayer.playing) legacyPlayer.pause(); else legacyPlayer.play();
+        }
+    }
+
+    function seek(position) {
+        if (!Number.isFinite(position) || position < 0 || !seekable) return;
+        if (sourceMode) controls.seek(position);
+        else if (legacyPlayer) legacyPlayer.position = position;
+    }
 
     function retry() {
         if (sourceMode && state === "failed" && musicAdapter

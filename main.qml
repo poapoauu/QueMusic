@@ -37,6 +37,7 @@ Window {
         id: playbackLyrics
         musicAdapter: window.musicAdapter
         controls: window.playbackAdapter
+        legacyPlayer: mainMedia
         sourceMode: window.sourceLyricsMode
         sourceActive: window.securePlaybackCurrent
         legacyLines: MusicApi.lyricsData || []
@@ -125,19 +126,7 @@ Window {
     }
 
     function togglePlayback() {
-        if (securePlaybackActive) {
-            if (!securePlaybackCurrent)
-                return;
-            if (playbackAdapter.playing)
-                playbackAdapter.pause();
-            else
-                playbackAdapter.play();
-            return;
-        }
-        if (mainMedia.playing)
-            mainMedia.pause();
-        else
-            mainMedia.play();
+        playbackLyrics.togglePlayback();
     }
 
     function syncSecureCurrent() {
@@ -639,7 +628,7 @@ Window {
             opacity: controlMaxLoader.basicCd && controlMaxLoader.visible ? 0 : 1
             y: mainLayout.height - 64
             property int radius: 12
-            scale: mainMedia.playing ? 1.0 : 0.84
+            scale: window.lyricsAdapter.playing ? 1.0 : 0.84
             //layer.enabled: true
             Behavior on scale { NumberAnimation { duration: 320; easing.type: Easing.Bezier; easing.bezierCurve: [ 0.20, 0.04, 0.00, 1.64, 1, 1 ] } }
             Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }

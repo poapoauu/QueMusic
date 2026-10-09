@@ -140,6 +140,16 @@ Source 模式的 `currentCover` 变化触发现有取色器，从 Host 缓存文
 
 取色/背景切片主程序构建与七个相关套件通过：ArtworkPresentation、OriginalUiPlaybackQml、OriginalUiMusicAdapter、OriginalUiStructure、MusicHub、MusicCaches、PlaybackCoordinator。进入 Source 模式时也主动刷新颜色，即使封面字符串与之前默认图相同，也不会沿用旧平台颜色。
 
+### 桌面播放器播放控制与停播隔离
+
+复核发现 DesktopPlayerWindow 的图片虽已迁移，播放/暂停及进度仍直接读写旧 mainMedia，可能在 Source 播放时启动第二播放器。本切片通过已有 Host 私有展示桥接提供 `togglePlayback()`、`seek()` 和 `seekable`，桌面按钮、时间与进度全部接入；main.qml 的统一 togglePlayback 委托桥接，底部播放器时间、播放图标、进度跳转与封面缩放也使用当前播放状态。进度绑定只在未拖动时更新，不再向数值属性写 null。
+
+Source 模式无当前播放/无控制 Adapter/不可跳转时拒绝相应控制，不回退旧播放器；当前 Source 停播后上一首/下一首/随机操作不碰旧队列，重新播放应由用户显式选择队列项。Source 倍速设置继续操作 Core，停播时不修改旧播放器；兼容模式仍能控制真实旧平台播放。只读旧恢复队列不抢占 legacy 模式的既有规则保持，未自动播放任何历史项。
+
+新增实际 QML 桥接测试验证 Source 播放/暂停/跳转只触达 typed controls、不可跳转/无 Adapter/停播拒绝、负进度拒绝、显式兼容模式才控制旧播放器；结构检查桌面播放器没有任何 mainMedia 引用，以及三个换曲入口的停播保护。Source SDK v2 和 Plugin UI API 无变更。播放器收藏/下载、Windows SMTC、频谱与平台信息仍待迁移，真实桌面拖动/音频及视觉验收未完成。
+
+桌面控制切片主程序构建及十个联合回归套件通过：OriginalUiPlaybackQml、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiStructure、ArtworkPresentation、PlaybackCoordinator、QtPlaybackController、PlaybackControlsAdapterQml、LegacyQueueQml、QueueHistoryIntegration。验收文档区分已迁移的展示/控制入口与上述剩余平台路径，不将本切片计为 Phase 6 全部完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

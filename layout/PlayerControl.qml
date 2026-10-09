@@ -24,9 +24,9 @@ Rectangle {
     }
 
     readonly property bool securePlaybackActive: window.securePlaybackCurrent
-    readonly property real currentPosition: securePlaybackActive ? playbackAdapter.position : mainMedia.position
-    readonly property real currentDuration: securePlaybackActive ? playbackAdapter.duration : mainMedia.duration
-    readonly property real currentPlaybackRate: securePlaybackActive ? playbackAdapter.playbackRate : mainMedia.playbackRate
+    readonly property real currentPosition: window.lyricsAdapter.position
+    readonly property real currentDuration: window.lyricsAdapter.duration
+    readonly property real currentPlaybackRate: window.lyricsAdapter.playbackRate
     readonly property string mediaTime: (Math.floor(currentPosition / 60000)) + ":" + (Math.floor(currentPosition / 1000) % 60)
     function formatTime(ms) {
         var seconds = Math.floor(ms / 1000);
@@ -79,7 +79,7 @@ Rectangle {
     //控制条
     Item {
         id: sliderControl
-        visible: musicControlMin.securePlaybackActive || mainMedia.onMedia
+        visible: window.lyricsAdapter.active
         x: 0
         y: -10
         z: 6
@@ -109,18 +109,20 @@ Rectangle {
             width: musicControlMin.width
             from: 0
             to: musicControlMin.currentDuration > 0 ? musicControlMin.currentDuration : 1 // 避免除零错误
-            value: pressed ? null : musicControlMin.currentPosition
+            enabled: window.lyricsAdapter.seekable
+            Binding {
+                target: progressSlider
+                property: "value"
+                value: musicControlMin.currentPosition
+                when: !progressSlider.pressed
+                restoreMode: Binding.RestoreNone
+            }
             live: true
             padding: 0
 
 
             // 关键：用户拖动时，跳转播放位置
-            onMoved: {
-                if (musicControlMin.securePlaybackActive)
-                    playbackAdapter.seek(value)
-                else
-                    mainMedia.position = value
-            }
+            onMoved: window.lyricsAdapter.seek(value)
 
             // 可选：在滑块手柄上显示预览时间
             ToolTip {
@@ -370,7 +372,7 @@ Rectangle {
             }
         }
         SButton {
-            iconCharacter: (musicControlMin.securePlaybackActive ? playbackAdapter.playing : mainMedia.playing) ? "\uf02f" : "\uf00e"
+            iconCharacter: window.lyricsAdapter.playing ? "\uf02f" : "\uf00e"
             width: 46
             height: 46
             radius: 46
@@ -384,7 +386,7 @@ Rectangle {
             }
             QTip {
                 visible: parent.hovered
-                text: (musicControlMin.securePlaybackActive ? playbackAdapter.playing : mainMedia.playing) ? "暂停" : "播放"
+                text: window.lyricsAdapter.playing ? "暂停" : "播放"
             }
         }
         SButton {
@@ -561,7 +563,7 @@ Rectangle {
 
     // 上一首
     function lastMedia() {
-        if (window.securePlaybackActive && !window.securePlaybackCurrent)
+        if (window.sourceLyricsMode && !window.securePlaybackCurrent)
             return;
         const index = musicControlMin.securePlaybackActive ? playbackCoordinator.currentIndex : playListModel.playListIndex;
         if(index > 0) {
@@ -579,7 +581,7 @@ Rectangle {
     }
     // 下一首
     function enterMedia() {
-        if (window.securePlaybackActive && !window.securePlaybackCurrent)
+        if (window.sourceLyricsMode && !window.securePlaybackCurrent)
             return;
         if (musicControlMin.securePlaybackActive) {
             const queueSize = playbackCoordinator.queue.length;
@@ -601,7 +603,7 @@ Rectangle {
     }
     // 随机播放音乐
     function randomMedia() {
-        if (window.securePlaybackActive && !window.securePlaybackCurrent)
+        if (window.sourceLyricsMode && !window.securePlaybackCurrent)
             return;
         if (musicControlMin.securePlaybackActive) {
             const queueSize = playbackCoordinator.queue.length;
@@ -712,7 +714,7 @@ Rectangle {
                     choice: musicControlMin.playerRateIndex
                     model: ["0.5x","0.75x","1x-默认","1.25x","1.5x","2x","自定义"]
                     onTransformed: (choiced) => {
-                        if (musicControlMin.securePlaybackActive)
+                        if (window.sourceLyricsMode)
                             playbackAdapter.setPlaybackRate([0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced]);
                         else
                             mainMedia.playbackRate = [0.5,0.75,1.0,1.25,1.5,2.0,1.0][choiced];
@@ -737,7 +739,7 @@ Rectangle {
                     value: musicControlMin.currentPlaybackRate
                     onMoved: {
                         if(musicControlMin.playerRateIndex === 6) {
-                            if (musicControlMin.securePlaybackActive)
+                            if (window.sourceLyricsMode)
                                 playbackAdapter.setPlaybackRate(value);
                             else
                                 mainMedia.playbackRate = value;

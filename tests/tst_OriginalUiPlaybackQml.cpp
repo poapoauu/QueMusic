@@ -18,8 +18,15 @@ private:
 
 class LegacyPlayerDouble final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool playing MEMBER playing)
+    Q_PROPERTY(qint64 position MEMBER position)
 public:
     int refreshCalls = 0;
+    bool playing = false;
+    qint64 position = 0;
+    int playCalls = 0, pauseCalls = 0;
+    Q_INVOKABLE void play() { ++playCalls; }
+    Q_INVOKABLE void pause() { ++pauseCalls; }
     Q_INVOKABLE void refreshLegacyMusicPlay() { ++refreshCalls; }
 };
 
@@ -87,6 +94,7 @@ private slots:
     void transportAdapterForwardsOnlyTypedControls();
     void mainWiringKeepsSecurePlaybackBelowTheOriginalUi();
     void sourceLyricsNeverFallBackToLegacyDataOrClock();
+    void sourceTransportNeverTouchesLegacyPlayer();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -152,6 +160,40 @@ void OriginalUiPlaybackQmlTest::sourceLyricsNeverFallBackToLegacyDataOrClock()
     QCOMPARE(adapter->property("lines").toList(), legacy);
     QCOMPARE(adapter->property("position").toLongLong(), 900);
     QVERIFY(adapter->property("playing").toBool());
+}
+
+void OriginalUiPlaybackQmlTest::sourceTransportNeverTouchesLegacyPlayer()
+{
+    QQmlEngine engine; PlaybackControllerDouble controls; LegacyPlayerDouble legacy;
+    QQmlComponent component(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> adapter(component.createWithInitialProperties({
+        {"controls", QVariant::fromValue<QObject *>(&controls)},
+        {"legacyPlayer", QVariant::fromValue<QObject *>(&legacy)},
+        {"sourceMode", true}, {"sourceActive", true}, {"legacyActive", true}}));
+    QVERIFY2(adapter, qPrintable(component.errorString()));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(controls.playCalls, 1);
+    controls.playing = true; emit controls.playingChanged();
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(controls.pauseCalls, 1);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 640))); QCOMPARE(controls.sought, 640);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, -1))); QCOMPARE(controls.sought, 640);
+    controls.seekable = false; emit controls.seekableChanged();
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 200))); QCOMPARE(controls.sought, 640);
+    QVERIFY(adapter->setProperty("sourceActive", false));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback"));
+    QCOMPARE(controls.playCalls, 1); QCOMPARE(controls.pauseCalls, 1);
+    QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.pauseCalls, 0); QCOMPARE(legacy.position, 0);
+    QVERIFY(adapter->setProperty("controls", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(adapter->setProperty("sourceActive", true));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback"));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 300)));
+    QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.position, 0);
+    QVERIFY(adapter->setProperty("sourceMode", false));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(legacy.playCalls, 1);
+    legacy.playing = true;
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(legacy.pauseCalls, 1);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 500))); QCOMPARE(legacy.position, 500);
+    QCOMPARE(controls.sought, 640);
 }
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,
@@ -267,7 +309,19 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
         const auto text = QString::fromUtf8(coverFile.readAll());
         QVERIFY(text.contains(QStringLiteral("source: window.currentCover")));
         QVERIFY(!text.contains(QStringLiteral("mainMedia.urlStr")));
+        if (path.endsWith(QStringLiteral("DesktopPlayerWindow.qml"))) {
+            QVERIFY(!text.contains(QStringLiteral("mainMedia.")));
+            QVERIFY(text.contains(QStringLiteral("onClicked: window.togglePlayback()")));
+            QVERIFY(text.contains(QStringLiteral("onMoved: window.lyricsAdapter.seek(value)")));
+            QVERIFY(text.contains(QStringLiteral("enabled: window.lyricsAdapter.seekable")));
+        }
     }
+    QVERIFY(source.contains(QStringLiteral("playbackLyrics.togglePlayback()")));
+    QFile controlsFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml"));
+    QVERIFY(controlsFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const auto controlsText = QString::fromUtf8(controlsFile.readAll());
+    QCOMPARE(controlsText.count(QStringLiteral("if (window.sourceLyricsMode && !window.securePlaybackCurrent)")), 3);
+    QVERIFY(controlsText.contains(QStringLiteral("onMoved: window.lyricsAdapter.seek(value)")));
 
     for (const QString &path : {QStringLiteral("/layout/PlayerMaxCenter.qml"), QStringLiteral("/components/DesktopLyrics.qml")}) {
         QFile lyricsFile(QStringLiteral(QUEMUSIC_SOURCE_DIR) + path);

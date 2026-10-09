@@ -102,10 +102,17 @@ Window {
             width: playerCard.width - 102 - 14
             height: 16
             from: 0
-            to: mainMedia.duration > 0 ? mainMedia.duration : 1
-            value: pressed ? null : mainMedia.position
+            to: window.lyricsAdapter.duration > 0 ? window.lyricsAdapter.duration : 1
+            enabled: window.lyricsAdapter.seekable
+            Binding {
+                target: seekSlider
+                property: "value"
+                value: window.lyricsAdapter.position
+                when: !seekSlider.pressed
+                restoreMode: Binding.RestoreNone
+            }
             live: true
-            onMoved: mainMedia.position = value
+            onMoved: window.lyricsAdapter.seek(value)
             padding: 0
             background: Rectangle {
                 y: (seekSlider.height - 4) / 2
@@ -140,7 +147,7 @@ Window {
             y: 72
             width: playerCard.width - 102 - 14
             height: 16
-            text: desktopPlayerWindow.formatTime(mainMedia.position) + " / " + desktopPlayerWindow.formatTime(mainMedia.duration)
+            text: desktopPlayerWindow.formatTime(window.lyricsAdapter.position) + " / " + desktopPlayerWindow.formatTime(window.lyricsAdapter.duration)
             font.pixelSize: 11
             color: Style.themes.textColor
             horizontalAlignment: Text.AlignRight
@@ -173,6 +180,7 @@ Window {
 
         SButton {
             id: lastButton
+            enabled: window.lyricsAdapter.active
             x: 108
             y: 95
             width: 36
@@ -192,31 +200,27 @@ Window {
         }
         SButton {
             id: playButton
+            enabled: window.lyricsAdapter.active
             x: 150
             y: 93
             width: 40
             height: 40
             radius: 20
-            iconCharacter: mainMedia.playing ? "\uf02f" : "\uf00e"
+            iconCharacter: window.lyricsAdapter.playing ? "\uf02f" : "\uf00e"
             iconSize: Style.settings.texticonH
             buttonColor: Style.themes.secondaryBlurColor
             hoverColor: Style.themes.hoverColor
             iconColor: Style.themes.textColor
             shadowEnabled: false
-            onClicked: {
-                if (mainMedia.playing) {
-                    mainMedia.pause();
-                } else {
-                    mainMedia.play();
-                }
-            }
+            onClicked: window.togglePlayback()
             QTip {
                 visible: parent.hovered
-                text: mainMedia.playing ? "暂停" : "播放"
+                text: window.lyricsAdapter.playing ? "暂停" : "播放"
             }
         }
         SButton {
             id: nextButton
+            enabled: window.lyricsAdapter.active
             x: 196
             y: 95
             width: 36
