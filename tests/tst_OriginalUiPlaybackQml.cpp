@@ -124,6 +124,8 @@ private slots:
     void actualDesktopSpotUsesSafePlaybackPresentation();
     void originalProgressRangesFollowPresentationChanges_data();
     void originalProgressRangesFollowPresentationChanges();
+    void actualPlayerMetadataMenusUseSafeDisplaySnapshots();
+    void actualMenuLabelsTreatPluginTextAsPlainText();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -256,6 +258,129 @@ Item {
     QCOMPARE(controls.rateCalls, rateCalls);
     QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::actualMenuLabelsTreatPluginTextAsPlainText()
+{
+    QQmlEngine engine;
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/components/QMenu.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    auto source = QString::fromUtf8(file.readAll());
+    source.replace("property Item blurSource: mainLayout", "property Item blurSource: null");
+    source.replace("Style.", "dialog.styleFixture.");
+    const auto start = source.indexOf("Menu {"); QVERIFY(start >= 0);
+    source.insert(start + 6, QStringLiteral(R"(
+    property var styleFixture: ({themes: {hoverColor: "#cccccc", fontColor: "#222222"}, settings: {labelRadius: 8, textmain: 14}})
+    component QBlurCard: Rectangle { property bool shadowEffect; property Item blurSource;
+        property bool masked; property var rectXy; property real borderRadius }
+)"));
+    QQmlComponent component(&engine); component.setData(source.toUtf8(), QUrl("qrc:/menu-label-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    const QString label("<b>Literal plugin artist</b>");
+    std::unique_ptr<QObject> menu(component.createWithInitialProperties({{"model", QStringList{label}}}));
+    QVERIFY2(menu, qPrintable(component.errorString()));
+    const auto labels = menu->findChildren<QObject *>("menuDisplayText"); QVERIFY(!labels.isEmpty());
+    for (auto *text : labels) {
+        QCOMPARE(text->property("text").toString(), label);
+        QCOMPARE(text->property("textFormat").toInt(), 0);
+    }
+}
+
+void OriginalUiPlaybackQmlTest::actualPlayerMetadataMenusUseSafeDisplaySnapshots()
+{
+    QQmlEngine engine;
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"sourceMode", true}, {"sourceActive", true}, {"sourceItem", QVariantMap{{"title", "<b>Source Title</b>"},
+            {"artists", QStringList{"Alpha / Beta", "Gamma"}}}},
+        {"legacyDetails", QVariantMap{{"title", "Old Title"}, {"artist", "Old Artist"}}}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto block = [&source](qsizetype start) {
+        if (start < 0) return QString();
+        int depth = 0;
+        for (auto end = start; end < source.size(); ++end) {
+            if (source[end] == '{') ++depth;
+            else if (source[end] == '}' && --depth == 0) return source.mid(start, end + 1 - start);
+        }
+        return QString();
+    };
+    const auto title = block(source.lastIndexOf("Text {", source.indexOf("id: titleDisplay")));
+    const auto artist = block(source.lastIndexOf("Text {", source.indexOf("id: artistDisplay")));
+    // Explicit Legacy favorites still use compatibility fields; only these
+    // display/search fragments must be free of them.
+    QVERIFY(!title.contains("window.musicTitle")); QVERIFY(!artist.contains("window.musicArtist"));
+    const auto parse = block(source.indexOf("function parseArtists(raw)"));
+    const auto search = block(source.indexOf("function doSearchSongsMessage(name)"));
+    const auto headerStart = source.indexOf("readonly property string currentTitle:");
+    const auto headerEnd = source.indexOf("readonly property string mediaTime:", headerStart);
+    QVERIFY(!title.isEmpty()); QVERIFY(!artist.isEmpty()); QVERIFY(!parse.isEmpty()); QVERIFY(!search.isEmpty());
+    QVERIFY(headerStart >= 0 && headerEnd > headerStart);
+    auto fixture = QStringLiteral(R"(import QtQuick
+Item { id: musicControlMin; width: 320; height: 90
+    required property var presentation
+    property QtObject window: QtObject {
+        property var lyricsAdapter: musicControlMin.presentation; property int exitIndex: 0
+        property QtObject musicAdapter: QtObject { property var queries: []; property int page: -1
+            function search(query, offset) { queries = queries.concat([query]); page = offset; } }
+    }
+    property QtObject mainSearchInput: QtObject { property string text: "" }
+    property QtObject mainContent: QtObject { property int index: -1; function contentIndexed(value) { index = value; } }
+    property var styleFixture: ({themes: {themeColor: "#00ff00", textColor: "#222222"}})
+    component QMenu: Item { property list<string> model: []; property bool masked; property var blurSource
+        property int popupCalls: 0; property int closeCalls: 0; signal clicked(int index)
+        function popup() { ++popupCalls; } function close() { ++closeCalls; } }
+    function clickTitle() { titleDisplayMouse.clicked(null); }
+    function clickArtist() { artistDisplayMouse.clicked(null); }
+%1
+%2
+%3
+%4
+%5
+})").arg(source.mid(headerStart, headerEnd - headerStart), parse, search, title, artist);
+    fixture.replace("Style.", "musicControlMin.styleFixture.");
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/metadata-menu-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *titleText = root->findChild<QObject *>("originalPlayerTitle"); QVERIFY(titleText);
+    auto *artistText = root->findChild<QObject *>("originalPlayerArtist"); QVERIFY(artistText);
+    auto *titleMenu = root->findChild<QObject *>("originalPlayerTitleMenu"); QVERIFY(titleMenu);
+    auto *artistMenu = root->findChild<QObject *>("originalPlayerArtistMenu"); QVERIFY(artistMenu);
+    auto *window = root->property("window").value<QObject *>(); QVERIFY(window);
+    auto *adapter = window->property("musicAdapter").value<QObject *>(); QVERIFY(adapter);
+    QCOMPARE(titleText->property("text").toString(), QString("<b>Source Title</b>"));
+    QCOMPARE(artistText->property("text").toString(), QString("Alpha / Beta, Gamma"));
+    QCOMPARE(titleText->property("textFormat").toInt(), 0); QCOMPARE(artistText->property("textFormat").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickTitle"));
+    QVERIFY(QMetaObject::invokeMethod(titleMenu, "clicked", Q_ARG(int, 0)));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickArtist"));
+    QCOMPARE(artistMenu->property("model").toStringList(), QStringList({"搜索", "Alpha", "Beta", "Gamma"}));
+    QVERIFY(QMetaObject::invokeMethod(artistMenu, "clicked", Q_ARG(int, 2)));
+    QCOMPARE(adapter->property("queries").toList(), QVariantList({"<b>Source Title</b>", "Beta"}));
+    QCOMPARE(adapter->property("page").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(artistMenu, "clicked", Q_ARG(int, -1)));
+    QVERIFY(QMetaObject::invokeMethod(artistMenu, "clicked", Q_ARG(int, 10)));
+    QCOMPARE(adapter->property("queries").toList().size(), 2);
+    const auto titleCloses = titleMenu->property("closeCalls").toInt(), artistCloses = artistMenu->property("closeCalls").toInt();
+    QVERIFY(bridge->setProperty("sourceItem", QVariantMap{{"title", "Next Title"}, {"artists", QStringList{"Next Artist"}}}));
+    QVERIFY(titleMenu->property("closeCalls").toInt() > titleCloses); QVERIFY(artistMenu->property("closeCalls").toInt() > artistCloses);
+    QVERIFY(QMetaObject::invokeMethod(titleMenu, "clicked", Q_ARG(int, 0)));
+    QVERIFY(QMetaObject::invokeMethod(artistMenu, "clicked", Q_ARG(int, 1)));
+    QCOMPARE(adapter->property("queries").toList().size(), 2);
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickTitle"));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickArtist"));
+    QVERIFY(bridge->setProperty("sourceActive", false));
+    QVERIFY(titleText->property("text").toString().isEmpty()); QVERIFY(artistText->property("text").toString().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(titleMenu, "clicked", Q_ARG(int, 0)));
+    QVERIFY(QMetaObject::invokeMethod(artistMenu, "clicked", Q_ARG(int, 1)));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickTitle"));
+    QCOMPARE(adapter->property("queries").toList().size(), 2);
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QCOMPARE(titleText->property("text").toString(), QString("Old Title"));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickTitle"));
+    QVERIFY(QMetaObject::invokeMethod(titleMenu, "clicked", Q_ARG(int, 0)));
+    QCOMPARE(adapter->property("queries").toList().constLast().toString(), QString("Old Title"));
 }
 
 void OriginalUiPlaybackQmlTest::originalProgressRangesFollowPresentationChanges_data()

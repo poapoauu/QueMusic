@@ -48,7 +48,9 @@ Menu {
             text: modelData
             //显式指定contentItem，
             contentItem: Text {
+                objectName: "menuDisplayText"
                 text: menuItem.text
+                textFormat: Text.PlainText
                 color: Style.themes.fontColor//使用项目主题文字色，深浅色主题下都可读
                 font.pixelSize: Style.settings.textmain
                 verticalAlignment: Text.AlignVCenter

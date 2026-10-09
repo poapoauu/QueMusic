@@ -279,6 +279,14 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 实际生产 Text/Slider/Binding 片段的双场景测试覆盖 Source 空态到当前项、范围缩小/恢复、拖动/释放、停播、Legacy 往返及纯文本元数据。主程序构建及 7 项联合回归通过；不代表手工视觉/音频验收。
 - SDK / 插件 ABI 不变。底栏标题及其搜索菜单仍读取兼容 window 字段，后续应改由同一安全 details 驱动；其余平台业务迁移仍按总体顺序推进。
 
+### 底栏元数据与搜索菜单：安全展示及旧选择隔离
+
+- 原底栏标题/歌手改读统一 details，并以 PlainText 显示；标题和歌手搜索保留原菜单与拆分交互，仍通过已有通用 Adapter search 发起。
+- 菜单保存打开时的展示文本。当前展示改变时关闭菜单并清除快照；旧选择、空文本及非法歌手索引不触发搜索。Source 空态不显示/搜索旧 window 标题字段。
+- 通用 `QMenu` 的文字委托使用 PlainText，避免音源提供的标签被解释为富文本；真实 MenuItem/Text 委托有 offscreen 验证（只有背景 Theme/Blur 为 stand-in）。
+- 原 title/artist Text、MouseArea、parseArtists、search 和菜单处理器组合测试覆盖当前关键词、多歌手、元数据变化、停播、旧选择拒绝及显式 Legacy。主程序构建与 7 项联合回归通过；仍未完成原生桌面/GPU/真实音频验收。
+- 只迁移显示与搜索，显式 Legacy 收藏及 main 兼容状态字段仍保留。下一步继续审计其他旧标题消费者与页面/平台专用业务；不将当前切片视为全部插件化完成。SDK / 插件 ABI 不变。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

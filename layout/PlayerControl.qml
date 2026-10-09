@@ -37,6 +37,14 @@ Rectangle {
     readonly property real currentPosition: window.lyricsAdapter.position
     readonly property real currentDuration: window.lyricsAdapter.duration
     readonly property real currentPlaybackRate: window.lyricsAdapter.playbackRate
+    readonly property string currentTitle: window.lyricsAdapter.details.title || ""
+    readonly property string currentArtist: window.lyricsAdapter.details.artist || ""
+    onCurrentTitleChanged: {
+        if (titleMenu) { titleMenu.close(); titleMenu.displayTitle = ""; }
+    }
+    onCurrentArtistChanged: {
+        if (artistMenu) { artistMenu.close(); artistMenu.model = []; artistMenu.displayArtist = ""; }
+    }
     readonly property string mediaTime: (Math.floor(currentPosition / 60000)) + ":" + (Math.floor(currentPosition / 1000) % 60)
     function formatTime(ms) {
         var seconds = Math.floor(ms / 1000);
@@ -195,12 +203,14 @@ Rectangle {
 
         Text {
             id: titleDisplay
+            objectName: "originalPlayerTitle"
             y: 0
             x: 0
             width: 128
             elide: Text.ElideRight
             height: 25
-            text: window.musicTitle
+            text: musicControlMin.currentTitle
+            textFormat: Text.PlainText
             font.bold: true
             font.pixelSize: 15
             verticalAlignment: Text.AlignVCenter
@@ -208,33 +218,40 @@ Rectangle {
 
             MouseArea {
                 id: titleDisplayMouse
+                objectName: "originalPlayerTitleMouse"
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if(!window.musicTitle)  return;
+                    if (!musicControlMin.currentTitle) return;
+                    titleMenu.displayTitle = musicControlMin.currentTitle;
                     titleMenu.popup();
                 }
             }
             // 为防止误触，使用点击弹出菜单再搜索
             QMenu {
                 id: titleMenu
+                objectName: "originalPlayerTitleMenu"
+                property string displayTitle: ""
                 model: ["搜索歌曲名"]
                 masked: true
                 blurSource: null // 位置特殊，关闭模糊效果
                 onClicked: (index) => {
-                    musicControlMin.doSearchSongsMessage(window.musicTitle);
+                    if (index !== 0 || !displayTitle || displayTitle !== musicControlMin.currentTitle) return;
+                    musicControlMin.doSearchSongsMessage(displayTitle);
                 }
             }
         }
         Text {
             id: artistDisplay
+            objectName: "originalPlayerArtist"
             y: 25
             x: 0
             width: 128
             elide: Text.ElideRight
             height: 25
-            text: window.musicArtist
+            text: musicControlMin.currentArtist
+            textFormat: Text.PlainText
             font.bold: false
             font.pixelSize: 13
             verticalAlignment: Text.AlignVCenter
@@ -242,12 +259,14 @@ Rectangle {
 
             MouseArea {
                 id: artistDisplayMouse
+                objectName: "originalPlayerArtistMouse"
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if(!window.musicArtist)  return; //本地音乐没有歌手信息时，忽略
-                    var artists = musicControlMin.parseArtists(window.musicArtist);
+                    if (!musicControlMin.currentArtist) return;
+                    artistMenu.displayArtist = musicControlMin.currentArtist;
+                    var artists = musicControlMin.parseArtists(artistMenu.displayArtist);
                     artistMenu.model = artists;// 多歌手,弹菜单
                     artistMenu.popup();
 
@@ -260,12 +279,16 @@ Rectangle {
             //多位歌手时，显示菜单
             QMenu {
                 id: artistMenu
+                objectName: "originalPlayerArtistMenu"
+                property string displayArtist: ""
                 model: []
                 masked: true
                 blurSource: null // 位置特殊，关闭模糊效果
                 onClicked: (index) => {
+                    if (!Number.isInteger(index) || index < 0 || index >= model.length
+                            || !displayArtist || displayArtist !== musicControlMin.currentArtist) return;
                     if(index === 0) {
-                        musicControlMin.doSearchSongsMessage(window.musicArtist);
+                        musicControlMin.doSearchSongsMessage(displayArtist);
                     } else {
                         musicControlMin.doSearchSongsMessage(model[index]);
                     }
