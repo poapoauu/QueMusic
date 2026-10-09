@@ -8,9 +8,23 @@
 #include "core/media/TimedLyrics.h"
 
 #include <QRegularExpression>
+#include <QDir>
+#include <QFileInfo>
 #include <utility>
 
 namespace {
+
+bool newDownloadDestination(const QUrl &url)
+{
+    if (!url.isValid() || !url.isLocalFile() || !url.host().isEmpty() || !url.userInfo().isEmpty()
+        || url.port() != -1 || url.hasQuery() || url.hasFragment()) return false;
+    const auto path = url.toLocalFile();
+    if (path.isEmpty() || path.contains(QChar::Null)) return false;
+    const QFileInfo target(path);
+    const QFileInfo parent(target.dir().absolutePath());
+    return target.isAbsolute() && !target.fileName().isEmpty() && !target.exists() && !target.isSymLink()
+        && parent.exists() && parent.isDir() && parent.isWritable();
+}
 
 QString artistName(const QVariantMap &item)
 {
@@ -104,6 +118,8 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
 {
     if (!m_hub) return;
     if (m_playback) {
+        connect(m_playback, &PlaybackCoordinator::currentChanged, this, [this] { syncCurrentDownload(); });
+        connect(m_playback, &QObject::destroyed, this, [this] { m_playback = nullptr; syncCurrentDownload(); });
         connect(m_playback, &PlaybackCoordinator::currentChanged, this, [this] { syncCurrentFavorite(); });
         connect(m_playback, &PlaybackCoordinator::currentChanged, this, [this] { syncCurrentLyrics(); });
         connect(m_playback, &QObject::destroyed, this, [this] { m_playback = nullptr; syncCurrentFavorite(); });
@@ -163,6 +179,22 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
             m_favoriteRequest = {}; m_favoriteFailed = true;
             emit currentFavoriteChanged();
         });
+        connect(m_hub->actions(), &MediaActionRouter::actionSucceeded, this, [this](QUuid id, QVariantMap result) {
+            if (!downloadRequestIsCurrent(id)) return;
+            const auto destination = result.value("destination");
+            m_downloadFailed = result.value("action").toInt() != int(SourceActionV2::Download)
+                || result.value("subject").toMap() != m_downloadMedia
+                || destination.metaType().id() != QMetaType::QUrl || destination.toUrl() != m_downloadDestination;
+            m_downloadRequest = {}; m_downloadDestination = QUrl{};
+            m_downloadCompleted = !m_downloadFailed;
+            emit currentDownloadChanged();
+        });
+        connect(m_hub->actions(), &MediaActionRouter::actionFailed, this, [this](QUuid id, const QVariantMap &) {
+            if (!downloadRequestIsCurrent(id)) return;
+            m_downloadRequest = {}; m_downloadDestination = QUrl{};
+            m_downloadFailed = true; m_downloadCompleted = false;
+            emit currentDownloadChanged();
+        });
     }
     const auto observe = [this](MusicPageModel *model) {
         connect(model, &QAbstractItemModel::modelReset, this, &OriginalUiMusicAdapter::rebuild);
@@ -188,6 +220,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     connect(m_hub, &QObject::destroyed, this, [this] {
         m_hub = nullptr;
         syncCurrentFavorite();
+        syncCurrentDownload();
     });
     connect(m_hub, &QObject::destroyed, this, [this] {
         m_hub = nullptr;
@@ -201,6 +234,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     });
     rebuild();
     syncCurrentFavorite();
+    syncCurrentDownload();
     syncCurrentLyrics();
 }
 
@@ -249,6 +283,61 @@ QUuid OriginalUiMusicAdapter::setCurrentFavorite(bool favorite, const QString &e
     const auto request = m_hub->actions()->setFavorite(item, favorite);
     if (!guard) return request;
     if (favoriteRequestIsCurrent(reservation)) m_favoriteRequest = request;
+    return request;
+}
+
+QVariantMap OriginalUiMusicAdapter::currentDownload() const
+{
+    const auto item = m_hub && m_playback ? m_playback->currentActionItem() : QVariantMap{};
+    const bool same = !item.isEmpty() && m_playback->currentGeneration() == m_downloadGeneration
+        && item.value("ref").toMap() == m_downloadMedia;
+    return {{"canDownload", !item.isEmpty() && actionCapability(item, SourceActionV2::Download).value("enabled").toBool()},
+            {"pending", same && !m_downloadRequest.isNull()}, {"failed", same && m_downloadFailed},
+            {"completed", same && m_downloadCompleted},
+            {"token", !item.isEmpty() ? m_playback->currentGeneration().toString(QUuid::WithoutBraces) : QString{}}};
+}
+void OriginalUiMusicAdapter::syncCurrentDownload(bool notify)
+{
+    const auto item = m_hub && m_playback ? m_playback->currentActionItem() : QVariantMap{};
+    const auto generation = !item.isEmpty() ? m_playback->currentGeneration() : QUuid{};
+    const auto media = item.value("ref").toMap();
+    if (generation != m_downloadGeneration || media != m_downloadMedia) {
+        m_downloadGeneration = generation; m_downloadMedia = media; m_downloadRequest = {};
+        m_downloadDestination = QUrl{}; m_downloadFailed = false; m_downloadCompleted = false;
+    }
+    if (notify) emit currentDownloadChanged();
+}
+bool OriginalUiMusicAdapter::downloadRequestIsCurrent(const QUuid &id) const
+{
+    return !id.isNull() && id == m_downloadRequest && m_hub && m_playback
+        && m_playback->currentGeneration() == m_downloadGeneration
+        && m_playback->currentActionItem().value("ref").toMap() == m_downloadMedia;
+}
+QUuid OriginalUiMusicAdapter::downloadCurrent(const QUrl &destination, const QString &expectedToken)
+{
+    if (expectedToken.isEmpty() || !m_playback
+        || expectedToken != m_playback->currentGeneration().toString(QUuid::WithoutBraces)) return {};
+    const QPointer<OriginalUiMusicAdapter> guard(this);
+    syncCurrentDownload(false);
+    if (!guard || !m_hub || !m_playback || !m_downloadRequest.isNull()) return {};
+    const auto item = m_playback->currentActionItem();
+    if (item.isEmpty() || !actionCapability(item, SourceActionV2::Download).value("enabled").toBool()) return {};
+    m_downloadCompleted = false;
+    if (!newDownloadDestination(destination)) {
+        m_downloadFailed = true; emit currentDownloadChanged(); return {};
+    }
+    const auto reservation = QUuid::createUuid();
+    m_downloadRequest = reservation; m_downloadDestination = destination; m_downloadFailed = false;
+    emit currentDownloadChanged();
+    if (!guard || !downloadRequestIsCurrent(reservation)) return {};
+    // Observers may create the target while reacting to pending; recheck before dispatch.
+    if (!newDownloadDestination(destination)) {
+        m_downloadRequest = {}; m_downloadDestination = QUrl{}; m_downloadFailed = true;
+        emit currentDownloadChanged(); return {};
+    }
+    const auto request = m_hub->actions()->download(item, destination);
+    if (!guard) return request;
+    if (downloadRequestIsCurrent(reservation)) m_downloadRequest = request;
     return request;
 }
 

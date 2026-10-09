@@ -192,6 +192,16 @@ Source 系统媒体信息仅从 Coordinator 当前项提取 title/artists/album�
 
 新增实际按钮 QML 逻辑测试覆盖 Source 活跃/停播都零旧队列读取与零旧 API 调用、明确进入 legacy 才发送原请求、越界与 Legacy Local 拒绝。主程序构建及七个 UI/播放/路由联合套件通过。此切片是封堵旧回退，不是实现当前 Source 下载：现有 MediaActionRouter 已支持 Download Provider，但当前播放权限快照尚未包含 Download，Adapter 也尚无当前下载与用户目标文件选择流程。后续应演进该 Host 流程、按播放 token 和完整身份捕获用户操作、复用 Router 权限检查；不得为下载向 QML 泄露流 URL，或未经明确选择覆盖文件。SDK v2/Plugin UI API 不变，真实下载与视觉验收未完成。
 
+### 当前 Source 下载的 Host 动作契约
+
+Coordinator 当前动作快照增量加入 Download，分别检查 IDownloadProviderV2 与已有 Plugin/Server/Account/Media 权限交集；不改变 SDK v2 虚接口。权限变化立即清空旧许可再异步复核，仅下载权限变化不打断合法播放；缺少媒体 Download 提示、无法执行的 bitrate 约束和历史恢复项不能被提升为可下载。
+
+Adapter 新增 currentDownload（仅 canDownload/pending/failed/completed/token）及必须携带 expectedToken 的 downloadCurrent(destination, expectedToken)。令牌绑定当前 generation，Host 私有状态保留完整身份和请求 ID，读取不调用插件。提交使用当前队列项而非页面行，pending 防重入/重复；结果须匹配请求、播放代次、身份与目标，切歌后迟到结果不改变新曲目，同 ID 的多实例/账号不混用状态。已分发下载作为独立业务可继续，不因切歌撤回；此展示状态不是跨曲目下载任务管理器。
+
+Host 只接受用户指定的新绝对本地文件目标：拒绝远程/相对/带 query、fragment、userinfo、NUL 的地址、已有文件或目录、悬空符号链接、无效/不可写父目录，不创建目标和父目录，也不自动覆盖。pending 观察者之后再次复核，观察者停播或创建目标时不分发。Router 继续检查实际权限、Provider 和返回的本地 destination；失败仅公开布尔状态，不泄露 URL、headers、账号或诊断。Navidrome 原有临时文件及最终 rename 的不覆盖保护保留；Host 的前置检查不能代替第三方插件自己的提交期不覆盖检查。
+
+主程序构建和四个联合套件通过：OriginalUiMusicAdapter、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration。真实插件夹具新增验证目标拒绝与已有文件保留、页面替换仍按当前身份路由、去重/重入、成功与失败重试、错误结果拒绝、多实例和重播 stale token、迟到结果、Hub 销毁、权限降级/恢复/Unsupported、媒体缺许可/bitrate 约束、恢复项不提升、观察者停播和目标竞态。该夹具不写下载内容，不能证明真实服务器字节落盘；保存对话框和当前按钮将在下一切片接入，真实下载及手工视觉仍待验收。Host 展示/API 需同步构建，Source SDK v2 与 Plugin UI API ABI 不变。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

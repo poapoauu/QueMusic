@@ -285,9 +285,11 @@ bool PlaybackCoordinator::allowed(const std::shared_ptr<Active> &a,SourceActionV
 bool PlaybackCoordinator::refreshCurrentActions(const std::shared_ptr<Active> &a) {
     const QPointer<PlaybackCoordinator> guard(this);
     const auto revision = a->capabilityRevision;
-    const bool provider = qobject_cast<IFavoriteProviderV2 *>(a->session.data());
     QVariantMap actions;
-    for (auto action : {SourceActionV2::Favorite, SourceActionV2::Unfavorite}) {
+    for (auto action : {SourceActionV2::Favorite, SourceActionV2::Unfavorite, SourceActionV2::Download}) {
+        const bool provider = action == SourceActionV2::Download
+            ? bool(qobject_cast<IDownloadProviderV2 *>(a->session.data()))
+            : bool(qobject_cast<IFavoriteProviderV2 *>(a->session.data()));
         const bool available = provider && allowed(a, action);
         if (!guard || !current(a) || revision != a->capabilityRevision) return false;
         actions.insert(QString::number(int(action)), QVariantMap{

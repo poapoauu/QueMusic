@@ -41,6 +41,7 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(QString currentLyricsState READ currentLyricsState NOTIFY currentLyricsChanged)
     Q_PROPERTY(QUrl currentCover READ currentCover NOTIFY currentCoverChanged)
     Q_PROPERTY(QVariantMap currentFavorite READ currentFavorite NOTIFY currentFavoriteChanged)
+    Q_PROPERTY(QVariantMap currentDownload READ currentDownload NOTIFY currentDownloadChanged)
     Q_PROPERTY(bool directoryCanNavigateBack READ directoryCanNavigateBack NOTIFY directoryChanged)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
@@ -54,6 +55,8 @@ public:
     QUrl currentCover() const;
     QVariantMap currentFavorite() const;
     Q_INVOKABLE QUuid setCurrentFavorite(bool favorite, const QString &expectedToken = {});
+    QVariantMap currentDownload() const;
+    Q_INVOKABLE QUuid downloadCurrent(const QUrl &destination, const QString &expectedToken);
     Q_INVOKABLE void retryCurrentLyrics();
 
     OnlineListModel *recommendSongs() const;
@@ -112,6 +115,7 @@ signals:
     void currentLyricsChanged();
     void currentCoverChanged();
     void currentFavoriteChanged();
+    void currentDownloadChanged();
 
 private:
     QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
@@ -130,6 +134,8 @@ private:
     void clearCurrentLyrics();
     void syncCurrentFavorite(bool notify = true);
     bool favoriteRequestIsCurrent(const QUuid &id) const;
+    void syncCurrentDownload(bool notify = true);
+    bool downloadRequestIsCurrent(const QUuid &id) const;
 
     QPointer<MusicHub> m_hub;
     QPointer<PlaybackCoordinator> m_playback;
@@ -161,4 +167,10 @@ private:
     QUuid m_favoriteRequest;
     QString m_favoriteState = QStringLiteral("unknown");
     bool m_favoriteFailed = false;
+    QUuid m_downloadGeneration;
+    QVariantMap m_downloadMedia;
+    QUuid m_downloadRequest;
+    QUrl m_downloadDestination;
+    bool m_downloadFailed = false;
+    bool m_downloadCompleted = false;
 };

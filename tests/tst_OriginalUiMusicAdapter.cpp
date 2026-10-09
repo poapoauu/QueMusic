@@ -5,9 +5,10 @@
 class OriginalUiAdapterSession final : public IMusicSourceSessionV2,
                                        public IPageProviderV2,
                                        public IFavoriteProviderV2,
+                                       public IDownloadProviderV2,
                                        public IPlaybackProviderV2 {
     Q_OBJECT
-    Q_INTERFACES(IPageProviderV2 IFavoriteProviderV2 IPlaybackProviderV2)
+    Q_INTERFACES(IPageProviderV2 IFavoriteProviderV2 IDownloadProviderV2 IPlaybackProviderV2)
 public:
     OriginalUiAdapterSession(SourceConfigurationV2 configuration, QObject *parent)
         : IMusicSourceSessionV2(parent), m_configuration(std::move(configuration)) {}
@@ -22,12 +23,14 @@ public:
     {
         CapabilitySetV2 result;
         for (const auto action : {SourceActionV2::Play, SourceActionV2::Favorite,
-                                  SourceActionV2::Unfavorite}) {
+                                  SourceActionV2::Unfavorite, SourceActionV2::Download}) {
             result.serverActions.insert(action, {AvailabilityV2::Available, {}, {}});
             result.accountActions.insert(action, {AvailabilityV2::Available, {}, {}});
         }
         if (property("denyFavorite").toBool()) result.accountActions[SourceActionV2::Favorite] = {AvailabilityV2::Forbidden};
         if (property("denyUnfavorite").toBool()) result.accountActions[SourceActionV2::Unfavorite] = {AvailabilityV2::Forbidden};
+        if (property("denyDownload").toBool()) result.accountActions[SourceActionV2::Download] = {AvailabilityV2::Forbidden};
+        if (property("unsupportedDownload").toBool()) result.serverActions[SourceActionV2::Download] = {AvailabilityV2::Unsupported};
         return result;
     }
     QUuid open() override
@@ -94,6 +97,18 @@ public:
                                   media, {{QStringLiteral("favorite"), favorite}}});
         return id;
     }
+    QUuid download(const MediaRefV2 &media, const QUrl &destination) override
+    {
+        const auto id = QUuid::createUuid();
+        auto requests = property("downloadRequests").toList();
+        requests.append(QVariantMap{{"id", id}, {"ref", mediaRefV2ToVariantMap(media)}, {"destination", destination}});
+        setProperty("downloadRequests", requests);
+        emit requestStarted(id);
+        if (property("holdDownload").toBool()) return id;
+        if (property("failDownload").toBool()) emit requestFailed(id, {SourceErrorKindV2::Network, "network", "private diagnostic"});
+        else emit actionCompleted(id, {SourceActionV2::Download, media, {{"destination", destination}}});
+        return id;
+    }
     QUuid resolveStream(const MediaRefV2 &media) override
     {
         const QUuid id = QUuid::createUuid();
@@ -145,7 +160,7 @@ public:
                                   QStringLiteral("adapter"), QStringLiteral("Adapter Fixture"),
                                   QStringLiteral("2.0.0"), 2, {}};
         for (const auto action : {SourceActionV2::Play, SourceActionV2::Favorite,
-                                  SourceActionV2::Unfavorite})
+                                  SourceActionV2::Unfavorite, SourceActionV2::Download})
             result.declaredActions.insert(action, {AvailabilityV2::Available, {}, {}});
         return result;
     }
@@ -168,6 +183,7 @@ public:
 #include "SourceScopeStore.h"
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -199,7 +215,7 @@ MediaItemV2 routedItem(MediaEntityTypeV2 type, const QString &entityId)
                                 QStringLiteral("adapter/home"), entityId);
     item.ref.accountId = QStringLiteral("home");
     for (const auto action : {SourceActionV2::Play, SourceActionV2::Favorite,
-                              SourceActionV2::Unfavorite})
+                              SourceActionV2::Unfavorite, SourceActionV2::Download})
         item.availableActions.insert(action, {AvailabilityV2::Available, {}, {}});
     return item;
 }
@@ -306,6 +322,149 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void currentDownloadRequiresIdentityPermissionsAndANewLocalDestination()
+    {
+        RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
+        session->setProperty("holdDownload", true);
+        const auto track = routedItem(MediaEntityTypeV2::Track, "download-track");
+        accept(h.hub->category(), resultWith({track}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        const auto token = h.adapter->currentDownload().value("token").toString(); QVERIFY(!token.isEmpty());
+        QVERIFY(h.adapter->currentDownload().value("canDownload").toBool());
+        QCOMPARE(h.adapter->currentDownload().keys(), QStringList({"canDownload", "completed", "failed", "pending", "token"}));
+        const auto target = QUrl::fromLocalFile(h.dir.filePath("download.bin"));
+        QVERIFY(h.adapter->downloadCurrent(target, {}).isNull());
+        QVERIFY(h.adapter->downloadCurrent(target, "stale-token").isNull());
+        const auto existingPath = h.dir.filePath("existing.bin"); QFile existing(existingPath);
+        QVERIFY(existing.open(QIODevice::WriteOnly | QIODevice::NewOnly)); QCOMPARE(existing.write("keep"), 4LL); existing.close();
+        const QList<QUrl> invalid{QUrl{}, QUrl("https://private.invalid/audio"), QUrl("file://remote/share/a"),
+            QUrl("file:relative.bin"), QUrl::fromLocalFile(existingPath), QUrl::fromLocalFile(h.dir.path()),
+            QUrl::fromLocalFile(h.dir.filePath("missing/child.bin")), QUrl(target.toString() + "?query=private"),
+            QUrl(target.toString() + "#fragment"), QUrl("file://user:private@localhost/a"),
+            QUrl::fromLocalFile(h.dir.filePath(QString("a") + QChar::Null + "b"))};
+        for (const auto &url : invalid) {
+            QVERIFY(h.adapter->downloadCurrent(url, token).isNull());
+            QVERIFY(h.adapter->currentDownload().value("failed").toBool());
+        }
+        const auto link = h.dir.filePath("dangling.bin");
+        QVERIFY(QFile::link(h.dir.filePath("not-present.bin"), link));
+        QVERIFY(h.adapter->downloadCurrent(QUrl::fromLocalFile(link), token).isNull());
+        QVERIFY(session->property("downloadRequests").toList().isEmpty());
+        accept(h.hub->category(), resultWith({}, "tracks")); // Route the captured queue item, not current page rows.
+        QUuid duplicate;
+        const auto observer = connect(h.adapter.get(), &OriginalUiMusicAdapter::currentDownloadChanged, h.adapter.get(), [&] {
+            if (h.adapter->currentDownload().value("pending").toBool()) duplicate = h.adapter->downloadCurrent(target, token);
+        });
+        const auto request = h.adapter->downloadCurrent(target, token); QVERIFY(!request.isNull()); QVERIFY(duplicate.isNull());
+        disconnect(observer);
+        QCOMPARE(session->property("downloadRequests").toList().size(), 1);
+        const auto provider = session->property("downloadRequests").toList().last().toMap();
+        QCOMPARE(provider.value("ref").toMap(), mediaRefV2ToVariantMap(track.ref)); QCOMPARE(provider.value("destination").toUrl(), target);
+        QVERIFY(h.adapter->currentDownload().value("pending").toBool());
+        QVERIFY(!h.adapter->currentDownload().value("completed").toBool());
+        emit session->actionCompleted(provider.value("id").toUuid(), {SourceActionV2::Download, track.ref, {{"destination", target}}});
+        QTRY_VERIFY(h.adapter->currentDownload().value("completed").toBool());
+        QVERIFY(!h.adapter->currentDownload().value("pending").toBool());
+        session->setProperty("holdDownload", false); session->setProperty("failDownload", true);
+        QVERIFY(!h.adapter->downloadCurrent(target, token).isNull());
+        QTRY_VERIFY(h.adapter->currentDownload().value("failed").toBool());
+        QVERIFY(!h.adapter->currentDownload().value("completed").toBool());
+        session->setProperty("failDownload", false); QVERIFY(!h.adapter->downloadCurrent(target, token).isNull());
+        QTRY_VERIFY(h.adapter->currentDownload().value("completed").toBool());
+        session->setProperty("holdDownload", true); QVERIFY(!h.adapter->downloadCurrent(target, token).isNull());
+        const auto invalidId = session->property("downloadRequests").toList().last().toMap().value("id").toUuid();
+        emit session->actionCompleted(invalidId, {SourceActionV2::Download, track.ref,
+            {{"destination", QUrl("https://private.invalid/redirect")}, {"diagnostic", "private"}}});
+        QTRY_VERIFY(h.adapter->currentDownload().value("failed").toBool());
+        QVERIFY(!h.adapter->currentDownload().value("completed").toBool());
+        QVERIFY(existing.open(QIODevice::ReadOnly)); QCOMPARE(existing.readAll(), QByteArray("keep"));
+        QVERIFY(h.playback->stop()); QVERIFY(!h.adapter->currentDownload().value("canDownload").toBool());
+        QVERIFY(h.adapter->downloadCurrent(target, token).isNull());
+    }
+    void lateDownloadsCannotUpdateAnotherInstanceOrPlaybackGeneration()
+    {
+        RoutingHarness h; QVERIFY(h.init(true)); auto *home = h.session(); auto *office = h.session("adapter/office");
+        QVERIFY(home); QVERIFY(office); home->setProperty("holdDownload", true); office->setProperty("holdDownload", true);
+        const auto a = routedItem(MediaEntityTypeV2::Track, "same-id");
+        auto b = a; b.ref.sourceInstanceId = "adapter/office"; b.ref.accountId = "office";
+        accept(h.hub->category(), resultWith({a, b}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        const auto tokenA = h.adapter->currentDownload().value("token").toString();
+        const auto targetA = QUrl::fromLocalFile(h.dir.filePath("A.bin"));
+        QVERIFY(!h.adapter->downloadCurrent(targetA, tokenA).isNull());
+        const auto idA = home->property("downloadRequests").toList().last().toMap().value("id").toUuid();
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(1)).isNull()); QTRY_COMPARE(h.sink.plays, 2);
+        const auto tokenB = h.adapter->currentDownload().value("token").toString(); QVERIFY(tokenB != tokenA);
+        const auto targetB = QUrl::fromLocalFile(h.dir.filePath("B.bin"));
+        QVERIFY(h.adapter->downloadCurrent(targetB, tokenA).isNull());
+        QVERIFY(!h.adapter->downloadCurrent(targetB, tokenB).isNull());
+        const auto idB = office->property("downloadRequests").toList().last().toMap().value("id").toUuid();
+        emit home->actionCompleted(idA, {SourceActionV2::Download, a.ref, {{"destination", targetA}}});
+        QTest::qWait(20); QVERIFY(h.adapter->currentDownload().value("pending").toBool());
+        QVERIFY(!h.adapter->currentDownload().value("completed").toBool());
+        emit office->actionCompleted(idB, {SourceActionV2::Download, b.ref, {{"destination", targetB}}});
+        QTRY_VERIFY(h.adapter->currentDownload().value("completed").toBool());
+        QVERIFY(!h.playback->playQueueEntry(1).isNull());
+        QVERIFY(h.adapter->downloadCurrent(targetB, tokenB).isNull());
+        QTRY_VERIFY(!h.adapter->currentDownload().value("completed").toBool());
+        h.hub.reset(); QVERIFY(!h.adapter->currentDownload().value("canDownload").toBool());
+        QVERIFY(h.adapter->downloadCurrent(targetB, h.playback->currentGeneration().toString(QUuid::WithoutBraces)).isNull());
+    }
+    void downloadPermissionDowngradeDoesNotStopPlayback()
+    {
+        RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
+        session->setProperty("holdDownload", true);
+        accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "download-rights")}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        const auto generation = h.playback->currentGeneration();
+        const auto token = h.adapter->currentDownload().value("token").toString();
+        const auto target = QUrl::fromLocalFile(h.dir.filePath("download.bin"));
+        QVERIFY(!h.adapter->downloadCurrent(target, token).isNull());
+        session->setProperty("denyDownload", true); emit session->capabilitiesChanged(session->capabilities());
+        QVERIFY(!h.adapter->currentDownload().value("canDownload").toBool());
+        QVERIFY(h.adapter->downloadCurrent(target, token).isNull());
+        QTRY_VERIFY(h.adapter->currentDownload().value("failed").toBool());
+        QCOMPARE(h.playback->currentGeneration(), generation);
+        session->setProperty("denyDownload", false); emit session->capabilitiesChanged(session->capabilities());
+        QTRY_VERIFY(h.adapter->currentDownload().value("canDownload").toBool());
+        session->setProperty("unsupportedDownload", true); emit session->capabilitiesChanged(session->capabilities());
+        QTRY_VERIFY(!h.adapter->currentDownload().value("canDownload").toBool());
+        QCOMPARE(h.playback->currentGeneration(), generation);
+        QVERIFY(h.registry.disableInstance("adapter/home"));
+        QTRY_VERIFY(h.adapter->currentDownload().value("token").toString().isEmpty());
+    }
+    void downloadSnapshotDoesNotInventMediaRightsOrDropConstraints()
+    {
+        for (bool constrained : {false, true}) {
+            RoutingHarness h; QVERIFY(h.init());
+            auto track = routedItem(MediaEntityTypeV2::Track, "download-media-rights");
+            if (constrained) track.availableActions[SourceActionV2::Download].constraints.insert("maxBitrate", 128000);
+            else track.availableActions.remove(SourceActionV2::Download);
+            accept(h.hub->category(), resultWith({track}, "tracks"));
+            QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+            QVERIFY(!h.adapter->currentDownload().value("canDownload").toBool());
+            QVERIFY(h.adapter->downloadCurrent(QUrl::fromLocalFile(h.dir.filePath("media.bin")),
+                                              h.adapter->currentDownload().value("token").toString()).isNull());
+            QVERIFY(h.session()->property("downloadRequests").toList().isEmpty());
+        }
+    }
+    void downloadObserversCannotStopOrCreateATargetBeforeDispatch()
+    {
+        for (bool stop : {true, false}) {
+            RoutingHarness h; QVERIFY(h.init());
+            accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "download-observer")}, "tracks"));
+            QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+            const auto target = QUrl::fromLocalFile(h.dir.filePath("observer.bin"));
+            connect(h.adapter.get(), &OriginalUiMusicAdapter::currentDownloadChanged, h.adapter.get(), [&] {
+                if (!h.adapter->currentDownload().value("pending").toBool()) return;
+                if (stop) h.playback->stop();
+                else { QFile file(target.toLocalFile()); QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly)); }
+            });
+            QVERIFY(h.adapter->downloadCurrent(target, h.adapter->currentDownload().value("token").toString()).isNull());
+            QVERIFY(h.session()->property("downloadRequests").toList().isEmpty());
+            if (!stop) QVERIFY(h.adapter->currentDownload().value("failed").toBool());
+        }
+    }
     void currentFavoriteUsesPlaybackIdentityAndConfirmedResults()
     {
         RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
@@ -424,6 +583,9 @@ private slots:
         QVERIFY(!h.adapter->currentFavorite().value("canFavorite").toBool());
         QVERIFY(!h.adapter->currentFavorite().value("canUnfavorite").toBool());
         QVERIFY(h.adapter->setCurrentFavorite(true).isNull());
+        QVERIFY(!h.adapter->currentDownload().value("canDownload").toBool());
+        QVERIFY(h.adapter->downloadCurrent(QUrl::fromLocalFile(h.dir.filePath("restore.bin")),
+                                          h.adapter->currentDownload().value("token").toString()).isNull());
     }
     void currentArtworkUsesOnlyCurrentCachedLocalResources()
     {
