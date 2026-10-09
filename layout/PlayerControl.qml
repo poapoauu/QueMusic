@@ -878,20 +878,21 @@ Rectangle {
 
     QOptionDialog {
         id: playerInfoDialog
+        objectName: "currentPlaybackInfoDialog"
         title: "音乐详情"
         dialogContentHeight: 370
         options: Column {
             width: parent.width
             spacing: 16
             SettingItem {
-                label: "文件名："
+                label: window.sourceLyricsMode ? "来源：" : "文件名："
                 controlWidth: 120
                 width: parent.width
                 TextInput {
                     height: 36
                     anchors.right: parent.right
                     font.pixelSize: Style.settings.textmain
-                    text: mainMedia.noTitle
+                    text: (window.sourceLyricsMode ? window.lyricsAdapter.details.sourceLabel : window.lyricsAdapter.details.fileName) || "未知"
                     color: Style.themes.textColor
                     verticalAlignment: Text.AlignVCenter
                     readOnly: true
@@ -907,7 +908,7 @@ Rectangle {
                     height: 36
                     anchors.right: parent.right
                     font.pixelSize: Style.settings.textmain
-                    text: window.musicTitle
+                    text: window.lyricsAdapter.details.title || "未知"
                     color: Style.themes.textColor
                     readOnly: true
                     selectByMouse: true
@@ -923,7 +924,7 @@ Rectangle {
                     height: 36
                     anchors.right: parent.right
                     font.pixelSize: Style.settings.textmain
-                    text: window.musicArtist
+                    text: window.lyricsAdapter.details.artist || "未知"
                     color: Style.themes.textColor
                     readOnly: true
                     selectByMouse: true
@@ -939,7 +940,7 @@ Rectangle {
                     height: 36
                     anchors.right: parent.right
                     font.pixelSize: Style.settings.textmain
-                    text: mainMedia.album
+                    text: window.lyricsAdapter.details.album || "未知"
                     color: Style.themes.textColor
                     readOnly: true
                     selectByMouse: true
@@ -955,7 +956,7 @@ Rectangle {
                     height: 36
                     anchors.right: parent.right
                     font.pixelSize: Style.settings.textmain
-                    text: mainMedia.duration.toString()
+                    text: musicControlMin.currentDuration > 0 ? musicControlMin.formatTime(musicControlMin.currentDuration) : "未知"
                     color: Style.themes.textColor
                     readOnly: true
                     selectByMouse: true
@@ -971,7 +972,7 @@ Rectangle {
                     height: 36
                     anchors.right: parent.right
                     font.pixelSize: Style.settings.textmain
-                    text: mainMedia.date
+                    text: window.lyricsAdapter.details.date || "未知"
                     color: Style.themes.textColor
                     readOnly: true
                     selectByMouse: true
@@ -987,7 +988,7 @@ Rectangle {
                     height: 36
                     anchors.right: parent.right
                     font.pixelSize: Style.settings.textmain
-                    text: mainMedia.type
+                    text: window.lyricsAdapter.details.format || "未知"
                     color: Style.themes.textColor
                     readOnly: true
                     selectByMouse: true

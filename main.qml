@@ -48,6 +48,9 @@ Window {
         legacyPlaying: mainMedia.playing
         legacyActive: mainMedia.onMedia
         legacyCover: mainMedia.urlStr
+        sourceItem: playbackCoordinator ? playbackCoordinator.currentItem : ({})
+        legacyDetails: ({title: window.musicTitle, artist: window.musicArtist, album: mainMedia.album,
+                         fileName: mainMedia.noTitle, date: mainMedia.date, format: mainMedia.type})
     }
     width: 1140
     height: 720

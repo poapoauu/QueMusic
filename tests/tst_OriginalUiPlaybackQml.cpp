@@ -102,6 +102,7 @@ private slots:
     void currentFavoriteRequiresCapabilitiesAndTheMenuPlaybackToken();
     void actualFavoriteButtonShowsChoicesAndRejectsAStaleMenu();
     void smtcUsesSourceStateAndIgnoresLegacyEvents();
+    void actualInfoDialogUsesOnlyCurrentDisplayFields();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -487,6 +488,80 @@ Item {
     QVERIFY(QMetaObject::invokeMethod(button, "clicked")); QCOMPARE(music.favoriteCalls, 2);
     QVERIFY(!music.lastFavorite);
     QVERIFY(bridge->setProperty("sourceActive", false)); QVERIFY(!button->property("enabled").toBool());
+}
+
+void OriginalUiPlaybackQmlTest::actualInfoDialogUsesOnlyCurrentDisplayFields()
+{
+    QQmlEngine engine; PlaybackControllerDouble controls;
+    controls.duration = 65000;
+    const QVariantMap sourceItem{{"title", "Source song"}, {"artists", QStringList{"One", "Two"}},
+        {"album", "Source album"}, {"sourceLabel", "Office library"}, {"fileName", "private-file"},
+        {"date", "private-date"}, {"format", "private-format"}, {"streamUrl", "https://private.invalid/audio"},
+        {"ref", QVariantMap{{"accountId", "private-account"}}}, {"metadata", QVariantMap{{"format", "private"}}}};
+    const QVariantMap legacy{{"title", "Legacy song"}, {"artist", "Legacy artist"}, {"album", "Legacy album"},
+        {"fileName", "Legacy file"}, {"date", "Legacy date"}, {"format", "Legacy format"}};
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"controls", QVariant::fromValue<QObject *>(&controls)}, {"sourceMode", true}, {"sourceActive", true},
+        {"sourceItem", sourceItem}, {"legacyDetails", legacy}, {"legacyDuration", 10000}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    const QVariantMap expected{{"title", "Source song"}, {"artist", "One, Two"}, {"album", "Source album"},
+        {"sourceLabel", "Office library"}, {"fileName", ""}, {"date", ""}, {"format", ""}};
+    QCOMPARE(bridge->property("details").toMap(), expected);
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto extract = [&](qsizetype start) {
+        int depth = 0; auto end = start;
+        for (; end < source.size(); ++end) {
+            if (source[end] == '{') ++depth;
+            else if (source[end] == '}' && --depth == 0) { ++end; break; }
+        }
+        return source.mid(start, end - start);
+    };
+    const auto dialogStart = source.lastIndexOf("QOptionDialog {", source.indexOf("id: playerInfoDialog"));
+    const auto timeStart = source.indexOf("function formatTime(ms)");
+    QVERIFY(dialogStart >= 0 && timeStart >= 0);
+    auto fixture = QStringLiteral(R"(import QtQuick
+Item {
+    id: musicControlMin
+    property var presentation
+    property real currentDuration: presentation.duration
+    property var styleFixture: ({settings: {textmain: 14}, themes: {textColor: "#222222", themeColor: "#00ff00"}})
+    property QtObject window: QtObject {
+        property var lyricsAdapter: musicControlMin.presentation
+        property bool sourceLyricsMode: musicControlMin.presentation.sourceMode
+    }
+    component QOptionDialog: Item {
+        property string title; property real dialogContentHeight; property alias options: optionHost.data
+        Item { id: optionHost }
+    }
+    component SettingItem: Item { property string label; property real controlWidth }
+    readonly property var fieldTexts: playerInfoDialog.options[0].children.map(row => row.children[0].text)
+    readonly property var fieldLabels: playerInfoDialog.options[0].children.map(row => row.label)
+%1
+%2
+})").arg(extract(timeStart), extract(dialogStart));
+    fixture.replace("Style.", "musicControlMin.styleFixture.");
+    QVERIFY(!extract(dialogStart).contains("mainMedia."));
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/info-dialog-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    QVERIFY(root->findChild<QObject *>("currentPlaybackInfoDialog"));
+    QCOMPARE(root->property("fieldTexts").toList(), QVariantList({"Office library", "Source song", "One, Two", "Source album", "1:5", "未知", "未知"}));
+    QCOMPARE(root->property("fieldLabels").toList().first().toString(), QString("来源："));
+    QVERIFY(bridge->setProperty("sourceItem", QVariantMap{{"title", "Next song"}, {"artists", QStringList{"Next artist"}}}));
+    controls.duration = 0; emit controls.durationChanged();
+    QCOMPARE(root->property("fieldTexts").toList(), QVariantList({"未知", "Next song", "Next artist", "未知", "未知", "未知", "未知"}));
+    QVERIFY(bridge->setProperty("sourceActive", false));
+    QCOMPARE(root->property("fieldTexts").toList(), QVariantList({"未知", "未知", "未知", "未知", "未知", "未知", "未知"}));
+    QVERIFY(bridge->setProperty("sourceActive", true));
+    QVERIFY(bridge->setProperty("sourceItem", QVariant()));
+    QCOMPARE(bridge->property("details").toMap().size(), 7);
+    QCOMPARE(root->property("fieldTexts").toList(), QVariantList({"未知", "未知", "未知", "未知", "未知", "未知", "未知"}));
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QCOMPARE(root->property("fieldTexts").toList(), QVariantList({"Legacy file", "Legacy song", "Legacy artist", "Legacy album", "0:10", "Legacy date", "Legacy format"}));
+    QCOMPARE(root->property("fieldLabels").toList().first().toString(), QString("文件名："));
 }
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,

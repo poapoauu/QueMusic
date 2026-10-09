@@ -17,6 +17,21 @@ QtObject {
     property bool legacyPlaying: false
     property bool legacyActive: false
     property string legacyCover: ""
+    property var sourceItem: ({})
+    property var legacyDetails: ({})
+    // Display-only projection. Never copy arbitrary metadata, identities or resources.
+    readonly property var details: {
+        if (sourceMode) {
+            var item = sourceActive ? sourceItem || {} : {};
+            var artists = item.artists || [];
+            return {title: item.title || "", artist: typeof artists.join === "function" ? artists.join(", ") : "",
+                    album: item.album || "", sourceLabel: item.sourceLabel || "",
+                    fileName: "", date: "", format: ""};
+        }
+        var legacy = legacyDetails || {};
+        return {title: legacy.title || "", artist: legacy.artist || "", album: legacy.album || "", sourceLabel: "",
+                fileName: legacy.fileName || "", date: legacy.date || "", format: legacy.format || ""};
+    }
     readonly property string defaultCover: "qrc:/QueMusic/resources/app/musicpic.png"
     readonly property string cover: sourceMode
         ? (sourceActive && musicAdapter ? (String(musicAdapter.currentCover || "") || defaultCover) : defaultCover)

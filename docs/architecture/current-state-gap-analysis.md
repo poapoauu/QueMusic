@@ -295,6 +295,8 @@ Home 每日推荐随后接入五类标准推荐分区聚合及共享 `sourcePagi
 
 Windows SMTC 随后接入统一播放桥接：Source 输入仅控制 Core，元数据仅提取当前 title/artists/album 与本地缓存封面，AppMediaId 使用 opaque occurrence，不读旧队列或分享 SourceRef/播放资源。停播清理信息/时间线并禁用控制，缺 Adapter 或服务不可用不回退；旧 mainMedia 迟到信号不能覆盖 Source 系统状态。Core 状态、进度、队列和封面变化同步系统展示，原生封面读取失败也清除旧缩略图。主程序构建和九个联合套件通过，但 macOS 只验证 QML 服务边界，Windows WinRT 分支编译、系统浮层/物理键/进度/图片权限仍待真实 Windows 验收。Source SDK v2、Plugin UI API 与 SMTC API 不变，下载、频谱与详情/选项等剩余入口仍未完全统一。
 
+播放器音乐详情随后接入当前展示投影，仅保留 title/artist/album/sourceLabel 和显式 legacy 字段，不复制 SourceRef、资源或任意 metadata。Source 第一行显示来源，v2 未提供的文件名/日期/格式为未知；长度读取 Core 时钟，切歌更新，停播/无当前项清空，旧信息只在显式兼容模式可见。主程序构建和九个播放/UI 套件通过，详情弹窗采用实际 QML 逻辑与轻量容器夹具，真实视觉仍待验收。下载按钮、播放选项与频谱等剩余路径尚未统一；SDK ABI 不变。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

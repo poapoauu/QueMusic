@@ -180,6 +180,12 @@ Source 系统媒体信息仅从 Coordinator 当前项提取 title/artists/album�
 
 这只是跨平台 QML 边界验收：macOS 构建不编译 Windows WinRT 实现，不能据此宣称 Windows 原生行为已验收。仍需 Windows 编译及媒体浮层/物理媒体键/系统进度/缓存图片权限/服务关闭手测。Source SDK v2、Plugin UI API 和 SMTC API 均未修改；下载、频谱、播放器详情/选项及其他旧入口继续按切片迁移，Phase 6 尚未整体完成。
 
+### 当前播放器音乐详情展示
+
+原音乐详情弹窗保留布局、可选择文本和主题，数据改为 Host 私有桥接的七字段展示投影。Source 只读当前 title/artists/album/sourceLabel，第一行显示来源而非猜测文件名；v2 当前播放项未提供文件名、日期、音频格式，显示未知，不读取任意 metadata、SourceRef 或流地址补齐。长度读取统一 Core 时钟并复用原时间格式函数。切歌更新，停播或当前项缺失清空 Source 字段；只有显式兼容模式才显示旧文件名/专辑/日期/格式。
+
+新增测试运行实际详情弹窗 QML（轻量容器夹具）和真实桥接，验证显示字段白名单、忽略身份/资源/任意 metadata、来源标签、切歌、时长未知、停播/空项清理及显式 legacy 切换；测试不代替真实弹窗布局与视觉验收。主程序构建及九个播放/UI 联合套件通过，Source SDK v2 和 Plugin UI API 无变化。下载按钮、播放选项、频谱和剩余旧平台入口仍待迁移，Phase 6 尚未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
