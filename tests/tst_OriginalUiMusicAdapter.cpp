@@ -26,6 +26,8 @@ public:
             result.serverActions.insert(action, {AvailabilityV2::Available, {}, {}});
             result.accountActions.insert(action, {AvailabilityV2::Available, {}, {}});
         }
+        if (property("denyFavorite").toBool()) result.accountActions[SourceActionV2::Favorite] = {AvailabilityV2::Forbidden};
+        if (property("denyUnfavorite").toBool()) result.accountActions[SourceActionV2::Unfavorite] = {AvailabilityV2::Forbidden};
         return result;
     }
     QUuid open() override
@@ -82,8 +84,13 @@ public:
         const QUuid id = QUuid::createUuid();
         setProperty("favoriteRef", mediaRefV2ToVariantMap(media));
         setProperty("favoriteValue", favorite);
+        auto requests = property("favoriteRequests").toList();
+        requests.append(QVariantMap{{"id", id}, {"ref", mediaRefV2ToVariantMap(media)}, {"favorite", favorite}});
+        setProperty("favoriteRequests", requests);
         emit requestStarted(id);
-        emit actionCompleted(id, {favorite ? SourceActionV2::Favorite : SourceActionV2::Unfavorite,
+        if (property("holdFavorite").toBool()) return id;
+        if (property("failFavorite").toBool()) emit requestFailed(id, {SourceErrorKindV2::Network, "failure", "private diagnostic"});
+        else emit actionCompleted(id, {favorite ? SourceActionV2::Favorite : SourceActionV2::Unfavorite,
                                   media, {{QStringLiteral("favorite"), favorite}}});
         return id;
     }
@@ -299,6 +306,120 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void currentFavoriteUsesPlaybackIdentityAndConfirmedResults()
+    {
+        RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
+        session->setProperty("holdFavorite", true);
+        const auto track = routedItem(MediaEntityTypeV2::Track, "current-favorite");
+        accept(h.hub->category(), resultWith({track}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(h.sink.plays, 1);
+        QVERIFY(h.adapter->currentFavorite().value("canFavorite").toBool());
+        QVERIFY(h.adapter->currentFavorite().value("canUnfavorite").toBool());
+        QCOMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
+        QCOMPARE(h.adapter->currentFavorite().keys(), QStringList({"canFavorite", "canUnfavorite", "failed", "pending", "state"}));
+        QCOMPARE(h.playback->metaObject()->indexOfMethod("currentActionItem()"), -1);
+        QVERIFY(!h.playback->currentItem().contains("availableActions"));
+        // Presentation page replacement must not discard current queue-owned identity.
+        accept(h.hub->category(), resultWith({}, "tracks"));
+        QUuid reentrant;
+        const auto connection = connect(h.adapter.get(), &OriginalUiMusicAdapter::currentFavoriteChanged, h.adapter.get(), [&] {
+            if (h.adapter->currentFavorite().value("pending").toBool()) reentrant = h.adapter->setCurrentFavorite(true);
+        });
+        const auto request = h.adapter->setCurrentFavorite(true); QVERIFY(!request.isNull()); QVERIFY(reentrant.isNull());
+        disconnect(connection);
+        QCOMPARE(session->property("favoriteRequests").toList().size(), 1);
+        QCOMPARE(session->property("favoriteRef").toMap(), mediaRefV2ToVariantMap(track.ref));
+        QVERIFY(h.adapter->currentFavorite().value("pending").toBool());
+        QCOMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
+        QVERIFY(h.adapter->setCurrentFavorite(false).isNull());
+        const auto providerId = session->property("favoriteRequests").toList().last().toMap().value("id").toUuid();
+        emit session->actionCompleted(providerId, {SourceActionV2::Favorite, track.ref, {{"favorite", true}}});
+        QTRY_COMPARE(h.adapter->currentFavorite().value("state").toString(), QString("favorite"));
+        QVERIFY(!h.adapter->currentFavorite().value("pending").toBool());
+        session->setProperty("holdFavorite", false); session->setProperty("failFavorite", true);
+        QVERIFY(!h.adapter->setCurrentFavorite(false).isNull());
+        QTRY_VERIFY(h.adapter->currentFavorite().value("failed").toBool());
+        QCOMPARE(h.adapter->currentFavorite().value("state").toString(), QString("favorite"));
+        session->setProperty("failFavorite", false);
+        QVERIFY(!h.adapter->setCurrentFavorite(false).isNull());
+        QTRY_COMPARE(h.adapter->currentFavorite().value("state").toString(), QString("notFavorite"));
+        QVERIFY(!h.adapter->currentFavorite().value("failed").toBool());
+        QVERIFY(h.playback->stop());
+        QVERIFY(!h.adapter->currentFavorite().value("canFavorite").toBool());
+        QVERIFY(h.adapter->setCurrentFavorite(true).isNull());
+        QTRY_COMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
+    }
+    void lateCurrentFavoriteCannotUpdateAnotherInstanceOrOccurrence()
+    {
+        RoutingHarness h; QVERIFY(h.init(true)); auto *home = h.session(); auto *office = h.session("adapter/office");
+        QVERIFY(home); QVERIFY(office); home->setProperty("holdFavorite", true);
+        const auto a = routedItem(MediaEntityTypeV2::Track, "same-id");
+        auto b = a; b.ref.sourceInstanceId = "adapter/office"; b.ref.accountId = "office";
+        accept(h.hub->category(), resultWith({a, b}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        QVERIFY(!h.adapter->setCurrentFavorite(true).isNull());
+        const auto providerId = home->property("favoriteRequests").toList().last().toMap().value("id").toUuid();
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(1)).isNull()); QTRY_COMPARE(h.sink.plays, 2);
+        emit home->actionCompleted(providerId, {SourceActionV2::Favorite, a.ref, {{"favorite", true}}});
+        QTest::qWait(20);
+        QCOMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
+        QVERIFY(!h.adapter->currentFavorite().value("pending").toBool());
+        QVERIFY(!h.adapter->setCurrentFavorite(true).isNull());
+        QTRY_COMPARE(h.adapter->currentFavorite().value("state").toString(), QString("favorite"));
+        QCOMPARE(office->property("favoriteRef").toMap(), mediaRefV2ToVariantMap(b.ref));
+        const auto generation = h.playback->currentGeneration();
+        QVERIFY(!h.playback->playQueueEntry(1).isNull());
+        QVERIFY(h.playback->currentGeneration() != generation);
+        QTRY_COMPARE(h.adapter->currentFavorite().value("state").toString(), QString("unknown"));
+        h.hub.reset(); QVERIFY(!h.adapter->currentFavorite().value("canFavorite").toBool());
+        QVERIFY(h.adapter->setCurrentFavorite(true).isNull());
+    }
+    void currentFavoriteDowngradesImmediatelyWithoutStoppingPlayback()
+    {
+        RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
+        session->setProperty("holdFavorite", true);
+        accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "favorite-rights")}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        QVERIFY(!h.adapter->setCurrentFavorite(true).isNull());
+        const auto generation = h.playback->currentGeneration();
+        session->setProperty("denyFavorite", true);
+        emit session->capabilitiesChanged(session->capabilities());
+        QVERIFY(!h.adapter->currentFavorite().value("canFavorite").toBool());
+        QVERIFY(h.adapter->setCurrentFavorite(true).isNull());
+        QTRY_VERIFY(h.adapter->currentFavorite().value("failed").toBool());
+        QTRY_VERIFY(h.adapter->currentFavorite().value("canUnfavorite").toBool());
+        QCOMPARE(h.playback->currentGeneration(), generation);
+        QCOMPARE(session->property("favoriteRequests").toList().size(), 1);
+        session->setProperty("denyFavorite", false); emit session->capabilitiesChanged(session->capabilities());
+        QTRY_VERIFY(h.adapter->currentFavorite().value("canFavorite").toBool());
+        QVERIFY(h.registry.disableInstance("adapter/home"));
+        QVERIFY(!h.adapter->currentFavorite().value("canFavorite").toBool());
+        QTRY_VERIFY(!h.adapter->currentFavorite().value("failed").toBool());
+    }
+    void currentFavoriteStopsBeforeDispatchWhenPresentationObserverStopsPlayback()
+    {
+        RoutingHarness h; QVERIFY(h.init());
+        accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "favorite-stop")}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        connect(h.adapter.get(), &OriginalUiMusicAdapter::currentFavoriteChanged, h.adapter.get(), [&] {
+            if (h.adapter->currentFavorite().value("pending").toBool()) h.playback->stop();
+        });
+        QVERIFY(h.adapter->setCurrentFavorite(true).isNull());
+        QVERIFY(h.session()->property("favoriteRequests").toList().isEmpty());
+    }
+    void restoredQueueDoesNotInventFavoriteRights()
+    {
+        RoutingHarness h; QVERIFY(h.init());
+        accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "favorite-restore")}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        const auto history = h.playback->exportQueue(); QVERIFY(h.playback->stop());
+        QVERIFY(h.playback->restoreQueue(history)); QVERIFY(!h.playback->playQueueEntry(0).isNull());
+        QTRY_COMPARE(h.sink.plays, 2);
+        QVERIFY(!h.adapter->currentFavorite().value("canFavorite").toBool());
+        QVERIFY(!h.adapter->currentFavorite().value("canUnfavorite").toBool());
+        QVERIFY(h.adapter->setCurrentFavorite(true).isNull());
+    }
     void currentArtworkUsesOnlyCurrentCachedLocalResources()
     {
         RoutingHarness h; QVERIFY(h.init());

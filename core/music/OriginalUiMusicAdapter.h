@@ -40,6 +40,7 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(QVariantList currentLyrics READ currentLyrics NOTIFY currentLyricsChanged)
     Q_PROPERTY(QString currentLyricsState READ currentLyricsState NOTIFY currentLyricsChanged)
     Q_PROPERTY(QUrl currentCover READ currentCover NOTIFY currentCoverChanged)
+    Q_PROPERTY(QVariantMap currentFavorite READ currentFavorite NOTIFY currentFavoriteChanged)
     Q_PROPERTY(bool directoryCanNavigateBack READ directoryCanNavigateBack NOTIFY directoryChanged)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
@@ -51,6 +52,8 @@ public:
     QVariantList currentLyrics() const;
     QString currentLyricsState() const;
     QUrl currentCover() const;
+    QVariantMap currentFavorite() const;
+    Q_INVOKABLE QUuid setCurrentFavorite(bool favorite);
     Q_INVOKABLE void retryCurrentLyrics();
 
     OnlineListModel *recommendSongs() const;
@@ -108,6 +111,7 @@ signals:
     void directoryChanged();
     void currentLyricsChanged();
     void currentCoverChanged();
+    void currentFavoriteChanged();
 
 private:
     QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
@@ -124,6 +128,8 @@ private:
     bool currentAssetRequestIsCurrent(const QUuid &id, const QUuid &request) const;
     bool lyricsRequestIsCurrent(const QUuid &id) const;
     void clearCurrentLyrics();
+    void syncCurrentFavorite(bool notify = true);
+    bool favoriteRequestIsCurrent(const QUuid &id) const;
 
     QPointer<MusicHub> m_hub;
     QPointer<PlaybackCoordinator> m_playback;
@@ -150,4 +156,9 @@ private:
     QVariantMap m_lyricsMedia;
     QVariantList m_currentLyrics;
     QString m_currentLyricsState = QStringLiteral("idle");
+    QUuid m_favoriteGeneration;
+    QVariantMap m_favoriteMedia;
+    QUuid m_favoriteRequest;
+    QString m_favoriteState = QStringLiteral("unknown");
+    bool m_favoriteFailed = false;
 };

@@ -150,6 +150,16 @@ Source 模式无当前播放/无控制 Adapter/不可跳转时拒绝相应控制
 
 桌面控制切片主程序构建及十个联合回归套件通过：OriginalUiPlaybackQml、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiStructure、ArtworkPresentation、PlaybackCoordinator、QtPlaybackController、PlaybackControlsAdapterQml、LegacyQueueQml、QueueHistoryIntegration。验收文档区分已迁移的展示/控制入口与上述剩余平台路径，不将本切片计为 Phase 6 全部完成。
 
+### 当前播放收藏的 Host 展示与动作契约
+
+Coordinator 保留队列项已有媒体权限，在播放启动与 session 权限事件中缓存 Favorite/Unfavorite 的有效权限：复用现有 CapabilityResolver 的 Plugin/Server/Account/Media 交集，并检查 IFavoriteProviderV2。权限信号到达即清空旧许可，再异步复核；只有收藏权限改变时不会打断合法播放。新增非 QML C++ `currentActionItem()` 仅供 Host 路由，读取时不调用插件；原 currentItem/queue 不新增权限、metadata、URL 或 headers。历史队列仍只恢复原 Play 提示，不猜造收藏权限。
+
+Adapter 新增 `currentFavorite` 和 `setCurrentFavorite()`，展示只含 canFavorite/canUnfavorite/state/pending/failed。初始 state=unknown，不用旧数据库、当前列表标题或某个平台标记猜测；只有 Router 确认的插件 bool 结果更新最后确认状态。失败不乐观改状态、不公开诊断，允许显式重试。提交前预留请求防止重入/重复点击，并在通知观察者后重新验证当前播放；观察者停播时不分发动作。
+
+请求结果必须同时匹配 Host request ID、当前 generation 和完整媒体身份。用户切歌不会撤回已经分发的合法收藏业务，但迟到结果不得改变新曲目；同 entityId 的其他实例/账号不混用状态，重播同一 occurrence 也回到 unknown。此阶段尚未绑定原播放器按钮；SDK 没有统一“读取当前收藏状态”的 Provider，本轮不增加虚接口、不伪造状态。Source SDK v2 和 Plugin UI API ABI 不变，Host C++/展示 API 需同步构建。
+
+主程序构建与四个相关套件通过：OriginalUiMusicAdapter、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration。新增验收覆盖页面模型替换后仍路由当前队列身份、初始未知/确认后状态、pending 去重与重入、失败保持状态、多实例同 ID、切歌与重播结果隔离、Hub 移除、权限撤销/恢复且不停止播放、实例禁用、观察者停播前拒绝分发，以及恢复队列不提升权限。真实服务器收藏和按钮视觉留待后续验收。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

@@ -104,7 +104,9 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
 {
     if (!m_hub) return;
     if (m_playback) {
+        connect(m_playback, &PlaybackCoordinator::currentChanged, this, [this] { syncCurrentFavorite(); });
         connect(m_playback, &PlaybackCoordinator::currentChanged, this, [this] { syncCurrentLyrics(); });
+        connect(m_playback, &QObject::destroyed, this, [this] { m_playback = nullptr; syncCurrentFavorite(); });
         connect(m_playback, &QObject::destroyed, this, [this] { m_playback = nullptr; clearCurrentLyrics(); });
         connect(m_hub, &MusicHub::sourceOptionsChanged, this, [this] { syncCurrentLyrics(); });
         connect(m_hub, &MusicHub::artworkReady, this, [this](QUuid id, QVariantMap media, QUrl url) {
@@ -142,6 +144,25 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
                 ? QStringLiteral("empty") : QStringLiteral("failed");
             emit currentLyricsChanged();
         });
+        connect(m_hub->actions(), &MediaActionRouter::actionSucceeded, this, [this](QUuid id, QVariantMap result) {
+            if (!favoriteRequestIsCurrent(id)) return;
+            m_favoriteRequest = {};
+            const int action = result.value("action").toInt();
+            const auto favorite = result.value("favorite");
+            if ((action != int(SourceActionV2::Favorite) && action != int(SourceActionV2::Unfavorite))
+                || result.value("subject").toMap() != m_favoriteMedia
+                || favorite.metaType().id() != QMetaType::Bool) m_favoriteFailed = true;
+            else {
+                m_favoriteState = favorite.toBool() ? QStringLiteral("favorite") : QStringLiteral("notFavorite");
+                m_favoriteFailed = false;
+            }
+            emit currentFavoriteChanged();
+        });
+        connect(m_hub->actions(), &MediaActionRouter::actionFailed, this, [this](QUuid id, const QVariantMap &) {
+            if (!favoriteRequestIsCurrent(id)) return;
+            m_favoriteRequest = {}; m_favoriteFailed = true;
+            emit currentFavoriteChanged();
+        });
     }
     const auto observe = [this](MusicPageModel *model) {
         connect(model, &QAbstractItemModel::modelReset, this, &OriginalUiMusicAdapter::rebuild);
@@ -166,6 +187,10 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
             this, &OriginalUiMusicAdapter::selectedSourceInstanceIdChanged);
     connect(m_hub, &QObject::destroyed, this, [this] {
         m_hub = nullptr;
+        syncCurrentFavorite();
+    });
+    connect(m_hub, &QObject::destroyed, this, [this] {
+        m_hub = nullptr;
         clearCurrentLyrics();
         clearPresentationState();
         emit categoryStatusChanged();
@@ -175,7 +200,53 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         emit selectedSourceInstanceIdChanged();
     });
     rebuild();
+    syncCurrentFavorite();
     syncCurrentLyrics();
+}
+
+QVariantMap OriginalUiMusicAdapter::currentFavorite() const
+{
+    const auto item = m_hub && m_playback ? m_playback->currentActionItem() : QVariantMap{};
+    const bool same = !item.isEmpty() && m_playback->currentGeneration() == m_favoriteGeneration
+        && item.value("ref").toMap() == m_favoriteMedia;
+    return {{"canFavorite", !item.isEmpty() && permits(item, QStringLiteral("canFavorite"))},
+            {"canUnfavorite", !item.isEmpty() && permits(item, QStringLiteral("canUnfavorite"))},
+            {"state", same ? m_favoriteState : QStringLiteral("unknown")},
+            {"pending", same && !m_favoriteRequest.isNull()}, {"failed", same && m_favoriteFailed}};
+}
+void OriginalUiMusicAdapter::syncCurrentFavorite(bool notify)
+{
+    const auto item = m_hub && m_playback ? m_playback->currentActionItem() : QVariantMap{};
+    const auto generation = !item.isEmpty() ? m_playback->currentGeneration() : QUuid{};
+    const auto media = item.value("ref").toMap();
+    if (generation != m_favoriteGeneration || media != m_favoriteMedia) {
+        m_favoriteGeneration = generation; m_favoriteMedia = media; m_favoriteRequest = {};
+        m_favoriteState = QStringLiteral("unknown"); m_favoriteFailed = false;
+    }
+    if (notify) emit currentFavoriteChanged();
+}
+bool OriginalUiMusicAdapter::favoriteRequestIsCurrent(const QUuid &id) const
+{
+    return !id.isNull() && id == m_favoriteRequest && m_hub && m_playback
+        && m_playback->currentGeneration() == m_favoriteGeneration
+        && m_playback->currentActionItem().value("ref").toMap() == m_favoriteMedia;
+}
+QUuid OriginalUiMusicAdapter::setCurrentFavorite(bool favorite)
+{
+    const QPointer<OriginalUiMusicAdapter> guard(this);
+    syncCurrentFavorite(false);
+    if (!guard || !m_hub || !m_playback || !m_favoriteRequest.isNull()) return {};
+    const auto item = m_playback->currentActionItem();
+    if (item.isEmpty() || !permits(item, favorite ? QStringLiteral("canFavorite") : QStringLiteral("canUnfavorite"))) return {};
+    // Reserve before notifying observers; a reentrant click must not dispatch twice.
+    const auto reservation = QUuid::createUuid();
+    m_favoriteRequest = reservation; m_favoriteFailed = false;
+    emit currentFavoriteChanged();
+    if (!guard || !favoriteRequestIsCurrent(reservation)) return {};
+    const auto request = m_hub->actions()->setFavorite(item, favorite);
+    if (!guard) return request;
+    if (favoriteRequestIsCurrent(reservation)) m_favoriteRequest = request;
+    return request;
 }
 
 OriginalUiMusicAdapter::~OriginalUiMusicAdapter() { cancelCurrentLyrics(); cancelCurrentCover(); }

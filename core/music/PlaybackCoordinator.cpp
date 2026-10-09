@@ -121,6 +121,7 @@ struct PlaybackCoordinator::Active {
     QList<std::shared_ptr<Pending>> pending;
     bool ended=false,playing=false,startAttempted=false,submissionAttempted=false;
     quint64 capabilityRevision=0;
+    QVariantMap currentActions;
     ~Active() { disconnectAll(connections); }
     void cancel(const std::shared_ptr<Pending> &p) {
         if(p->invoking||p->finished||p->id.isNull()||!session||!registry||session->parent()!=registry)return;
@@ -170,6 +171,13 @@ QVariantMap PlaybackCoordinator::publicEntry(const std::shared_ptr<Entry> &entry
 }
 QVariantList PlaybackCoordinator::queue() const { QVariantList out; for(const auto &e:m_queue)out.append(publicEntry(e)); return out; }
 QVariantMap PlaybackCoordinator::currentItem() const { return m_active?publicEntry(m_active->entry):QVariantMap{}; }
+QVariantMap PlaybackCoordinator::currentActionItem() const {
+    if (!m_active) return {};
+    auto item = publicEntry(m_active->entry);
+    if (item.value("unavailable").toBool()) return {};
+    item.insert("availableActions", m_active->currentActions);
+    return item;
+}
 int PlaybackCoordinator::currentIndex() const { return m_active?m_active->index:-1; }
 QUuid PlaybackCoordinator::currentGeneration() const { return m_active?m_active->generation:QUuid{}; }
 QUuid PlaybackCoordinator::currentOccurrence() const { return m_active?m_active->entry->occurrence:QUuid{}; }
@@ -274,6 +282,22 @@ bool PlaybackCoordinator::allowed(const std::shared_ptr<Active> &a,SourceActionV
     const auto resolved=CapabilityResolver{}.resolve(action,descriptor.declaredActions.value(action),caps.serverAction(action),caps.accountAction(action),a->entry->actions.value(action));
     return resolved.state==AvailabilityV2::Available&&!resolved.constraints.contains("maxBitrate");
 }
+bool PlaybackCoordinator::refreshCurrentActions(const std::shared_ptr<Active> &a) {
+    const QPointer<PlaybackCoordinator> guard(this);
+    const auto revision = a->capabilityRevision;
+    const bool provider = qobject_cast<IFavoriteProviderV2 *>(a->session.data());
+    QVariantMap actions;
+    for (auto action : {SourceActionV2::Favorite, SourceActionV2::Unfavorite}) {
+        const bool available = provider && allowed(a, action);
+        if (!guard || !current(a) || revision != a->capabilityRevision) return false;
+        actions.insert(QString::number(int(action)), QVariantMap{
+            {"state", int(available ? AvailabilityV2::Available : AvailabilityV2::Unavailable)},
+            {"reasonKey", QString{}}, {"constraints", QVariantMap{}}});
+    }
+    a->currentActions = actions;
+    notifyCurrent();
+    return true;
+}
 void PlaybackCoordinator::resolve(const std::shared_ptr<Active> &a) {
     const QPointer<PlaybackCoordinator> guard(this);
     auto fail=[&] { if(guard)end(a,QStringLiteral("music.playbackUnavailable")); };
@@ -300,14 +324,21 @@ void PlaybackCoordinator::resolve(const std::shared_ptr<Active> &a) {
     }));
     a->connections.append(connect(a->session,&IMusicSourceSessionV2::capabilitiesChanged,this,[this,a] {
         ++a->capabilityRevision;
+        a->currentActions.clear();
+        notifyCurrent();
         // Scrobble-only permission downgrades must not abort playback.
         QTimer::singleShot(0,this,[this,a] {
             const QPointer<PlaybackCoordinator> guard(this);
-            if(!a->ended&&!allowed(a,SourceActionV2::Play)&&guard)end(a,QStringLiteral("music.playbackUnavailable"));
+            if (a->ended) return;
+            const bool playable = allowed(a,SourceActionV2::Play);
+            if (!guard || !current(a)) return;
+            if (!playable) end(a,QStringLiteral("music.playbackUnavailable"));
+            else refreshCurrentActions(a);
         });
     }));
     if(!qobject_cast<IPlaybackProviderV2 *>(a->session)||!allowed(a,SourceActionV2::Play)) { fail();return; }
     if(!guard||!current(a))return;
+    if (!refreshCurrentActions(a) || !guard || !current(a)) return;
     invoke(a,std::make_shared<Pending>());
 }
 void PlaybackCoordinator::invoke(const std::shared_ptr<Active> &a,const std::shared_ptr<Pending> &p) {

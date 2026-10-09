@@ -27,6 +27,9 @@ public:
     Q_INVOKABLE bool reportStopped(QUuid generation);
     QVariantList queue() const;
     QVariantMap currentItem() const;
+    // Host-only action snapshot. Never invokes plugin code from a property read;
+    // resolved rights are refreshed during lifecycle events. Not a QML API.
+    QVariantMap currentActionItem() const;
     int currentIndex() const;
     QUuid currentGeneration() const;
     QUuid currentOccurrence() const;
@@ -45,6 +48,7 @@ private:
     struct Pending;
     bool current(const std::shared_ptr<Active> &a) const;
     bool allowed(const std::shared_ptr<Active> &a, SourceActionV2 action);
+    bool refreshCurrentActions(const std::shared_ptr<Active> &a);
     void resolve(const std::shared_ptr<Active> &a);
     void scrobble(const std::shared_ptr<Active> &a, qint64 position, bool submission);
     void invoke(const std::shared_ptr<Active> &a, const std::shared_ptr<Pending> &p);
