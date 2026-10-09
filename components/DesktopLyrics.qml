@@ -161,11 +161,14 @@ Window {
             radius: Style.settings.cubeRadius
             Behavior on opacity { NumberAnimation { duration: 120 } }
             Text {
+                id: playbackCaption
+                objectName: "desktopLyricsCaption"
                 x: 16
                 y: 12
                 height: 36
                 width: desktopLyricsWindow.width / 2 - 80
-                text: window.musicTitle + " - " + window.musicArtist
+                text: window.lyricsAdapter.metadataCaption(" - ")
+                textFormat: Text.PlainText
                 verticalAlignment: Text.AlignVCenter
                 color: "#fffafafa"
                 font.pixelSize: Style.settings.text

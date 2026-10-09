@@ -213,10 +213,12 @@ Item {
 
     Text {
         id: titleMax
+        objectName: "maxPlayerTitle"
         y: mainLayout.height / 1.7 + 20
         x: controlMaxLoader.infoX
         height: musicControlMax.standHeight
-        text: window.musicTitle
+        text: window.lyricsAdapter.details.title || ""
+        textFormat: Text.PlainText
         font.weight: 600
         width: mainLayout.piclong
         elide: Text.ElideRight
@@ -240,10 +242,12 @@ Item {
     }
     Text {
         id: artistMax
+        objectName: "maxPlayerArtist"
         anchors.top: titleMax.bottom
         x: titleMax.x
         height: musicControlMax.standHeight / 3
-        text: window.musicArtist
+        text: window.lyricsAdapter.details.artist || ""
+        textFormat: Text.PlainText
         width: mainLayout.piclong
         elide: Text.ElideRight
         horizontalAlignment: controlMaxLoader.lyricsType === 1 ? Text.AlignHCenter : Text.AlignLeft
@@ -256,11 +260,13 @@ Item {
     }
     Text {
         id: lyricModeText
+        objectName: "maxPlayerCaption"
         x: parent.width / 2 - width / 2
         y: 80
         height: 50
         width: implicitWidth > parent.width / 3 - 120 ? parent.width / 3 - 120 : implicitWidth
-        text: window.musicTitle + "    --" + window.musicArtist
+        text: window.lyricsAdapter.metadataCaption("    --")
+        textFormat: Text.PlainText
         elide: Text.ElideRight
         font.weight: 600
         font.pixelSize: 16

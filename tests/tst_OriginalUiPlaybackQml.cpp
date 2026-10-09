@@ -126,6 +126,8 @@ private slots:
     void originalProgressRangesFollowPresentationChanges();
     void actualPlayerMetadataMenusUseSafeDisplaySnapshots();
     void actualMenuLabelsTreatPluginTextAsPlainText();
+    void remainingPlaybackCaptionsUseSafePresentation_data();
+    void remainingPlaybackCaptionsUseSafePresentation();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -258,6 +260,86 @@ Item {
     QCOMPARE(controls.rateCalls, rateCalls);
     QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::remainingPlaybackCaptionsUseSafePresentation_data()
+{
+    QTest::addColumn<bool>("maximized");
+    QTest::newRow("maximized-player") << true;
+    QTest::newRow("desktop-lyrics") << false;
+}
+
+void OriginalUiPlaybackQmlTest::remainingPlaybackCaptionsUseSafePresentation()
+{
+    QFETCH(bool, maximized);
+    QQmlEngine engine;
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"sourceMode", true}, {"sourceActive", true}, {"sourceItem", QVariantMap{{"title", "<b>Current</b>"},
+            {"artists", QStringList{"A", "B"}}}},
+        {"legacyDetails", QVariantMap{{"title", "Old Title"}, {"artist", "Old Artist"}}}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/") + (maximized ? "layout/PlayerMaxCenter.qml" : "components/DesktopLyrics.qml"));
+    QVERIFY(file.open(QIODevice::ReadOnly)); const auto source = QString::fromUtf8(file.readAll());
+    QVERIFY(!source.contains("window.musicTitle")); QVERIFY(!source.contains("window.musicArtist"));
+    const auto extract = [&source](const QString &id) {
+        const auto declaration = source.indexOf("id: " + id);
+        if (declaration < 0) return QString();
+        const auto start = source.lastIndexOf("Text {", declaration);
+        if (start < 0) return QString();
+        int depth = 0;
+        for (auto end = start; end < source.size(); ++end) {
+            if (source[end] == '{') ++depth;
+            else if (source[end] == '}' && --depth == 0) return source.mid(start, end + 1 - start);
+        }
+        return QString();
+    };
+    QString fragment;
+    for (const auto &id : maximized ? QStringList{"titleMax", "artistMax", "lyricModeText"} : QStringList{"playbackCaption"}) {
+        const auto text = extract(id); QVERIFY(!text.isEmpty()); fragment += text;
+    }
+    auto fixture = QStringLiteral(R"(import QtQuick
+Item { id: musicControlMax; width: 800; height: 600
+    required property var presentation
+    readonly property real standHeight: 48
+    property QtObject window: QtObject { property var lyricsAdapter: musicControlMax.presentation }
+    property var mainLayout: ({height: 600, width: 800, piclong: 300})
+    property var controlMaxLoader: ({infoX: 0, lyricsType: 2, basicCd: false})
+    property var desktopLyricsWindow: ({width: 800})
+    property var styleFixture: ({settings: {text: 16}})
+    // Effect stand-in only: metadata bindings and Text nodes are production code.
+    component DropShadow: Item { property real horizontalOffset; property real verticalOffset; property real radius;
+        property int samples; property bool fast; property color color; property Item source }
+%1
+})").arg(fragment);
+    fixture.replace("Style.", "musicControlMax.styleFixture.");
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/remaining-captions-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *caption = root->findChild<QObject *>(maximized ? "maxPlayerCaption" : "desktopLyricsCaption"); QVERIFY(caption);
+    const auto separator = maximized ? QString("    --") : QString(" - ");
+    QCOMPARE(caption->property("text").toString(), QString("<b>Current</b>") + separator + "A, B");
+    QCOMPARE(caption->property("textFormat").toInt(), 0);
+    if (maximized) {
+        auto *title = root->findChild<QObject *>("maxPlayerTitle"), *artist = root->findChild<QObject *>("maxPlayerArtist");
+        QVERIFY(title); QVERIFY(artist); QCOMPARE(title->property("text").toString(), QString("<b>Current</b>"));
+        QCOMPARE(artist->property("text").toString(), QString("A, B"));
+        QCOMPARE(title->property("textFormat").toInt(), 0); QCOMPARE(artist->property("textFormat").toInt(), 0);
+    }
+    QVERIFY(bridge->setProperty("sourceItem", QVariantMap{{"title", "Title only"}}));
+    QCOMPARE(caption->property("text").toString(), QString("Title only"));
+    QVERIFY(bridge->setProperty("sourceItem", QVariantMap{{"artists", QStringList{"Artist only"}}}));
+    QCOMPARE(caption->property("text").toString(), QString("Artist only"));
+    QVERIFY(bridge->setProperty("sourceItem", QVariantMap{})); QVERIFY(caption->property("text").toString().isEmpty());
+    QVERIFY(bridge->setProperty("sourceItem", QVariantMap{{"title", "Last track"}, {"artists", QStringList{"Last artist"}}}));
+    QVERIFY(bridge->setProperty("sourceActive", false));
+    for (auto *text : root->findChildren<QObject *>())
+        if (text->objectName().startsWith("maxPlayer") || text == caption) QVERIFY(text->property("text").toString().isEmpty());
+    QVERIFY(bridge->setProperty("legacyDetails", QVariantMap{{"title", "Late old title"}, {"artist", "Late old artist"}}));
+    QVERIFY(caption->property("text").toString().isEmpty());
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QCOMPARE(caption->property("text").toString(), QString("Late old title") + separator + "Late old artist");
 }
 
 void OriginalUiPlaybackQmlTest::actualMenuLabelsTreatPluginTextAsPlainText()

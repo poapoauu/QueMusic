@@ -287,6 +287,13 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 原 title/artist Text、MouseArea、parseArtists、search 和菜单处理器组合测试覆盖当前关键词、多歌手、元数据变化、停播、旧选择拒绝及显式 Legacy。主程序构建与 7 项联合回归通过；仍未完成原生桌面/GPU/真实音频验收。
 - 只迁移显示与搜索，显式 Legacy 收藏及 main 兼容状态字段仍保留。下一步继续审计其他旧标题消费者与页面/平台专用业务；不将当前切片视为全部插件化完成。SDK / 插件 ABI 不变。
 
+### 最大化播放器与桌面歌词：剩余标题消费者迁移
+
+- 最大化标题/歌手、歌词模式标题及桌面歌词控制栏改用安全 details，按 PlainText 显示；保留原布局、特效及两种组合分隔样式。
+- Host 私有展示桥接新增 `metadataCaption`，仅格式化现有安全展示字段。单侧缺失时不生成孤立分隔符，Source 空态不会显示上一首或迟到的 Legacy 字段。
+- 实际生产 Text 片段 + 真实桥接的双场景测试覆盖完整/单侧/空元数据、切曲、停止、迟到 Legacy、纯文本和显式兼容切换；只有阴影为 stand-in，不声称 GPU 视觉验收。主程序构建及 7 项联合回归通过。
+- Source SDK v2 / Plugin UI API 不变。下一切片清理 main 中无调用方的 Navidrome 旧账号入口，保留通用插件设置导航和仍在使用的 Legacy 播放业务。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

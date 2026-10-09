@@ -60,6 +60,12 @@ QtObject {
     readonly property bool rateEnabled: sourceMode
         ? !!(controls && typeof controls.setPlaybackRate === "function") : !!legacyPlayer
 
+    function metadataCaption(separator) {
+        const title = details.title || "", artist = details.artist || "";
+        if (!title || !artist) return title || artist;
+        return title + (typeof separator === "string" ? separator : " - ") + artist;
+    }
+
     function setPlaybackRate(value) {
         // Preserve the original UI range; never coerce strings or invalid numbers.
         if (typeof value !== "number" || !Number.isFinite(value) || value < 0.1 || value > 4 || !rateEnabled) return false;
