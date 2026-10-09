@@ -11,9 +11,106 @@ import 'qrc:/QueMusic/components'
 Item {
     id: downloadPage
 
+    property var musicAdapter: null
+    readonly property var sourceTasks: musicAdapter ? musicAdapter.downloadTasks || [] : []
+    readonly property var sourceActiveTasks: sourceTasks.filter(function(task) {
+        return task.state === "pending" || task.state === "failed"
+    })
+    readonly property var sourceCompletedTasks: sourceTasks.filter(function(task) {
+        return task.state === "completed"
+    })
     property int downloadTab: 0
     // Keep toolbar state local to this page; it must not reach into FavouritePage.
     property int setMode: 0
+
+    function dismissSourceTask(taskId) {
+        if (!musicAdapter || typeof musicAdapter.dismissDownloadTask !== "function") return false
+        for (var i = 0; i < sourceTasks.length; ++i) {
+            var task = sourceTasks[i]
+            if (task.taskId === taskId && (task.state === "completed" || task.state === "failed"))
+                return musicAdapter.dismissDownloadTask(taskId)
+        }
+        return false
+    }
+
+    // Host-private UI projection. No SourceRef, resource URL, progress guess or path playback.
+    component SourceTaskList: ListView {
+        property var tasks: []
+        property string sectionTitle: "插件下载（本次会话）"
+        model: tasks
+        clip: true
+        spacing: 4
+        ScrollBar.vertical: ScrollBar {}
+        header: Item {
+            width: ListView.view.width
+            height: 52
+            Text {
+                text: parent.ListView.view.sectionTitle
+                color: Style.themes.fontColor
+                font.pixelSize: Style.settings.text
+                textFormat: Text.PlainText
+            }
+            Text {
+                y: 24
+                width: parent.width
+                text: "移除记录不删除文件；播放前请在本地音乐插件中导入目标目录"
+                color: Style.themes.textColor
+                font.pixelSize: 12
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+            }
+        }
+        delegate: Rectangle {
+            required property var modelData
+            objectName: "sourceDownloadTaskRow_" + modelData.taskId
+            width: ListView.view.width
+            height: 64
+            radius: 6
+            color: Style.themes.fullColor
+            Text {
+                objectName: "sourceDownloadTitle_" + modelData.taskId
+                x: 16
+                y: 8
+                width: Math.max(0, parent.width - 264)
+                text: modelData.fileName + (modelData.title ? " · " + modelData.title : "")
+                color: Style.themes.fontColor
+                font.pixelSize: 14
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+            }
+            Text {
+                x: 16
+                y: 34
+                width: Math.max(0, parent.width - 264)
+                text: modelData.sourceLabel + (modelData.artist ? " · " + modelData.artist : "")
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+            }
+            Text {
+                x: parent.width - 240
+                y: 22
+                text: modelData.state === "pending" ? "正在下载…"
+                    : modelData.state === "completed" ? "已完成" : "下载失败"
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
+                textFormat: Text.PlainText
+            }
+            QButton {
+                objectName: "dismissSourceDownloadTask_" + modelData.taskId
+                anchors.right: parent.right
+                anchors.rightMargin: 8
+                y: 14
+                width: 100
+                height: 36
+                text: "移除记录"
+                visible: modelData.state === "completed" || modelData.state === "failed"
+                enabled: visible
+                onClicked: downloadPage.dismissSourceTask(modelData.taskId)
+            }
+        }
+    }
 
     DownloadedMusicModel {
         id: downloadedModel
@@ -57,6 +154,7 @@ Item {
 
     // 标签栏
     QBlurTapBar {
+        objectName: "downloadTabs"
         x: 24
         y: 80
         z: 5
@@ -66,6 +164,7 @@ Item {
         rectXy: Qt.rect(0, 12, width, 40)
         blurSource: downloadChildPage
         onTabChange: (index) => {
+            downloadPage.downloadTab = index;
             downloadChildPage.stack(index);
             if (index === 1)
                 refreshDownloads();
@@ -80,7 +179,7 @@ Item {
         spacing: 8
         QButton {
             height: 38
-            text: "文件夹中显示"
+            text: "旧下载目录"
             iconCharacter: "\uf0fb"
             buttonColor: downloadPage.setMode === 1 ? Style.themes.containColor : Style.themes.fullColor
             onClicked: {
@@ -110,13 +209,34 @@ Item {
                 text: "没有下载任务"
                 color: Style.themes.textColor
                 font.pixelSize: 14
-                visible: MusicApi.downloader.taskCount === 0
+                visible: downloadPage.sourceActiveTasks.length === 0 && MusicApi.downloader.taskCount === 0
+            }
+
+            SourceTaskList {
+                id: sourceActiveList
+                objectName: "sourceActiveDownloadTasks"
+                x: 0
+                y: 72
+                width: parent.width
+                height: visible ? Math.max(0, parent.height - 96) * (MusicApi.downloader.taskCount > 0 ? 0.5 : 1) : 0
+                visible: tasks.length > 0
+                tasks: downloadPage.sourceActiveTasks
+            }
+            Text {
+                id: legacyTasksHeading
+                x: 0
+                y: sourceActiveList.visible ? sourceActiveList.y + sourceActiveList.height : 72
+                height: 28
+                text: "旧版下载任务（兼容）"
+                visible: MusicApi.downloader.taskCount > 0
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
             }
 
             ListView {
                 id: activeList
                 anchors.fill: parent
-                anchors.topMargin: 72
+                anchors.topMargin: legacyTasksHeading.y + (legacyTasksHeading.visible ? legacyTasksHeading.height : 0)
                 anchors.bottomMargin: 24
                 model: MusicApi.downloader
                 clip: true
@@ -353,13 +473,34 @@ Item {
                 text: "没有已下载的文件,去下载几个音乐喵"
                 color: Style.themes.textColor
                 font.pixelSize: 14
-                visible: downloadedModel.count === 0
+                visible: downloadedModel.count === 0 && downloadPage.sourceCompletedTasks.length === 0
+            }
+
+            SourceTaskList {
+                id: sourceCompletedList
+                objectName: "sourceCompletedDownloadTasks"
+                x: 0
+                y: 72
+                width: parent.width
+                height: visible ? Math.max(0, parent.height - 96) * (downloadedModel.count > 0 ? 0.5 : 1) : 0
+                visible: tasks.length > 0
+                tasks: downloadPage.sourceCompletedTasks
+            }
+            Text {
+                id: legacyFilesHeading
+                x: 0
+                y: sourceCompletedList.visible ? sourceCompletedList.y + sourceCompletedList.height : 72
+                height: 28
+                text: "旧下载目录中的文件（播放前需本地插件导入）"
+                visible: downloadedModel.count > 0
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
             }
 
             QListView {
                 id: localFileView
                 anchors.fill: parent
-                topMargin: 72
+                topMargin: legacyFilesHeading.y + (legacyFilesHeading.visible ? legacyFilesHeading.height : 0)
                 bottomMargin: 24
                 model: downloadedModel
                 clip: true

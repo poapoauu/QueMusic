@@ -172,6 +172,12 @@ Rectangle {
         active: false
         source: "qrc:/QueMusic/pages/DownloadPage.qml"
         onLoaded: { visible = true; mainContent.finishedLoaderPage(5) }
+        Binding {
+            target: downloadPage.item
+            property: "musicAdapter"
+            value: mainContent.musicAdapter
+            when: downloadPage.item !== null
+        }
     }
 
     // 搜索页

@@ -68,6 +68,10 @@ private slots:
         }
         QVERIFY(mainContent.contains(QStringLiteral("source: \"qrc:/QueMusic/pages/FilePage.qml\"")));
         QVERIFY(mainContent.contains(QStringLiteral("source: \"qrc:/QueMusic/pages/DownloadPage.qml\"")));
+        const auto downloadLoader = mainContent.mid(mainContent.indexOf(QStringLiteral("id: downloadPage")), 850);
+        QVERIFY(downloadLoader.contains(QStringLiteral("target: downloadPage.item")));
+        QVERIFY(downloadLoader.contains(QStringLiteral("property: \"musicAdapter\"")));
+        QVERIFY(downloadLoader.contains(QStringLiteral("value: mainContent.musicAdapter")));
         QVERIFY(!mainContent.contains(QStringLiteral("MusicSectionView")));
         QVERIFY(!mainContent.contains(QStringLiteral("color: \"white\"")));
 

@@ -76,6 +76,7 @@ class FakeAdapter final : public QObject {
     Q_PROPERTY(QObject *searchAlbums READ searchAlbums CONSTANT)
     Q_PROPERTY(QObject *searchLyrics READ searchLyrics CONSTANT)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
+    Q_PROPERTY(QVariantList downloadTasks MEMBER downloadTasks NOTIFY downloadTasksChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
 public:
@@ -173,6 +174,17 @@ public:
     Q_INVOKABLE QUuid play(const QVariantMap &value) { played << value; return QUuid::createUuid(); }
     Q_INVOKABLE QUuid enqueue(const QVariantMap &value) { enqueued << value; return QUuid::createUuid(); }
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &value, bool favorite) { favorites << qMakePair(value, favorite); return QUuid::createUuid(); }
+    Q_INVOKABLE bool dismissDownloadTask(const QString &id) {
+        for (qsizetype i = 0; i < downloadTasks.size(); ++i) {
+            const auto row = downloadTasks.at(i).toMap();
+            if (row.value("taskId").toString() != id || row.value("state").toString() == "pending") continue;
+            dismissedDownloads << id;
+            downloadTasks.removeAt(i);
+            emit downloadTasksChanged();
+            return true;
+        }
+        return false;
+    }
     static QVariantMap row(const QString &title, const QString &sectionId,
                            bool canPlay = true, bool canEnqueue = true,
                            bool canFavorite = true, bool canUnfavorite = true,
@@ -202,9 +214,12 @@ public:
     QList<QPair<QVariantMap, bool>> favorites;
     QString selectedSource;
     QVariantList customSourceOptions;
+    QVariantList downloadTasks;
+    QStringList dismissedDownloads;
 signals:
     void selectedSourceInstanceIdChanged();
     void sourceOptionsChanged();
+    void downloadTasksChanged();
 };
 
 class FakeDownloader final : public QObject { Q_OBJECT Q_PROPERTY(int completedCount MEMBER completedCount NOTIFY completedCountChanged) Q_PROPERTY(int taskCount MEMBER taskCount NOTIFY taskCountChanged) Q_PROPERTY(bool hasActiveTasks MEMBER hasActiveTasks NOTIFY taskCountChanged) public: Q_INVOKABLE QString effectiveDownloadDir() const { return QDir::tempPath(); } Q_INVOKABLE void removeTask(const QString &) {} Q_INVOKABLE void retryTask(const QString &) {} int completedCount = 0; int taskCount = 0; bool hasActiveTasks = false; signals: void completedCountChanged(); void taskCountChanged(); };
@@ -259,6 +274,15 @@ private:
 
 static std::unique_ptr<QObject> load(QQmlEngine &engine, const QString &page, FakeAdapter *adapter, QString *error)
 { QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/QueMusic/") + page)); if (component.status() != QQmlComponent::Ready) { *error = component.errorString(); return {}; } auto result = std::unique_ptr<QObject>(component.createWithInitialProperties({{QStringLiteral("musicAdapter"), QVariant::fromValue(adapter)}, {QStringLiteral("width"), 900}, {QStringLiteral("height"), 600}})); if (!result) *error = component.errorString(); return result; }
+
+static QQuickItem *visualChild(QQuickItem *root, const QString &name)
+{
+    if (!root) return nullptr;
+    if (root->objectName() == name) return root;
+    for (auto *child : root->childItems())
+        if (auto *found = visualChild(child, name)) return found;
+    return nullptr;
+}
 
 class OriginalUiActionsQmlTest final : public QObject {
     Q_OBJECT
@@ -547,6 +571,48 @@ private slots:
         auto page = load(engine, QStringLiteral("pages/DownloadPage.qml"), &adapter, &error);
         QVERIFY2(page, qPrintable(error));
         QCoreApplication::processEvents();
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+    }
+    void downloadPageUsesSessionTasksAndDismissesOnlyTerminalRecords()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
+        const auto task = [](const QString &id, const QString &state) {
+            return QVariantMap{{"taskId", id}, {"state", state}, {"fileName", "saved.bin"},
+                {"title", "<b>Track</b>"}, {"artist", "Artist"}, {"sourceLabel", "Source"}};
+        };
+        adapter.downloadTasks = {task("running", "pending"), task("failed", "failed"), task("saved", "completed")};
+        auto page = load(engine, "pages/DownloadPage.qml", &adapter, &error); QVERIFY2(page, qPrintable(error));
+        auto *active = page->findChild<QObject *>("sourceActiveDownloadTasks");
+        auto *completed = page->findChild<QObject *>("sourceCompletedDownloadTasks"); QVERIFY(active); QVERIFY(completed);
+        QTRY_COMPARE(active->property("count").toInt(), 2); QTRY_COMPARE(completed->property("count").toInt(), 1);
+        QVERIFY(QMetaObject::invokeMethod(active, "forceLayout"));
+        auto *pageItem = qobject_cast<QQuickItem *>(page.get()); QVERIFY(pageItem);
+        QTRY_VERIFY2(visualChild(pageItem, "dismissSourceDownloadTask_failed"), qPrintable(diagnostics.runtimeErrors()));
+        auto *pendingButton = visualChild(pageItem, "dismissSourceDownloadTask_running"); QVERIFY(pendingButton);
+        QVERIFY(!pendingButton->property("enabled").toBool()); QVERIFY(!pendingButton->property("visible").toBool());
+        // Even programmatic activation of a hidden button must not dismiss a live request.
+        QVERIFY(QMetaObject::invokeMethod(pendingButton, "clicked")); QVERIFY(adapter.dismissedDownloads.isEmpty());
+        auto *title = visualChild(pageItem, "sourceDownloadTitle_running"); QVERIFY(title);
+        QCOMPARE(title->property("text").toString(), QString("saved.bin · <b>Track</b>"));
+        QCOMPARE(title->property("textFormat").toInt(), 0); // Text.PlainText, not rich plugin markup.
+        auto *failedButton = visualChild(pageItem, "dismissSourceDownloadTask_failed"); QVERIFY(failedButton);
+        QVERIFY(failedButton->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(failedButton, "clicked"));
+        QCOMPARE(adapter.dismissedDownloads, QStringList{"failed"}); QTRY_COMPARE(active->property("count").toInt(), 1);
+        // Task completion moves into the original completed tab without consulting current playback.
+        adapter.downloadTasks = {task("running", "completed"), task("saved", "completed")}; emit adapter.downloadTasksChanged();
+        QTRY_COMPARE(active->property("count").toInt(), 0); QTRY_COMPARE(completed->property("count").toInt(), 2);
+        auto *tabs = page->findChild<QObject *>("downloadTabs"); QVERIFY(tabs);
+        QVERIFY(QMetaObject::invokeMethod(tabs, "tabChange", Q_ARG(int, 1))); QCOMPARE(page->property("downloadTab").toInt(), 1);
+        QCoreApplication::processEvents();
+        QVERIFY(QMetaObject::invokeMethod(completed, "forceLayout"));
+        QTRY_VERIFY2(visualChild(pageItem, "dismissSourceDownloadTask_saved"), qPrintable(diagnostics.runtimeErrors()));
+        auto *savedButton = visualChild(pageItem, "dismissSourceDownloadTask_saved"); QVERIFY(savedButton);
+        QVERIFY(QMetaObject::invokeMethod(savedButton, "clicked")); QCOMPARE(adapter.dismissedDownloads, QStringList({"failed", "saved"}));
+        QTRY_COMPARE(completed->property("count").toInt(), 1);
+        QVERIFY(page->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+        QTRY_COMPARE(active->property("count").toInt(), 0); QTRY_COMPARE(completed->property("count").toInt(), 0);
+        QCOMPARE(context.musicApi.legacyPlays, 0); QCOMPARE(context.musicApi.legacyPlaylistRequests, 0);
         QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
     }
 };

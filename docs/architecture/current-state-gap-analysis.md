@@ -485,6 +485,10 @@ Windows SMTC 随后接入统一播放桥接：Source 输入仅控制 Core，元�
 
 Adapter 后续新增 downloadTasks 安全投影，独立于当前播放 token 保存 Router 已分发下载的 pending/completed/failed 状态。切歌/停播/Coordinator 销毁不抹去任务结果，Router 销毁与实例失效使进行中记录失败；完整身份、请求和目标仅保留在私有进行中记录。展示只含 opaque taskId、标题/歌手/来源、目标文件名和通用状态；相同进行中目标 URL 去重，终态移除不取消、不删文件。四个 Host/播放/路由/队列联合套件通过。下载页接入、取消、真实字节进度与跨启动恢复仍待实现，真实服务器和原生视觉未验收；Source SDK v2 与 Plugin UI API ABI 不变。
 
+### 后续增量：原下载页 Source 会话展示
+
+DownloadPage 后续由 MainContent 持续绑定 Adapter，在原下载中/已下载页签分别展示安全的进行中与失败/完成记录。终态移除不删除文件，进行中 handler 再拒绝；缺 Adapter 清空 Source 区，旧任务与旧目录文件作为明确的兼容区保留。Source 下载无需旧固定目录扫描，完成后仍必须由 Local 插件明确导入，禁止路径直播放与自动扩张根目录。主程序构建和八个相关套件通过，实际 QML 夹具覆盖分类/页签/移除/缺 Adapter/纯文本。取消、进度、跨启动恢复与真实服务器/原生视觉验收仍未完成，SDK v2 与 Plugin UI API ABI 不变。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

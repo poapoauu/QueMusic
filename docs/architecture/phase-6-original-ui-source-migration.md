@@ -218,6 +218,14 @@ Adapter 新增独立于当前播放 token 的 downloadTasks 展示投影。已�
 
 OriginalUiMusicAdapter、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration 四个联合套件通过。新增测试覆盖跨实例同 ID、切歌后目标去重、停播及 Coordinator 销毁后的完成/失败、Router 销毁及实例禁用、重复终态、字段白名单、终态移除与文件保留；既有 inline 完成、错误目标拒绝和权限检查回归继续通过。下载页显示将在下一切片接入；没有新增 SDK v2/Plugin UI API 虚接口或 ABI 变化，真实服务器与原生 UI 验收仍待完成。
 
+### 原下载页的 Source 会话任务展示
+
+DownloadPage 由 MainContent Loader 的持续 Binding 注入 Adapter，保留原三页签、主题与下载管理布局。Source pending/failed 记录进入“正在下载”，completed 记录进入“已下载”，只读安全投影；字段按纯文本渲染，不把插件标题当富文本。终态按钮只移除记录，进行中按钮隐藏且 handler 再拒绝；缺 Adapter 时 Source 区清空，不使用旧下载模型冒充任务。旧下载任务、旧目录文件与目录按钮分别标注为兼容/旧目录，保留其已有数据，不混用 ID、百分比、重试或取消动作。
+
+Source 下载选择的目标可以在任意用户目录，完成记录不依赖旧固定目录扫描，不自动生成旧平台元数据或触发路径播放。界面明确说明移除不删除文件、播放前需在 Local 插件中导入目标目录；没有自动扩张 Local 根目录。Source 当前任务仅显示通用状态，不展示诊断、目标目录或资源地址，也没有假进度/取消/自动重试。持久化及取消仍属后续切片。
+
+主程序构建及 OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiPlaybackQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration、NavidromeSource 八个联合套件通过。下载页实际 QML 测试使用轻量服务夹具和真实控件，强制 ListView 布局并按视觉子项查找代理，覆盖任务分类、完成后跨页签移动、终态移除、进行中程序化点击拒绝、Adapter 移除清空和纯文本；结构测试确认实际 Loader Binding。该验收不代替真实 OS/服务器与完整视觉检查。SDK v2/Plugin UI API 未修改，Download 与 Phase 6 尚未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
