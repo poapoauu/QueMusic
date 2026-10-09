@@ -11,6 +11,19 @@
 #include "../cpp/WindowsSmtcManager.h"
 #include "../core/playback/QtPlaybackController.h"
 
+namespace {
+QString capturedQmlBlock(const QString &source, qsizetype start)
+{
+    if (start < 0) return {};
+    int depth = 0;
+    for (auto end = start; end < source.size(); ++end) {
+        if (source[end] == '{') ++depth;
+        else if (source[end] == '}' && --depth == 0) return source.mid(start, end + 1 - start);
+    }
+    return {};
+}
+}
+
 class QueueModelDouble final : public QObject {
     Q_OBJECT
     Q_PROPERTY(int count READ count CONSTANT)
@@ -103,6 +116,21 @@ signals:
     void wavePathChanged();
 };
 
+class LegacyShutdownDouble final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(int count READ count)
+    Q_PROPERTY(int playListIndex READ index)
+    Q_PROPERTY(QString urlStr READ cover)
+public:
+    int rows = 1, currentIndex = 0, stops = 0;
+    mutable int reads = 0;
+    int count() const { ++reads; return rows; }
+    int index() const { ++reads; return currentIndex; }
+    QString cover() const { ++reads; return "file:///legacy-cover.png"; }
+    Q_INVOKABLE QVariantMap get(int) { ++reads; return {{"path", "legacy-id"}, {"source", 1}}; }
+    Q_INVOKABLE void stop() { ++stops; }
+};
+
 class OriginalUiPlaybackQmlTest final : public QObject {
     Q_OBJECT
 private slots:
@@ -129,6 +157,9 @@ private slots:
     void remainingPlaybackCaptionsUseSafePresentation_data();
     void remainingPlaybackCaptionsUseSafePresentation();
     void actualSettingsNavigationPreservesPluginAndInstanceSelection();
+    void sourceShutdownDoesNotMixLegacyPersistence();
+    void coverDialogUsesSafeCurrentLabelsAndFileNames();
+    void coverSaveKeepsTheCapturedDestination();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -261,6 +292,151 @@ Item {
     QCOMPARE(controls.rateCalls, rateCalls);
     QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::sourceShutdownDoesNotMixLegacyPersistence()
+{
+    QQmlEngine engine; LegacyShutdownDouble legacy;
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto sync = capturedQmlBlock(source, source.indexOf("function syncSecureCurrent()"));
+    auto closing = capturedQmlBlock(source, source.indexOf("function toClosing()"));
+    QVERIFY(!sync.isEmpty()); QVERIFY(!closing.isEmpty()); QVERIFY(!sync.contains("currentItem"));
+    closing.replace("Options.", "optionsFixture.");
+    const auto fixture = QStringLiteral(R"(import QtQml
+QtObject { id: window
+    required property var legacy
+    property var mainMedia: legacy; property var playListModel: legacy
+    property bool securePlaybackCurrent: false; property bool sourceLyricsMode: false
+    property string musicTitle: "Legacy Title"; property string musicArtist: "Legacy Artist"
+    property bool minimized: false; property int closes: 0
+    function showMinimized() { minimized = true; } function close() { ++closes; }
+    property QtObject desktopSpot: QtObject { property bool active: true }
+    property QtObject desktopLyricsLoader: QtObject { property bool active: true }
+    property QtObject desktopPlayerLoader: QtObject { property bool active: true }
+    property QtObject optionsFixture: QtObject {
+        property var settings: ({closeToManage: false})
+        property var lastSongs: ({name: "Previous", artist: "Previous Artist", hash: "previous-id", source: 2, cover: "old.png"})
+    }
+%1
+%2
+})").arg(sync, closing);
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/shutdown-boundary-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"legacy", QVariant::fromValue<QObject *>(&legacy)}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *options = root->property("optionsFixture").value<QObject *>(); QVERIFY(options);
+    const auto previous = options->property("lastSongs").toMap();
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "syncSecureCurrent")); QCOMPARE(legacy.stops, 0);
+    QVERIFY(root->setProperty("securePlaybackCurrent", true));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "syncSecureCurrent"));
+    QCOMPARE(legacy.stops, 1); QVERIFY(root->property("sourceLyricsMode").toBool());
+    QCOMPARE(root->property("musicTitle").toString(), QString("Legacy Title"));
+    QCOMPARE(root->property("musicArtist").toString(), QString("Legacy Artist"));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "toClosing")); QCOMPARE(legacy.reads, 0);
+    QCOMPARE(options->property("lastSongs").toMap(), previous);
+    for (auto name : {"desktopSpot", "desktopLyricsLoader", "desktopPlayerLoader"})
+        QVERIFY(!root->property(name).value<QObject *>()->property("active").toBool());
+    QCOMPARE(root->property("closes").toInt(), 1);
+    QVERIFY(root->setProperty("securePlaybackCurrent", false)); // Source is sticky after stop.
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "toClosing")); QCOMPARE(legacy.reads, 0);
+    QCOMPARE(options->property("lastSongs").toMap(), previous);
+    QVERIFY(root->setProperty("sourceLyricsMode", false));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "toClosing")); QVERIFY(legacy.reads > 0);
+    const auto saved = options->property("lastSongs").toMap();
+    QCOMPARE(saved.value("name").toString(), QString("Legacy Title"));
+    QCOMPARE(saved.value("artist").toString(), QString("Legacy Artist"));
+    QCOMPARE(saved.value("hash").toString(), QString("legacy-id")); QCOMPARE(saved.value("source").toInt(), 1);
+    QCOMPARE(saved.value("cover").toString(), QString("file:///legacy-cover.png"));
+    legacy.rows = 0; legacy.reads = 0;
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "toClosing")); QCOMPARE(options->property("lastSongs").toMap(), saved);
+    legacy.reads = 0;
+    QVERIFY(options->setProperty("settings", QVariantMap{{"closeToManage", true}}));
+    const auto closes = root->property("closes").toInt();
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "toClosing"));
+    QVERIFY(root->property("minimized").toBool()); QCOMPARE(root->property("closes").toInt(), closes);
+    QCOMPARE(legacy.reads, 0); QCOMPARE(options->property("lastSongs").toMap(), saved);
+}
+
+void OriginalUiPlaybackQmlTest::coverDialogUsesSafeCurrentLabelsAndFileNames()
+{
+    QQmlEngine engine;
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"sourceMode", true}, {"sourceActive", true}, {"sourceItem", QVariantMap{{"title", "Current"}}},
+        {"legacyDetails", QVariantMap{{"title", "Legacy"}}}})); QVERIFY(bridge);
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto mouse = capturedQmlBlock(source, source.lastIndexOf("MouseArea {", source.indexOf("id: coverWatchMouse")));
+    const auto helper = capturedQmlBlock(source, source.indexOf("function safeFileName(title)"));
+    const auto dialog = capturedQmlBlock(source, source.indexOf("function dialog(_source,_title)"));
+    QVERIFY(!mouse.isEmpty()); QVERIFY(!helper.isEmpty()); QVERIFY(!dialog.isEmpty());
+    const auto fixture = QStringLiteral(R"(import QtQuick
+Item { id: musicpic; width: 100; height: 100
+    required property var presentation
+    property QtObject window: QtObject { property var lyricsAdapter: musicpic.presentation
+        property string currentCover: "file:///fixture/host-cover.png" }
+    property QtObject picWatch: QtObject { id: picWatch
+        property string source; property string fileName; property int opens: 0
+        function open() { ++opens; }
+%1
+%2
+    }
+    function clickCover() { coverWatchMouse.clicked(null); }
+%3
+})").arg(helper, dialog, mouse);
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/cover-label-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *popup = root->property("picWatch").value<QObject *>(); QVERIFY(popup);
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickCover")); QCOMPARE(popup->property("fileName").toString(), QString("Current.png"));
+    QCOMPARE(popup->property("source").toString(), QString("file:///fixture/host-cover.png"));
+    const QList<QPair<QString, QString>> cases{{"", "Picture.png"}, {"..", "Picture.png"}, {"../outside", ".._outside.png"},
+        {"A/B\\C:D?", "A_B_C_D_.png"}, {"CON", "_CON.png"}, {"NUL.txt", "_NUL.txt.png"}, {"LPT1", "_LPT1.png"},
+        {"  标题.  ", "标题.png"}, {QString("A") + QChar(0) + "B", "A_B.png"}};
+    for (const auto &entry : cases) {
+        QVariant result; QVERIFY(QMetaObject::invokeMethod(popup, "safeFileName", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, entry.first)));
+        QCOMPARE(result.toString(), entry.second); QVERIFY(!result.toString().contains('/')); QVERIFY(!result.toString().contains('\\'));
+    }
+    QVariant result;
+    const QString emoji = QString::fromUcs4(U"🎵");
+    QVERIFY(QMetaObject::invokeMethod(popup, "safeFileName", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, QString(63, QChar(u'中')) + emoji)));
+    QCOMPARE(result.toString(), QString(63, QChar(u'中')) + ".png"); QVERIFY(result.toString().toUtf8().size() < 255);
+    QVERIFY(bridge->setProperty("sourceActive", false));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickCover")); QCOMPARE(popup->property("fileName").toString(), QString("Picture.png"));
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "clickCover")); QCOMPARE(popup->property("fileName").toString(), QString("Legacy.png"));
+}
+
+void OriginalUiPlaybackQmlTest::coverSaveKeepsTheCapturedDestination()
+{
+    QQmlEngine engine;
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.indexOf("id: picWatch"); QVERIFY(start >= 0);
+    auto save = capturedQmlBlock(source, source.indexOf("onCancel: {", start)); QVERIFY(!save.isEmpty());
+    save.replace("onCancel:", "function saveCover()");
+    save.replace("StandardPaths.writableLocation(StandardPaths.PicturesLocation)", "\"/fixture/pictures\"");
+    save.replace("Image.Ready", "1");
+    const auto fixture = QStringLiteral(R"(import QtQml
+QtObject { id: picWatch; property string fileName: "First.png"; property string savedPath: ""
+    property QtObject imageWatch: QtObject { property int status: 1; property var pending: null
+        function grabToImage(callback, size) { pending = callback; }
+        function complete() { var callback = pending; pending = null;
+            callback({saveToFile: function(path) { picWatch.savedPath = path; }}); }
+    }
+    property QtObject mainWarn: QtObject { function tiped(message, kind) {} }
+%1
+})").arg(save);
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/cover-save-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create()); QVERIFY2(root, qPrintable(component.errorString()));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "saveCover"));
+    QVERIFY(root->setProperty("fileName", "Second.png"));
+    auto *image = root->property("imageWatch").value<QObject *>(); QVERIFY(image);
+    QVERIFY(QMetaObject::invokeMethod(image, "complete"));
+    QCOMPARE(root->property("savedPath").toString(), QString("/fixture/pictures/First.png"));
 }
 
 void OriginalUiPlaybackQmlTest::actualSettingsNavigationPreservesPluginAndInstanceSelection()

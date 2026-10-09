@@ -301,6 +301,14 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 主程序构建及上述 4 项针对性回归通过。此清理不改变 SDK/Plugin UI API，不删除仍在使用的网易/酷狗 Legacy 登录业务，也不意味着 Host 的全部平台专用 UI 已清空。
 - 后续继续主窗口剩余兼容状态边界：Source 元数据仍被写入 Legacy 标题字段，关闭流程仍可能将 Source 标题与旧队列 path 混写到 lastSongs，封面查看入口也仍读旧标题；需成组修正并保留明确 Legacy 行为。
 
+### 主窗口元数据、关闭记录与封面命名边界
+
+- Source 同步不再把标题/歌手复制到 Legacy 可变字段；显示继续通过安全适配器，明确 Legacy 的标题更新及收藏行为保留。
+- Source 播放或停播后关闭窗口均不读取旧队列、不改写旧 `lastSongs`，避免新标题与旧 path 混合。Source 队列/历史继续由现有 QueueHistoryStore 持久化；显式 Legacy 关闭仍保存其完整旧记录，空队列和最小化行为保留。
+- 封面查看标题改读安全 details。导出名称规整为有界单文件名，处理路径分隔符、控制字符、保留设备名、空标题和 Unicode 截断；异步回调使用提交时的目标快照，不随下一次查看变更。
+- 主程序构建及 playback coordinator、audio spectrum、Qt playback controller、controls QML、original playback QML、UI structure、queue/history、plugin settings QML、management UI session 共 9 项联合回归通过。实际 main 处理器测试验证 Source 零 Legacy 读取、显式 Legacy 保存与文件名/目标快照；没有实际图片写入、物理音频或原生视觉验收。
+- SDK v2 / Source 插件 ABI / Plugin UI API 不变。封面保存仍未检查实际写入结果，图像异步捕获生命周期也需进一步审计；平台登录业务及其余页面迁移仍未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

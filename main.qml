@@ -135,10 +135,8 @@ Window {
             return;
         window.sourceLyricsMode = true;
         mainMedia.stop();
-        const item = playbackCoordinator.currentItem || {};
-        const artists = item.artists || [];
-        window.musicTitle = item.title || "QueMusic";
-        window.musicArtist = artists instanceof Array ? artists.join(", ") : (item.subtitle || "");
+        // Source presentation stays in the adapter; these mutable fields are
+        // reserved for genuine Legacy playback and must not mix occurrences.
     }
 
     // 首次加载内容临时存储，防止重新加载浪费内存
@@ -153,7 +151,7 @@ Window {
             window.showMinimized();
             return;
         }
-        if(playListModel.count > 0 && playListModel.playListIndex >= 0) {
+        if(!window.sourceLyricsMode && playListModel.count > 0 && playListModel.playListIndex >= 0) {
             var e = playListModel.get(playListModel.playListIndex);
             Options.lastSongs.name = window.musicTitle;
             Options.lastSongs.artist = window.musicArtist;
@@ -664,8 +662,10 @@ Window {
                 visible: false
             }
             MouseArea {
+                id: coverWatchMouse
+                objectName: "currentCoverWatchMouse"
                 anchors.fill: musicpic
-                onClicked: picWatch.dialog(window.currentCover,window.musicTitle);
+                onClicked: picWatch.dialog(window.currentCover,window.lyricsAdapter.details.title || "");
             }
             MultiEffect {
                 z: 1
@@ -1360,8 +1360,9 @@ Window {
         onCancel: {
             var sysPicPath = StandardPaths.writableLocation(StandardPaths.PicturesLocation)
             if(imageWatch.status === Image.Ready) {
+                const destination = sysPicPath + "/" + picWatch.fileName;
                 imageWatch.grabToImage(function(result) {
-                    result.saveToFile(sysPicPath + "/" + picWatch.fileName);
+                    result.saveToFile(destination);
                     console.log("图片已保存！");
                     mainWarn.tiped("已保存至系统图片文件夹",1);
                 },Qt.size(512,512))
@@ -1371,8 +1372,19 @@ Window {
         }
         function dialog(_source,_title) {
             source = _source;
-            fileName = _title + ".png";
+            fileName = safeFileName(_title);
             picWatch.open();
+        }
+
+        function safeFileName(title) {
+            // Metadata is a label, never a path supplied by a Source. Bound the
+            // UTF-16 stem so common UTF-8 filesystems also keep a short filename.
+            let stem = typeof title === "string" ? title : "";
+            stem = stem.replace(/[<>:"\/\\|?*\u0000-\u001f\u007f]/g, "_").trim().slice(0, 64);
+            stem = stem.replace(/[\uD800-\uDBFF]$/, "").replace(/[. ]+$/, "");
+            if (!stem) stem = "Picture";
+            if (/^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(?:\.|$)/i.test(stem)) stem = "_" + stem;
+            return stem + ".png";
         }
 
         options: Item {
