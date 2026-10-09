@@ -301,6 +301,8 @@ Windows SMTC 随后接入统一播放桥接：Source 输入仅控制 Core，元�
 
 当前 Source 下载的 Host 契约随后增量接入：Coordinator 缓存 Provider 和四层交集的 Download 权限，Adapter currentDownload 只展示 canDownload/pending/failed/completed/token，downloadCurrent 必须携带当前播放 token 和用户选择的新本地目标；请求及结果按完整身份、代次、目标和 ID 隔离。Host 拒绝已有文件/目录、远程/相对/畸形地址、悬空链接及无效父目录，并在 pending 通知后再检查；不自动创建目录或覆盖。Router 与 Navidrome 现有提交保护继续复用，第三方插件仍需自行确保提交期不覆盖。主程序构建和四个联合套件通过，保存 UI 尚未接入，该状态不是跨曲目下载任务管理器，真实字节/服务器和视觉验收仍待完成。Source SDK v2/Plugin UI API ABI 不变，Host API 需同步构建。
 
+原下载按钮随后接入 Host SaveFile 选择：Source 由 currentDownload 权限/token/pending 启用，打开时捕获令牌，确认前在 QML 与 Host 两端复核；取消不提交，切歌/停播/降权/移除 Adapter 关闭旧选择，旧确认拒绝且不回退 legacy。对话框要求新文件，已有目标仍拒绝覆盖；不猜测 SDK 未提供的文件名/扩展名。主程序构建及八个联合套件通过，包括原按钮/保存 handlers 的 QML 夹具与既有 Navidrome 本机 HTTP 字节/清理回归，真实 OS 保存对话框与服务器仍待验收。当前 Source 下载未写入旧 DownloadModel，跨曲目任务展示/进度/取消/下载页统一尚未实现；不能据此宣称 Download 或 Phase 6 整体完成。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

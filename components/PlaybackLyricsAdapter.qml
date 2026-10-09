@@ -50,6 +50,15 @@ QtObject {
     readonly property var favorite: sourceMode && sourceActive && musicAdapter ? musicAdapter.currentFavorite || {} : ({})
     readonly property bool favoriteEnabled: !!(sourceMode && sourceActive && favorite.token && !favorite.pending
                                                && (favorite.canFavorite || favorite.canUnfavorite))
+    readonly property var download: sourceMode && sourceActive && musicAdapter ? musicAdapter.currentDownload || {} : ({})
+    readonly property bool downloadEnabled: !!(sourceMode && sourceActive && download.token && download.canDownload && !download.pending)
+
+    function saveDownload(destination, token) {
+        if (!downloadEnabled || !token || token !== download.token || !String(destination || "")
+                || !musicAdapter || typeof musicAdapter.downloadCurrent !== "function") return false;
+        musicAdapter.downloadCurrent(destination, token);
+        return true;
+    }
 
     // Return a choice request, never infer a missing read-state as "not favorite".
     function toggleFavorite() {

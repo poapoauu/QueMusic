@@ -202,6 +202,14 @@ Host 只接受用户指定的新绝对本地文件目标：拒绝远程/相对/�
 
 主程序构建和四个联合套件通过：OriginalUiMusicAdapter、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration。真实插件夹具新增验证目标拒绝与已有文件保留、页面替换仍按当前身份路由、去重/重入、成功与失败重试、错误结果拒绝、多实例和重播 stale token、迟到结果、Hub 销毁、权限降级/恢复/Unsupported、媒体缺许可/bitrate 约束、恢复项不提升、观察者停播和目标竞态。该夹具不写下载内容，不能证明真实服务器字节落盘；保存对话框和当前按钮将在下一切片接入，真实下载及手工视觉仍待验收。Host 展示/API 需同步构建，Source SDK v2 与 Plugin UI API ABI 不变。
 
+### 原下载按钮与用户目标文件选择
+
+原播放器下载按钮现按 currentDownload 的 Capability/播放 token/pending 启用 Source 下载，复用同一按钮与主题，不访问旧队列。点击只打开 Host 的 QtQuick.Dialogs SaveFile 对话框，保存打开时的 token；同一对话框重复点击不重新打开。接受时经播放展示桥接再次验证 Source 模式、当前 token、可下载且非 pending，再调用 Host downloadCurrent；取消不发请求。切歌/重播、停播、权限撤销、Adapter 移除或模式变化关闭并清空旧选择，旧 accepted 回调也不能作用于新歌曲。显式 legacy 在线下载保持，Legacy Local 和越界仍拒绝。
+
+对话框明确要求选择新文件，Host 即使收到原生覆盖确认后的已有目标也拒绝覆盖。v2 未提供原始文件名/格式，不从标题、旧播放器或 URL 猜测扩展名；使用所有文件过滤器，让用户明确选择目标。加载/失败/完成显示通用状态，不展示私有诊断或下载地址。Source 下载仍不接入旧 DownloadModel，切歌后任务状态持久展示、进度、取消与下载页统一属于后续切片，不能把当前按钮接入计为下载管理整体完成。
+
+主程序构建及八个联合套件通过：OriginalUiMusicAdapter、OriginalUiPlaybackQml、OriginalUiActionsQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration、NavidromeSource。新增实际按钮/对话框 handlers 与真实展示桥接测试验证捕获 token、重复打开/提交、取消、旧确认、pending、重试、降权/停播/缺 Adapter 拒绝和零 legacy 回退；原生 FileDialog 用轻量夹具替换，不能证明 OS 弹窗视觉或信号顺序。既有 Navidrome 套件验证本机 HTTP 夹具下真实字节提交及错误/取消临时文件清理；真实服务器、原生保存对话框与跨曲目下载管理仍待验收。SDK v2/Plugin UI API ABI 不变。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

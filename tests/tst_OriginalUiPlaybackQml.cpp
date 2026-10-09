@@ -104,6 +104,7 @@ private slots:
     void smtcUsesSourceStateAndIgnoresLegacyEvents();
     void actualInfoDialogUsesOnlyCurrentDisplayFields();
     void actualDownloadButtonNeverFallsBackAfterSourceStops();
+    void actualSourceDownloadDialogKeepsTheCapturedPlaybackToken();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -112,6 +113,7 @@ class LyricsAdapterDouble final : public QObject {
     Q_PROPERTY(QString currentLyricsState MEMBER state NOTIFY changed)
     Q_PROPERTY(QUrl currentCover MEMBER cover NOTIFY changed)
     Q_PROPERTY(QVariantMap currentFavorite MEMBER favorite NOTIFY changed)
+    Q_PROPERTY(QVariantMap currentDownload MEMBER download NOTIFY changed)
 public:
     QVariantList lines;
     QString state = "empty";
@@ -120,6 +122,14 @@ public:
     int favoriteCalls = 0;
     bool lastFavorite = false;
     QString lastFavoriteToken;
+    QVariantMap download;
+    int downloadCalls = 0;
+    QUrl lastDestination;
+    QString lastDownloadToken;
+    Q_INVOKABLE QUuid downloadCurrent(const QUrl &destination, const QString &token) {
+        ++downloadCalls; lastDestination = destination; lastDownloadToken = token;
+        download.insert("pending", true); emit changed(); return QUuid::createUuid();
+    }
     Q_INVOKABLE QUuid setCurrentFavorite(bool value, const QString &token) {
         ++favoriteCalls; lastFavorite = value; lastFavoriteToken = token;
         favorite.insert("pending", true); emit changed(); return QUuid::createUuid();
@@ -581,7 +591,10 @@ Item {
     id: musicControlMin
     property bool securePlaybackActive: false
     property var styleFixture: ({themes: {textColor: "#222222", hoverColor: "#cccccc"}})
-    property QtObject window: QtObject { property bool sourceLyricsMode: true }
+    property QtObject window: QtObject {
+        property bool sourceLyricsMode: true; property bool securePlaybackCurrent: false
+        property QtObject lyricsAdapter: QtObject { property bool downloadEnabled: false; property var download: ({}) }
+    }
     property QtObject playListModel: QtObject {
         property int playListIndex: 0; property int count: 1; property var trace: ({reads: 0})
         property int source: 0; property string path: "legacy-hash"
@@ -595,10 +608,16 @@ Item {
         property color buttonColor; property color hoverColor; property color iconColor;
         property bool shadowEnabled; property bool hovered: false }
     component QTip: Item { property string text }
+    component FileDialog: Item {
+        visible: false; property string title; property int fileMode; property list<string> nameFilters
+        property url selectedFile; signal accepted(); signal rejected()
+        function open() { visible = true; } function close() { visible = false; }
+    }
 %1
 })").arg(source.mid(start, end - start));
     fixture.replace("Style.themes", "musicControlMin.styleFixture.themes");
     fixture.replace("MusicApi.", "musicControlMin.apiFixture.");
+    fixture.replace("FileDialog.SaveFile", "1");
     QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/download-button-fixture.qml"));
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
     std::unique_ptr<QObject> root(component.create()); QVERIFY2(root, qPrintable(component.errorString()));
@@ -624,6 +643,93 @@ Item {
     QVERIFY(queue->setProperty("source", -1)); QVERIFY(queue->setProperty("playListIndex", 0));
     QVERIFY(!button->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
     QCOMPARE(api->property("requests").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::actualSourceDownloadDialogKeepsTheCapturedPlaybackToken()
+{
+    QQmlEngine engine; LyricsAdapterDouble music;
+    music.download = {{"canDownload", true}, {"pending", false}, {"failed", false}, {"completed", false}, {"token", "A"}};
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"musicAdapter", QVariant::fromValue<QObject *>(&music)}, {"sourceMode", true}, {"sourceActive", true}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.lastIndexOf("SButton {", source.indexOf("id: currentDownloadButton")); QVERIFY(start >= 0);
+    int depth = 0, end = start;
+    for (; end < source.size(); ++end) {
+        if (source[end] == '{') ++depth;
+        else if (source[end] == '}' && --depth == 0) { ++end; break; }
+    }
+    auto fixture = QStringLiteral(R"(import QtQuick
+Item {
+    id: musicControlMin
+    property var presentation
+    property var styleFixture: ({themes: {textColor: "#222222", hoverColor: "#cccccc"}})
+    property var playListModel: ({playListIndex: -1, count: 0})
+    property QtObject window: QtObject {
+        property bool sourceLyricsMode: musicControlMin.presentation.sourceMode
+        property bool securePlaybackCurrent: musicControlMin.presentation.sourceActive
+        property var lyricsAdapter: musicControlMin.presentation
+    }
+    component SButton: Item { signal clicked(); property string iconCharacter; property real radius;
+        property color buttonColor; property color hoverColor; property color iconColor;
+        property bool shadowEnabled; property bool hovered: false }
+    component QTip: Item { property string text }
+    component FileDialog: Item {
+        visible: false; property string title; property int fileMode; property list<string> nameFilters
+        property url selectedFile; property int openCalls: 0; property int closeCalls: 0
+        signal accepted(); signal rejected()
+        function open() { ++openCalls; visible = true; } function close() { ++closeCalls; visible = false; }
+    }
+%1
+})").arg(source.mid(start, end - start));
+    fixture.replace("Style.themes", "musicControlMin.styleFixture.themes");
+    fixture.replace("FileDialog.SaveFile", "1");
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/source-download-dialog-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *button = root->findChild<QObject *>("currentPlaybackDownloadButton"); QVERIFY(button);
+    auto *dialog = root->findChild<QObject *>("currentPlaybackDownloadDestinationDialog"); QVERIFY(dialog);
+    const auto target = QUrl::fromLocalFile("/fixture/user-selected.audio");
+    QVERIFY(button->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QCOMPARE(dialog->property("playbackToken").toString(), QString("A")); QCOMPARE(music.downloadCalls, 0);
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked")); QCOMPARE(dialog->property("openCalls").toInt(), 1);
+    QVERIFY(dialog->setProperty("selectedFile", target));
+    music.download["token"] = "B"; emit music.changed();
+    QVERIFY(dialog->property("closeCalls").toInt() > 0); QVERIFY(!dialog->property("visible").toBool());
+    QVERIFY(dialog->property("playbackToken").toString().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accepted")); QCOMPARE(music.downloadCalls, 0);
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QCOMPARE(dialog->property("playbackToken").toString(), QString("B"));
+    QVERIFY(dialog->setProperty("selectedFile", target)); QVERIFY(QMetaObject::invokeMethod(dialog, "accepted"));
+    QCOMPARE(music.downloadCalls, 1); QCOMPARE(music.lastDownloadToken, QString("B")); QCOMPARE(music.lastDestination, target);
+    QVERIFY(!button->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accepted")); QCOMPARE(music.downloadCalls, 1);
+    music.download["pending"] = false; music.download["failed"] = true; emit music.changed();
+    QVERIFY(button->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close")); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(dialog, "rejected"));
+    QVERIFY(dialog->property("playbackToken").toString().isEmpty()); QCOMPARE(music.downloadCalls, 1);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close")); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    music.download["canDownload"] = false; emit music.changed();
+    QVERIFY(!button->property("enabled").toBool()); QVERIFY(!dialog->property("visible").toBool());
+    QVERIFY(dialog->setProperty("selectedFile", target)); QVERIFY(QMetaObject::invokeMethod(dialog, "accepted"));
+    QCOMPARE(music.downloadCalls, 1);
+    music.download["canDownload"] = true; emit music.changed();
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked")); QVERIFY(bridge->setProperty("sourceActive", false));
+    QVERIFY(!dialog->property("visible").toBool()); QVERIFY(!button->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accepted")); QCOMPARE(music.downloadCalls, 1);
+    QVERIFY(bridge->setProperty("sourceActive", true)); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QVERIFY(bridge->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(!dialog->property("visible").toBool()); QVERIFY(!button->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accepted")); QCOMPARE(music.downloadCalls, 1);
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QVariant dispatched;
+    QVERIFY(QMetaObject::invokeMethod(bridge.get(), "saveDownload", Q_RETURN_ARG(QVariant, dispatched),
+                                      Q_ARG(QVariant, target), Q_ARG(QVariant, "B")));
+    QVERIFY(!dispatched.toBool()); QCOMPARE(music.downloadCalls, 1);
 }
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,
@@ -758,6 +864,11 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QVERIFY(controlsText.contains(QStringLiteral("enabled: window.sourceLyricsMode ? window.lyricsAdapter.favoriteEnabled")));
     QVERIFY(controlsText.contains(QStringLiteral("window.lyricsAdapter.setFavorite(values[index], playbackToken)")));
     QVERIFY(controlsText.contains(QStringLiteral("sourceFavoriteMenu.playbackToken = info.token")));
+    QVERIFY(controlsText.contains(QStringLiteral("import QtQuick.Dialogs")));
+    QVERIFY(controlsText.contains(QStringLiteral("enabled: window.sourceLyricsMode ? window.lyricsAdapter.downloadEnabled")));
+    QVERIFY(controlsText.contains(QStringLiteral("window.lyricsAdapter.saveDownload(selectedFile, token)")));
+    QVERIFY(controlsText.contains(QStringLiteral("sourceDownloadDialog.playbackToken = window.lyricsAdapter.download.token")));
+    QVERIFY(controlsText.contains(QStringLiteral("sourceDownloadDialog.close(); sourceDownloadDialog.playbackToken = \"\";")));
     QVERIFY(!controlsText.contains(QStringLiteral("likeButton.iconColor =")));
 
     for (const QString &path : {QStringLiteral("/layout/PlayerMaxCenter.qml"), QStringLiteral("/components/DesktopLyrics.qml")}) {

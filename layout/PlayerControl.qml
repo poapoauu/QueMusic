@@ -3,6 +3,7 @@
 //
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QueMusic 1.0
 import 'qrc:/QueMusic/components'
 
@@ -50,7 +51,10 @@ Rectangle {
     }
     Connections {
         target: window
-        function onSourceLyricsModeChanged() { sourceFavoriteMenu.close(); musicControlMin.syncLegacyFavorite(); }
+        function onSourceLyricsModeChanged() {
+            sourceFavoriteMenu.close(); sourceDownloadDialog.close(); sourceDownloadDialog.playbackToken = "";
+            musicControlMin.syncLegacyFavorite();
+        }
     }
 
     Rectangle {
@@ -340,11 +344,9 @@ Rectangle {
         SButton {
             id: currentDownloadButton
             objectName: "currentPlaybackDownloadButton"
-            // Current Source downloads need a capability-gated Host destination flow.
-            // Until that flow is connected, never fall back to the legacy hash request.
-            enabled: !window.sourceLyricsMode && playListModel.playListIndex >= 0
-                     && playListModel.playListIndex < playListModel.count
-                     && playListModel.get(playListModel.playListIndex).source !== -1
+            enabled: window.sourceLyricsMode ? window.lyricsAdapter.downloadEnabled
+                     : (playListModel.playListIndex >= 0 && playListModel.playListIndex < playListModel.count
+                        && playListModel.get(playListModel.playListIndex).source !== -1)
             x: 174
             y: 5
             //iconSize:
@@ -357,14 +359,50 @@ Rectangle {
             iconColor: Style.themes.textColor
             shadowEnabled: false
             onClicked: {
-                if (window.sourceLyricsMode || !enabled) return;
+                if (window.sourceLyricsMode) {
+                    if (!window.lyricsAdapter.downloadEnabled || sourceDownloadDialog.visible) return;
+                    sourceDownloadDialog.playbackToken = window.lyricsAdapter.download.token;
+                    sourceDownloadDialog.selectedFile = "";
+                    sourceDownloadDialog.open();
+                    return;
+                }
+                if (!enabled) return;
                 const row = playListModel.get(playListModel.playListIndex);
                 if (row && typeof row.path === "string" && row.path)
                     MusicApi.getMusicInfo(row.path, 1);
             }
             QTip {
                 visible: parent.hovered
-                text: "下载"
+                text: !window.sourceLyricsMode ? "下载" : window.lyricsAdapter.download.pending ? "下载中"
+                      : !window.securePlaybackCurrent ? "没有可下载的当前歌曲"
+                      : !window.lyricsAdapter.download.canDownload ? "当前来源不支持下载"
+                      : window.lyricsAdapter.download.failed ? "下载失败，请选择新文件后重试"
+                      : window.lyricsAdapter.download.completed ? "下载完成，点击另存" : "另存当前歌曲"
+            }
+            FileDialog {
+                id: sourceDownloadDialog
+                objectName: "currentPlaybackDownloadDestinationDialog"
+                property string playbackToken: ""
+                title: "另存当前歌曲（请选择新文件，不覆盖已有文件）"
+                fileMode: FileDialog.SaveFile
+                // v2 does not declare an original filename or format; do not guess an extension.
+                nameFilters: ["所有文件 (*)"]
+                onAccepted: {
+                    const token = playbackToken;
+                    playbackToken = "";
+                    if (window.sourceLyricsMode) window.lyricsAdapter.saveDownload(selectedFile, token);
+                }
+                onRejected: playbackToken = ""
+            }
+            Connections {
+                target: window.lyricsAdapter
+                function onDownloadChanged() {
+                    if (sourceDownloadDialog.playbackToken
+                            && (sourceDownloadDialog.playbackToken !== window.lyricsAdapter.download.token
+                                || !window.lyricsAdapter.downloadEnabled)) {
+                        sourceDownloadDialog.close(); sourceDownloadDialog.playbackToken = "";
+                    }
+                }
             }
         }
 
