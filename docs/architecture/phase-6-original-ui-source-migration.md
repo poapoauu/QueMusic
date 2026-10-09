@@ -120,6 +120,16 @@ QML 桥接回归验证 Source/legacy 数据和时钟隔离、没有 Source 歌�
 
 歌词 UI 切片主程序构建及五个相关套件通过：OriginalUiPlaybackQml、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiStructure、LocalLyrics。Source 模式忽略旧播放器的迟到元数据/结束状态，避免覆盖当前展示或触发旧队列；真实视觉/音频验收未执行。
 
+### 当前播放封面资源与原 UI 绑定
+
+Host Adapter 新增 `currentCover`，只通过现有 MusicHub/MediaAssetRepository 请求插件 Artwork；资源仓库仍按 bytes/mimeType 缓存，不能把插件 URL、headers 或诊断投影给当前播放 UI。Adapter 在结果到达时验证请求 ID、当前 generation、完整媒体身份，并额外拒绝非本地/带远程 host 的 URL。切歌清空并取消旧资源；停播、实例禁用及 Host/Coordinator 销毁清理封面。歌词失败重试不取消或重复请求已取得的封面。
+
+主窗口封面/点击预览、全屏唱片/背景图片、桌面播放器统一读取 `window.currentCover`，复用已有私有展示桥接的 Source/legacy 模式。Source 模式无封面、停播或缺 Adapter 时显示默认图，背景图片不使用旧 ColorExtractor.renderUrl；兼容模式仍保留旧播放器封面，待平台插件迁移后删除。此切片不改变布局、Source SDK v2 或 Plugin UI API；当前缓存仅验证类型/大小等既有约束，并未新增图像解码验证。动态取色与播放器收藏继续在后续切片处理。
+
+验收覆盖延迟旧封面拒绝、真实插件边界 bytes 缓存与本地 URL、缓存命中不重新调用插件、歌词重试保持封面、停播/实例禁用清理、插件 URL payload 拒绝、Host 移除空态，以及实际 QML 桥接中的 Source/legacy 地址隔离。测试不代替真实图片解码、桌面/全屏视觉或音频验收。
+
+封面切片主程序构建及六个相关套件通过：OriginalUiMusicAdapter、OriginalUiPlaybackQml、OriginalUiStructure、MusicHub、MusicCaches、PlaybackCoordinator。回归中发现并修正空 QUrl 在 JavaScript 中仍为真值的问题；默认封面判定先转换字符串，避免空封面覆盖默认图。歌词重试测试保留资源仓库已有歌词缓存语义，不把缓存命中误判为再次调用插件。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

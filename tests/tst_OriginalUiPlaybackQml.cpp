@@ -93,9 +93,11 @@ class LyricsAdapterDouble final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList currentLyrics MEMBER lines NOTIFY changed)
     Q_PROPERTY(QString currentLyricsState MEMBER state NOTIFY changed)
+    Q_PROPERTY(QUrl currentCover MEMBER cover NOTIFY changed)
 public:
     QVariantList lines;
     QString state = "empty";
+    QUrl cover;
     int retries = 0;
     Q_INVOKABLE void retryCurrentLyrics() { ++retries; state = "loading"; emit changed(); }
 signals:
@@ -112,8 +114,13 @@ void OriginalUiPlaybackQmlTest::sourceLyricsNeverFallBackToLegacyDataOrClock()
         {"musicAdapter", QVariant::fromValue<QObject *>(&lyrics)}, {"controls", QVariant::fromValue<QObject *>(&controls)},
         {"sourceMode", true}, {"sourceActive", true}, {"legacyLines", legacy},
         {"legacyTranslations", QVariantList{"Legacy translation"}}, {"legacyPosition", 900},
-        {"legacyDuration", 9000}, {"legacyPlaying", true}, {"legacyActive", true}}));
+        {"legacyDuration", 9000}, {"legacyPlaying", true}, {"legacyActive", true},
+        {"legacyCover", "https://legacy.invalid/cover"}}));
     QVERIFY2(adapter, qPrintable(component.errorString()));
+    const auto fallback = adapter->property("defaultCover").toString();
+    QCOMPARE(adapter->property("cover").toString(), fallback);
+    lyrics.cover = QUrl::fromLocalFile("/fixture/cache/cover.png"); emit lyrics.changed();
+    QCOMPARE(adapter->property("cover").toString(), lyrics.cover.toString());
     QVERIFY(adapter->property("lines").toList().isEmpty());
     QVERIFY(adapter->property("translations").toList().isEmpty());
     QCOMPARE(adapter->property("position").toLongLong(), controls.position);
@@ -130,14 +137,18 @@ void OriginalUiPlaybackQmlTest::sourceLyricsNeverFallBackToLegacyDataOrClock()
     QCOMPARE(lyrics.retries, 1);
     lyrics.lines = {QVariantMap{{"time", 0}, {"text", "Stopped stale lyric"}}}; emit lyrics.changed();
     QVERIFY(adapter->setProperty("sourceActive", false));
+    QCOMPARE(adapter->property("cover").toString(), fallback);
     QCOMPARE(adapter->property("position").toLongLong(), 0);
     QVERIFY(adapter->property("lines").toList().isEmpty());
     QVERIFY(!adapter->property("active").toBool());
     QVERIFY(adapter->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(adapter->setProperty("sourceActive", true));
+    QCOMPARE(adapter->property("cover").toString(), fallback);
     QVERIFY(adapter->property("lines").toList().isEmpty());
     QVERIFY(adapter->property("translations").toList().isEmpty());
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "retry")); QCOMPARE(lyrics.retries, 1);
     QVERIFY(adapter->setProperty("sourceMode", false)); // Only Host explicitly enters legacy mode.
+    QCOMPARE(adapter->property("cover").toString(), QString("https://legacy.invalid/cover"));
     QCOMPARE(adapter->property("lines").toList(), legacy);
     QCOMPARE(adapter->property("position").toLongLong(), 900);
     QVERIFY(adapter->property("playing").toBool());
@@ -247,6 +258,15 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QVERIFY(source.contains(QStringLiteral("PlaybackLyricsAdapter")));
     QVERIFY(source.contains(QStringLiteral("sourceMode: window.sourceLyricsMode")));
     QVERIFY(source.contains(QStringLiteral("window.sourceLyricsMode = false")));
+    QVERIFY(source.contains(QStringLiteral("readonly property string currentCover: playbackLyrics.cover")));
+    QVERIFY(source.contains(QStringLiteral("picWatch.dialog(window.currentCover")));
+    for (const auto &path : {QStringLiteral("/layout/PlayerMaxCenter.qml"), QStringLiteral("/components/DesktopPlayerWindow.qml")}) {
+        QFile coverFile(QStringLiteral(QUEMUSIC_SOURCE_DIR) + path);
+        QVERIFY(coverFile.open(QIODevice::ReadOnly | QIODevice::Text));
+        const auto text = QString::fromUtf8(coverFile.readAll());
+        QVERIFY(text.contains(QStringLiteral("source: window.currentCover")));
+        QVERIFY(!text.contains(QStringLiteral("mainMedia.urlStr")));
+    }
 
     for (const QString &path : {QStringLiteral("/layout/PlayerMaxCenter.qml"), QStringLiteral("/components/DesktopLyrics.qml")}) {
         QFile lyricsFile(QStringLiteral(QUEMUSIC_SOURCE_DIR) + path);

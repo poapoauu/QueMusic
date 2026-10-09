@@ -107,6 +107,12 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         connect(m_playback, &PlaybackCoordinator::currentChanged, this, [this] { syncCurrentLyrics(); });
         connect(m_playback, &QObject::destroyed, this, [this] { m_playback = nullptr; clearCurrentLyrics(); });
         connect(m_hub, &MusicHub::sourceOptionsChanged, this, [this] { syncCurrentLyrics(); });
+        connect(m_hub, &MusicHub::artworkReady, this, [this](QUuid id, QVariantMap media, QUrl url) {
+            if (!currentAssetRequestIsCurrent(id, m_artworkRequest) || media != m_lyricsMedia) return;
+            m_artworkRequest = {};
+            m_currentCover = url.isLocalFile() && url.host().isEmpty() ? url : QUrl{};
+            emit currentCoverChanged();
+        });
         connect(m_hub, &MusicHub::lyricsReady, this, [this](QUuid id, QVariantMap media, const QString &text) {
             if (!lyricsRequestIsCurrent(id) || media != m_lyricsMedia) return;
             m_lyricsRequest = {};
@@ -125,6 +131,11 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
             emit currentLyricsChanged();
         });
         connect(m_hub, &MusicHub::assetFailed, this, [this](QUuid id, QVariantMap error) {
+            if (currentAssetRequestIsCurrent(id, m_artworkRequest)) {
+                m_artworkRequest = {}; m_currentCover = QUrl{};
+                emit currentCoverChanged();
+                return;
+            }
             if (!lyricsRequestIsCurrent(id)) return;
             m_lyricsRequest = {};
             m_currentLyricsState = error.value("kind").toInt() == int(SourceErrorKindV2::Unsupported)
@@ -167,9 +178,15 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     syncCurrentLyrics();
 }
 
-OriginalUiMusicAdapter::~OriginalUiMusicAdapter() { cancelCurrentLyrics(); }
+OriginalUiMusicAdapter::~OriginalUiMusicAdapter() { cancelCurrentLyrics(); cancelCurrentCover(); }
 QVariantList OriginalUiMusicAdapter::currentLyrics() const { return m_currentLyrics; }
 QString OriginalUiMusicAdapter::currentLyricsState() const { return m_currentLyricsState; }
+QUrl OriginalUiMusicAdapter::currentCover() const { return m_currentCover; }
+void OriginalUiMusicAdapter::cancelCurrentCover()
+{
+    const auto id = std::exchange(m_artworkRequest, QUuid{});
+    if (m_hub && !id.isNull()) m_hub->cancelAsset(id);
+}
 void OriginalUiMusicAdapter::cancelCurrentLyrics()
 {
     const auto id = std::exchange(m_lyricsRequest, QUuid{});
@@ -178,12 +195,18 @@ void OriginalUiMusicAdapter::cancelCurrentLyrics()
 void OriginalUiMusicAdapter::clearCurrentLyrics()
 {
     cancelCurrentLyrics();
+    cancelCurrentCover();
     m_lyricsGeneration = {}; m_lyricsMedia.clear(); m_currentLyrics.clear();
-    m_currentLyricsState = QStringLiteral("idle"); emit currentLyricsChanged();
+    m_currentCover = QUrl{}; m_currentLyricsState = QStringLiteral("idle");
+    emit currentCoverChanged(); emit currentLyricsChanged();
 }
 bool OriginalUiMusicAdapter::lyricsRequestIsCurrent(const QUuid &id) const
 {
-    return !id.isNull() && id == m_lyricsRequest && m_playback && m_hub
+    return currentAssetRequestIsCurrent(id, m_lyricsRequest);
+}
+bool OriginalUiMusicAdapter::currentAssetRequestIsCurrent(const QUuid &id, const QUuid &request) const
+{
+    return !id.isNull() && id == request && m_playback && m_hub
         && m_lyricsGeneration == m_playback->currentGeneration()
         && m_lyricsMedia == m_playback->currentItem().value("ref").toMap()
         && !m_playback->currentItem().value("unavailable").toBool();
@@ -196,14 +219,23 @@ void OriginalUiMusicAdapter::syncCurrentLyrics(bool force)
     if (!m_hub || generation.isNull() || media.isEmpty() || item.value("unavailable").toBool()) {
         clearCurrentLyrics(); return;
     }
-    if (!force && generation == m_lyricsGeneration && media == m_lyricsMedia) return;
+    const bool changed = generation != m_lyricsGeneration || media != m_lyricsMedia;
+    if (!force && !changed) return;
     cancelCurrentLyrics();
+    if (changed) { cancelCurrentCover(); m_currentCover = QUrl{}; }
     m_lyricsGeneration = generation; m_lyricsMedia = media; m_currentLyrics.clear();
-    m_currentLyricsState = QStringLiteral("loading"); emit currentLyricsChanged();
+    m_currentLyricsState = QStringLiteral("loading");
+    if (changed) emit currentCoverChanged();
+    // Cover observers may synchronously switch playback before lyric observers run.
+    if (!m_playback || generation != m_playback->currentGeneration()
+        || generation != m_lyricsGeneration || media != m_lyricsMedia) return;
+    emit currentLyricsChanged();
     // A presentation callback can synchronously switch/stop the current playback.
     if (m_hub && m_playback && generation == m_playback->currentGeneration()
-        && generation == m_lyricsGeneration && media == m_lyricsMedia)
+        && generation == m_lyricsGeneration && media == m_lyricsMedia) {
         m_lyricsRequest = m_hub->loadLyrics(media);
+        if (changed) m_artworkRequest = m_hub->loadArtwork(media);
+    }
 }
 void OriginalUiMusicAdapter::retryCurrentLyrics()
 {

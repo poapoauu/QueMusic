@@ -59,7 +59,7 @@ Window {
             y: 16
             width: 64
             height: 64
-            source: mainMedia.urlStr || "qrc:/QueMusic/resources/app/musicpic.png"
+            source: window.currentCover
             sourceSize: Qt.size(128, 128)
             fillMode: Image.PreserveAspectCrop
             cache: false

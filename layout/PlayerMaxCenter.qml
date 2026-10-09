@@ -87,7 +87,7 @@ Item {
         clip: true
         anchors.fill: parent
         visible: Style.settings.backFlowQuality !== 2
-        coverUrl: colorExtractor.renderUrl || mainMedia.urlStr || "qrc:/QueMusic/resources/app/musicpic.png"
+        coverUrl: window.sourceLyricsMode ? window.currentCover : (colorExtractor.renderUrl || window.currentCover)
         volume: 0
         flowSpeed: 1.0
         animating: true
@@ -280,7 +280,7 @@ Item {
             y: (musicControlMax.height - height) * 0.5
             x: controlMaxLoader.infoX
             rotation: window.lyricsAdapter.playing
-            source: mainMedia.urlStr || "qrc:/QueMusic/resources/app/musicpic.png"
+            source: window.currentCover
         }
     }
 

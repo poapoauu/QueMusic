@@ -26,6 +26,7 @@ Window {
     property bool sourceLyricsMode: false
     onSecurePlaybackCurrentChanged: if (securePlaybackCurrent) sourceLyricsMode = true
     property var lyricsAdapter: playbackLyrics
+    readonly property string currentCover: playbackLyrics.cover
     PlaybackLyricsAdapter {
         id: playbackLyrics
         musicAdapter: window.musicAdapter
@@ -39,6 +40,7 @@ Window {
         legacyRate: mainMedia.playbackRate
         legacyPlaying: mainMedia.playing
         legacyActive: mainMedia.onMedia
+        legacyCover: mainMedia.urlStr
     }
     width: 1140
     height: 720
@@ -653,7 +655,7 @@ Window {
                 anchors.fill: musicpic
                 fillMode: Image.PreserveAspectCrop
                 visible: false
-                source: mainMedia.urlStr || "qrc:/QueMusic/resources/app/musicpic.png"
+                source: window.currentCover
                 sourceSize: Qt.size(512, 512)
                 cache: false
             }
@@ -667,7 +669,7 @@ Window {
             }
             MouseArea {
                 anchors.fill: musicpic
-                onClicked: picWatch.dialog(mainMedia.urlStr || "qrc:/QueMusic/resources/app/musicpic.png",window.musicTitle);
+                onClicked: picWatch.dialog(window.currentCover,window.musicTitle);
             }
             MultiEffect {
                 z: 1

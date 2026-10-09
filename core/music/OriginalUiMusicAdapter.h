@@ -5,6 +5,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QUuid>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -38,6 +39,7 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(QString directoryState READ directoryState NOTIFY directoryChanged)
     Q_PROPERTY(QVariantList currentLyrics READ currentLyrics NOTIFY currentLyricsChanged)
     Q_PROPERTY(QString currentLyricsState READ currentLyricsState NOTIFY currentLyricsChanged)
+    Q_PROPERTY(QUrl currentCover READ currentCover NOTIFY currentCoverChanged)
     Q_PROPERTY(bool directoryCanNavigateBack READ directoryCanNavigateBack NOTIFY directoryChanged)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
@@ -48,6 +50,7 @@ public:
     ~OriginalUiMusicAdapter() override;
     QVariantList currentLyrics() const;
     QString currentLyricsState() const;
+    QUrl currentCover() const;
     Q_INVOKABLE void retryCurrentLyrics();
 
     OnlineListModel *recommendSongs() const;
@@ -104,6 +107,7 @@ signals:
     void selectedSourceInstanceIdChanged();
     void directoryChanged();
     void currentLyricsChanged();
+    void currentCoverChanged();
 
 private:
     QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
@@ -116,6 +120,8 @@ private:
     void rebuildDirectories();
     void syncCurrentLyrics(bool force = false);
     void cancelCurrentLyrics();
+    void cancelCurrentCover();
+    bool currentAssetRequestIsCurrent(const QUuid &id, const QUuid &request) const;
     bool lyricsRequestIsCurrent(const QUuid &id) const;
     void clearCurrentLyrics();
 
@@ -139,6 +145,8 @@ private:
     quint64 m_nextAdapterKey = 1;
     QUuid m_lyricsGeneration;
     QUuid m_lyricsRequest;
+    QUuid m_artworkRequest;
+    QUrl m_currentCover;
     QVariantMap m_lyricsMedia;
     QVariantList m_currentLyrics;
     QString m_currentLyricsState = QStringLiteral("idle");

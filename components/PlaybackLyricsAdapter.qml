@@ -15,6 +15,11 @@ QtObject {
     property real legacyRate: 1
     property bool legacyPlaying: false
     property bool legacyActive: false
+    property string legacyCover: ""
+    readonly property string defaultCover: "qrc:/QueMusic/resources/app/musicpic.png"
+    readonly property string cover: sourceMode
+        ? (sourceActive && musicAdapter ? (String(musicAdapter.currentCover || "") || defaultCover) : defaultCover)
+        : (legacyCover || defaultCover)
 
     readonly property var lines: sourceMode ? (sourceActive && musicAdapter ? musicAdapter.currentLyrics || [] : []) : legacyLines
     readonly property var translations: sourceMode ? [] : legacyTranslations

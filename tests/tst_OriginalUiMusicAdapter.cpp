@@ -99,7 +99,15 @@ public:
         emit streamReady(id, stream);
         return id;
     }
-    QUuid fetchArtwork(const MediaRefV2 &) override { return {}; }
+    QUuid fetchArtwork(const MediaRefV2 &media) override {
+        const auto id = QUuid::createUuid();
+        auto requests = property("artworkRequests").toList();
+        requests.append(QVariantMap{{"id", id}, {"ref", mediaRefV2ToVariantMap(media)}});
+        setProperty("artworkRequests", requests);
+        emit requestStarted(id);
+        if (!property("holdArtwork").toBool()) emit requestFailed(id, {SourceErrorKindV2::Unsupported});
+        return id;
+    }
     QUuid fetchLyrics(const MediaRefV2 &media) override {
         const auto id = QUuid::createUuid();
         auto requests = property("lyricsRequests").toList();
@@ -269,6 +277,7 @@ struct RoutingHarness {
             qWarning() << "adapter fixture second account";
             return false;
         }
+        settings.setValue("MusicHub/cacheDirectory", dir.filePath("cache"));
         hub = std::make_unique<MusicHub>(&registry, &scope, &settings);
         playback = std::make_unique<PlaybackCoordinator>(&registry, &sink);
         adapter = std::make_unique<OriginalUiMusicAdapter>(hub.get(), playback.get());
@@ -290,6 +299,62 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void currentArtworkUsesOnlyCurrentCachedLocalResources()
+    {
+        RoutingHarness h; QVERIFY(h.init());
+        auto *session = h.session(); QVERIFY(session);
+        session->setProperty("holdArtwork", true);
+        session->setProperty("failLyrics", true);
+        const auto first = routedItem(MediaEntityTypeV2::Track, "cover-first");
+        const auto second = routedItem(MediaEntityTypeV2::Track, "cover-second");
+        accept(h.hub->category(), resultWith({first, second}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(session->property("artworkRequests").toList().size(), 1);
+        const auto firstId = session->property("artworkRequests").toList()[0].toMap().value("id").toUuid();
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(1)).isNull());
+        QTRY_COMPARE(session->property("artworkRequests").toList().size(), 2);
+        const auto secondId = session->property("artworkRequests").toList()[1].toMap().value("id").toUuid();
+        const QVariantMap png{{"bytes", QByteArray::fromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=")},
+                              {"mimeType", QString("image/png")}};
+        emit session->actionCompleted(firstId, {SourceActionV2::Artwork, first.ref, png});
+        QTest::qWait(20); QVERIFY(h.adapter->currentCover().isEmpty());
+        emit session->actionCompleted(secondId, {SourceActionV2::Artwork, second.ref, png});
+        QTRY_VERIFY(!h.adapter->currentCover().isEmpty());
+        const auto cover = h.adapter->currentCover();
+        QVERIFY(cover.isLocalFile()); QVERIFY(cover.host().isEmpty());
+        QVERIFY(cover.toLocalFile().startsWith(h.dir.filePath("cache/artwork-v2/")));
+        QVERIFY(h.playback->stop()); QTRY_VERIFY(h.adapter->currentCover().isEmpty());
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(1)).isNull());
+        QTRY_COMPARE(h.adapter->currentCover(), cover); // Cache hit, no provider refetch.
+        QCOMPARE(session->property("artworkRequests").toList().size(), 2);
+        // Lyric retry must not discard or refetch a healthy cover.
+        QTRY_COMPARE(h.adapter->currentLyricsState(), QString("failed"));
+        QTRY_COMPARE(h.adapter->currentCover(), cover);
+        session->setProperty("failLyrics", false);
+        h.adapter->retryCurrentLyrics(); QTRY_COMPARE(h.adapter->currentLyricsState(), QString("empty"));
+        QCOMPARE(h.adapter->currentCover(), cover);
+        QCOMPARE(session->property("artworkRequests").toList().size(), 2);
+        QVERIFY(h.registry.disableInstance("adapter/home"));
+        QTRY_VERIFY(h.adapter->currentCover().isEmpty());
+    }
+    void currentArtworkRejectsPluginUrlsAndClearsOnHubRemoval()
+    {
+        RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
+        session->setProperty("holdArtwork", true);
+        const auto item = routedItem(MediaEntityTypeV2::Track, "cover-url");
+        accept(h.hub->category(), resultWith({item}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull());
+        QTRY_COMPARE(session->property("artworkRequests").toList().size(), 1);
+        const auto id = session->property("artworkRequests").toList()[0].toMap().value("id").toUuid();
+        QSignalSpy failed(h.hub.get(), &MusicHub::assetFailed);
+        emit session->actionCompleted(id, {SourceActionV2::Artwork, item.ref,
+            {{"url", QUrl("https://private.invalid/cover?token=secret")}, {"headers", QVariantMap{{"Authorization", "secret"}}}}});
+        QTRY_COMPARE(failed.size(), 1); QVERIFY(h.adapter->currentCover().isEmpty());
+        // Even a spoofed Host notification cannot become a remote UI URL.
+        emit h.hub->artworkReady(id, mediaRefV2ToVariantMap(item.ref), QUrl("https://private.invalid/cover"));
+        QVERIFY(h.adapter->currentCover().isEmpty());
+        h.hub.reset(); QVERIFY(h.adapter->currentCover().isEmpty());
+    }
     void currentLyricsAreFencedByPlaybackAndRemainPresentationOnly()
     {
         RoutingHarness h; QVERIFY(h.init());
