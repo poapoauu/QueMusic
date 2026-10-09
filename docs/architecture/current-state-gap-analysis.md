@@ -509,6 +509,12 @@ Router 后续增加 Host-only cancelDownload，Adapter 通过 opaque taskId 查�
 
 主程序构建及 7 项联合回归通过，包括实际 main Binding + 真实 Core 门面接线；未做物理音频、真实服务器或 GPU 手工验收。Source SDK v2 / 插件 ABI 不变；Host 门面新增内部 API，需同步重建应用和相关测试。当前下一项是桌面悬浮播放卡的安全展示/动作迁移，不能将其旧播放器入口视为已完成。
 
+### 后续增量：桌面悬浮卡统一展示/播放入口
+
+`DesktopSpot` 已移除 `mainMedia` 与旧标题直连，改读安全适配器展示及 typed transport，Source 空态不会读写 Legacy。保留布局/动画，标题按纯文本，拖动与范围切换有实际 Slider/Binding 回归；主程序构建及 7 项联合回归通过。视觉控件为测试 stand-in，尚无原生桌面/GPU 手工证明。
+
+普通 `DesktopPlayerWindow` 的标题/歌手仍读旧 window 字段，且它和底栏存在相同范围变化风险，作为下一有界切片继续处理；不能据此删除其他仍在使用的 Legacy 业务。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

@@ -78,11 +78,13 @@ Window {
 
         Text {
             id: spotTitle
+            objectName: "desktopSpotTitle"
             x: 48
             y: 8
             width: spotCard.width - 96
             height: 32
-            text: window.musicTitle
+            text: window.lyricsAdapter.details.title || ""
+            textFormat: Text.PlainText
             color: "white"
             font.pixelSize: 13
             clip: true
@@ -91,10 +93,12 @@ Window {
         // 主控制按钮，常驻
         SButton {
             id: spotPlayButton
+            objectName: "desktopSpotPlayButton"
             //x: 104
             y: spotCard.height - 40
             z: 3
-            iconCharacter: mainMedia.playing ? "\uf02f" : "\uf00e"
+            iconCharacter: window.lyricsAdapter.playing ? "\uf02f" : "\uf00e"
+            enabled: window.lyricsAdapter.active
             width: 32
             height: 32
             radius: 16
@@ -103,14 +107,7 @@ Window {
             iconColor: Style.themes.textColor
             iconSize: Style.settings.texticon
             shadowEnabled: false
-            onClicked: {
-                if (mainMedia.playing === false) {
-                    mainMedia.play()
-                }
-                else {
-                    mainMedia.pause()
-                }
-            }
+            onClicked: window.lyricsAdapter.togglePlayback()
         }
 
         // 控制
@@ -125,14 +122,24 @@ Window {
             // 进度条
             Slider {
                 id: seekSlider
+                objectName: "desktopSpotSeekSlider"
                 y: 0
                 width: parent.width
                 height: 16
                 from: 0
-                to: mainMedia.duration > 0 ? mainMedia.duration : 1
-                value: pressed ? null : mainMedia.position
+                to: window.lyricsAdapter.duration > 0 ? window.lyricsAdapter.duration : 1
+                enabled: window.lyricsAdapter.seekable
+                Binding {
+                    target: seekSlider
+                    property: "value"
+                    // Re-evaluate after a duration/mode switch: Slider can clamp
+                    // a new position against the previous occurrence's range.
+                    value: Math.min(seekSlider.to, Math.max(0, window.lyricsAdapter.position))
+                    when: !seekSlider.pressed
+                    restoreMode: Binding.RestoreNone
+                }
                 live: true
-                onMoved: mainMedia.position = value
+                onMoved: window.lyricsAdapter.seek(value)
                 padding: 0
                 background: Rectangle {
                     y: (seekSlider.height - 4) / 2
@@ -160,6 +167,8 @@ Window {
                 }
             }
             SButton {
+                objectName: "desktopSpotPreviousButton"
+                enabled: window.lyricsAdapter.active
                 x: 0
                 y: 24
                 iconCharacter: "\uf0dc"
@@ -171,10 +180,12 @@ Window {
                 iconColor: Style.themes.primaryColor
                 iconSize: Style.settings.texticon
                 shadowEnabled: false
-                onClicked: musicControlMin.lastMedia()
+                onClicked: if (window.lyricsAdapter.active) musicControlMin.lastMedia()
             }
 
             SButton {
+                objectName: "desktopSpotNextButton"
+                enabled: window.lyricsAdapter.active
                 x: 72
                 y: 24
                 iconCharacter: "\uf0d9"
@@ -186,7 +197,7 @@ Window {
                 iconColor: Style.themes.primaryColor
                 iconSize: Style.settings.texticon
                 shadowEnabled: false
-                onClicked: musicControlMin.enterMedia()
+                onClicked: if (window.lyricsAdapter.active) musicControlMin.enterMedia()
             }
         }
 

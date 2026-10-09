@@ -121,6 +121,7 @@ private slots:
     void actualPlayerOptionsNeverConfigureTheLegacyPlayerInSourceMode();
     void spectrumBridgeRejectsLegacyFramesInStickySourceMode();
     void actualSpectrumBindingControlsCoreFromOriginalDisplayPreference();
+    void actualDesktopSpotUsesSafePlaybackPresentation();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -253,6 +254,96 @@ Item {
     QCOMPARE(controls.rateCalls, rateCalls);
     QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::actualDesktopSpotUsesSafePlaybackPresentation()
+{
+    QQmlEngine engine;
+    PlaybackControllerDouble controls; LegacyPlayerDouble legacy;
+    controls.duration = 5000; controls.position = 350;
+    legacy.playing = true; legacy.position = 777;
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"controls", QVariant::fromValue<QObject *>(&controls)}, {"legacyPlayer", QVariant::fromValue<QObject *>(&legacy)},
+        {"sourceMode", true}, {"sourceActive", true}, {"sourceItem", QVariantMap{{"title", "Source Track"}}},
+        {"legacyDetails", QVariantMap{{"title", "Old Track"}}}, {"legacyDuration", 9999},
+        {"legacyPosition", 777}, {"legacyActive", true}, {"legacyPlaying", true}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/components/DesktopSpot.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    auto source = QString::fromUtf8(file.readAll());
+    QVERIFY(!source.contains("mainMedia")); QVERIFY(!source.contains("window.musicTitle"));
+    // Execute the complete production component. Only private visual/theme
+    // dependencies are stand-ins; handlers, Slider, Binding and animations are real.
+    source.replace("Style.", "desktopSpot.styleFixture.");
+    source.replace("iconFont.name", "\"sans-serif\"");
+    const auto start = source.indexOf("Window {"); QVERIFY(start >= 0);
+    source.insert(start + 8, QStringLiteral(R"(
+    required property var presentation
+    property var styleFixture: ({themes: {fontColor: "#ffffff", primaryColor: "#222222", secondaryColor: "#444444",
+        secondaryBlurColor: "#666666", textColor: "#ffffff", themeColor: "#00ff00"}, settings: {texticon: 16}})
+    property QtObject window: QtObject { property var lyricsAdapter: desktopSpot.presentation }
+    property QtObject musicControlMin: QtObject { property int previous: 0; property int next: 0;
+        function lastMedia() { ++previous } function enterMedia() { ++next } }
+    component SButton: Item { signal clicked(); property string iconCharacter; property real radius;
+        property color buttonColor; property color hoverColor; property color iconColor;
+        property real iconSize; property bool shadowEnabled }
+)"));
+    QQmlComponent component(&engine); component.setData(source.toUtf8(), QUrl("qrc:/desktop-spot-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"presentation", QVariant::fromValue(bridge.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *title = root->findChild<QObject *>("desktopSpotTitle"); QVERIFY(title);
+    auto *play = root->findChild<QObject *>("desktopSpotPlayButton"); QVERIFY(play);
+    auto *slider = root->findChild<QObject *>("desktopSpotSeekSlider"); QVERIFY(slider);
+    auto *previous = root->findChild<QObject *>("desktopSpotPreviousButton"); QVERIFY(previous);
+    auto *next = root->findChild<QObject *>("desktopSpotNextButton"); QVERIFY(next);
+    auto *navigation = root->property("musicControlMin").value<QObject *>(); QVERIFY(navigation);
+    QCOMPARE(title->property("text").toString(), QString("Source Track"));
+    QCOMPARE(title->property("textFormat").toInt(), 0); // PlainText, never plugin markup.
+    QCOMPARE(play->property("iconCharacter").toString(), QString(QChar(0xf00e)));
+    QVERIFY(play->property("enabled").toBool());
+    QCOMPARE(slider->property("to").toReal(), 5000.0);
+    QCOMPARE(slider->property("value").toReal(), 350.0);
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked")); QCOMPARE(controls.playCalls, 1);
+    controls.playing = true; emit controls.playingChanged();
+    QCOMPARE(play->property("iconCharacter").toString(), QString(QChar(0xf02f)));
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked")); QCOMPARE(controls.pauseCalls, 1);
+    QVERIFY(QMetaObject::invokeMethod(previous, "clicked")); QCOMPARE(navigation->property("previous").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(next, "clicked")); QCOMPARE(navigation->property("next").toInt(), 1);
+    QVERIFY(slider->setProperty("pressed", true));
+    QVERIFY(slider->setProperty("value", 1500));
+    controls.position = 900; emit controls.positionChanged();
+    QCOMPARE(slider->property("value").toReal(), 1500.0);
+    QVERIFY(QMetaObject::invokeMethod(slider, "moved")); QCOMPARE(controls.sought, 1500);
+    QVERIFY(slider->setProperty("pressed", false));
+    QCOMPARE(slider->property("value").toReal(), 900.0);
+    controls.seekable = false; emit controls.seekableChanged();
+    QVERIFY(!slider->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(slider, "moved")); QCOMPARE(controls.sought, 1500);
+    QVERIFY(bridge->setProperty("sourceItem", QVariantMap{{"title", "<b>Literal Source Title</b>"}}));
+    QCOMPARE(title->property("text").toString(), QString("<b>Literal Source Title</b>"));
+    QVERIFY(bridge->setProperty("sourceActive", false));
+    QVERIFY(title->property("text").toString().isEmpty());
+    QVERIFY(!play->property("enabled").toBool()); QVERIFY(!next->property("enabled").toBool());
+    QCOMPARE(slider->property("to").toReal(), 1.0); QCOMPARE(slider->property("value").toReal(), 0.0);
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(previous, "clicked")); QVERIFY(QMetaObject::invokeMethod(next, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(slider, "moved"));
+    QCOMPARE(controls.playCalls, 1); QCOMPARE(controls.pauseCalls, 1); QCOMPARE(controls.sought, 1500);
+    QCOMPARE(navigation->property("previous").toInt(), 1); QCOMPARE(navigation->property("next").toInt(), 1);
+    QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.pauseCalls, 0); QCOMPARE(legacy.position, 777);
+    QVERIFY(bridge->setProperty("sourceActive", true));
+    QVERIFY(bridge->setProperty("controls", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked")); QVERIFY(QMetaObject::invokeMethod(slider, "moved"));
+    QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.pauseCalls, 0);
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QCOMPARE(title->property("text").toString(), QString("Old Track"));
+    QCOMPARE(slider->property("to").toReal(), 9999.0); QCOMPARE(slider->property("value").toReal(), 777.0);
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked")); QCOMPARE(legacy.pauseCalls, 1);
+    legacy.playing = false;
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked")); QCOMPARE(legacy.playCalls, 1);
+    QVERIFY(slider->setProperty("pressed", true)); QVERIFY(slider->setProperty("value", 2000));
+    QVERIFY(QMetaObject::invokeMethod(slider, "moved")); QCOMPARE(legacy.position, 2000);
 }
 
 void OriginalUiPlaybackQmlTest::actualSpectrumBindingControlsCoreFromOriginalDisplayPreference()

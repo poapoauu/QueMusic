@@ -264,6 +264,14 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 验证：主程序构建及上一切片所列 7 项联合回归通过；补充 seek、非法/超量几何、暂停恢复、禁用重启、切曲旧回调、销毁及清空观察者重入测试。尚无真实服务器音频、物理设备或 GPU 视觉验收，不据此宣称全项目迁移完成。
 - 后续继续迁移桌面悬浮播放卡，其标题、时钟与播放/拖动仍有直接 Legacy 访问；平台业务及其他剩余 Legacy 分支仍按既定阶段迁移。
 
+### 桌面悬浮卡：展示与动作去 Legacy 直连
+
+- `DesktopSpot.qml` 的标题、播放状态、duration/position、播放/暂停及 seek 全部经 `PlaybackLyricsAdapter` 投影；上一首/下一首复用已迁移的队列动作，并在无当前项时禁用/拒绝。
+- 保留原窗口、尺寸、折叠/展开动画与视觉控件。Source 停止或适配器缺失不会回退到旧播放器；只有显式 Legacy 模式保留旧播放行为。标题使用 PlainText。
+- 进度采用拖动期间暂停同步的 Binding；补充对 slider 范围的依赖，修复空态切回长曲目时新 position 被旧范围夹到 1 的问题。
+- 完整生产 QML 组件的 offscreen 测试（仅视觉控件/Theme 为 stand-in，真实 Slider/Binding/事件逻辑）覆盖播放/暂停、时钟、拖动、不可 seek、停止、缺失适配器、纯文本标题、队列动作与显式 Legacy。主程序构建和 7 项联合回归通过；不等价于原生桌面窗口/GPU 手工验收。
+- 下一切片检查普通桌面播放器的标题/歌手旧字段及相同进度范围问题；SDK / 插件 ABI 不变。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
