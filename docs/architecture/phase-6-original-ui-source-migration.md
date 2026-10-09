@@ -186,6 +186,12 @@ Source 系统媒体信息仅从 Coordinator 当前项提取 title/artists/album�
 
 新增测试运行实际详情弹窗 QML（轻量容器夹具）和真实桥接，验证显示字段白名单、忽略身份/资源/任意 metadata、来源标签、切歌、时长未知、停播/空项清理及显式 legacy 切换；测试不代替真实弹窗布局与视觉验收。主程序构建及九个播放/UI 联合套件通过，Source SDK v2 和 Plugin UI API 无变化。下载按钮、播放选项、频谱和剩余旧平台入口仍待迁移，Phase 6 尚未整体完成。
 
+### 当前下载按钮的兼容路径隔离
+
+播放器下载按钮此前仅在 securePlaybackActive 时拒绝旧请求，Source 停播后会重新读取旧队列并可能请求旧平台 hash。本切片按 sticky sourceLyricsMode 禁用并在 handler 再拒绝，Source 播放/停播都不读取旧队列，不从旧路径猜测当前资源；显式 legacy 模式还检查索引和 Legacy Local 标记，空 path 不发送请求。保留原按钮和真正旧在线平台下载行为，删除重复且结果相同的音质判断。
+
+新增实际按钮 QML 逻辑测试覆盖 Source 活跃/停播都零旧队列读取与零旧 API 调用、明确进入 legacy 才发送原请求、越界与 Legacy Local 拒绝。主程序构建及七个 UI/播放/路由联合套件通过。此切片是封堵旧回退，不是实现当前 Source 下载：现有 MediaActionRouter 已支持 Download Provider，但当前播放权限快照尚未包含 Download，Adapter 也尚无当前下载与用户目标文件选择流程。后续应演进该 Host 流程、按播放 token 和完整身份捕获用户操作、复用 Router 权限检查；不得为下载向 QML 泄露流 URL，或未经明确选择覆盖文件。SDK v2/Plugin UI API 不变，真实下载与视觉验收未完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

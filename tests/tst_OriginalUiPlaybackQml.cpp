@@ -103,6 +103,7 @@ private slots:
     void actualFavoriteButtonShowsChoicesAndRejectsAStaleMenu();
     void smtcUsesSourceStateAndIgnoresLegacyEvents();
     void actualInfoDialogUsesOnlyCurrentDisplayFields();
+    void actualDownloadButtonNeverFallsBackAfterSourceStops();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -562,6 +563,67 @@ Item {
     QVERIFY(bridge->setProperty("sourceMode", false));
     QCOMPARE(root->property("fieldTexts").toList(), QVariantList({"Legacy file", "Legacy song", "Legacy artist", "Legacy album", "0:10", "Legacy date", "Legacy format"}));
     QCOMPARE(root->property("fieldLabels").toList().first().toString(), QString("文件名："));
+}
+
+void OriginalUiPlaybackQmlTest::actualDownloadButtonNeverFallsBackAfterSourceStops()
+{
+    QQmlEngine engine;
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.lastIndexOf("SButton {", source.indexOf("id: currentDownloadButton")); QVERIFY(start >= 0);
+    int depth = 0, end = start;
+    for (; end < source.size(); ++end) {
+        if (source[end] == '{') ++depth;
+        else if (source[end] == '}' && --depth == 0) { ++end; break; }
+    }
+    auto fixture = QStringLiteral(R"(import QtQuick
+Item {
+    id: musicControlMin
+    property bool securePlaybackActive: false
+    property var styleFixture: ({themes: {textColor: "#222222", hoverColor: "#cccccc"}})
+    property QtObject window: QtObject { property bool sourceLyricsMode: true }
+    property QtObject playListModel: QtObject {
+        property int playListIndex: 0; property int count: 1; property var trace: ({reads: 0})
+        property int source: 0; property string path: "legacy-hash"
+        function get(index) { ++trace.reads; return {source: source, path: path}; }
+    }
+    property QtObject apiFixture: QtObject {
+        property int requests: 0; property string requestedPath: ""; property int requestedMode: -1
+        function getMusicInfo(path, mode) { ++requests; requestedPath = path; requestedMode = mode; }
+    }
+    component SButton: Item { signal clicked(); property string iconCharacter; property real radius;
+        property color buttonColor; property color hoverColor; property color iconColor;
+        property bool shadowEnabled; property bool hovered: false }
+    component QTip: Item { property string text }
+%1
+})").arg(source.mid(start, end - start));
+    fixture.replace("Style.themes", "musicControlMin.styleFixture.themes");
+    fixture.replace("MusicApi.", "musicControlMin.apiFixture.");
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/download-button-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create()); QVERIFY2(root, qPrintable(component.errorString()));
+    auto *button = root->findChild<QObject *>("currentPlaybackDownloadButton"); QVERIFY(button);
+    auto *mode = root->property("window").value<QObject *>(); QVERIFY(mode);
+    auto *queue = root->property("playListModel").value<QObject *>(); QVERIFY(queue);
+    auto *api = root->property("apiFixture").value<QObject *>(); QVERIFY(api);
+    QVERIFY(!button->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QVERIFY(root->setProperty("securePlaybackActive", true));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QVERIFY(root->setProperty("securePlaybackActive", false));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QCOMPARE(queue->property("trace").toMap().value("reads").toInt(), 0); QCOMPARE(api->property("requests").toInt(), 0);
+    QVERIFY(mode->setProperty("sourceLyricsMode", false));
+    QVERIFY(button->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QCOMPARE(api->property("requests").toInt(), 1); QCOMPARE(api->property("requestedPath").toString(), QString("legacy-hash"));
+    QCOMPARE(api->property("requestedMode").toInt(), 1);
+    QVERIFY(queue->setProperty("playListIndex", -1));
+    QVERIFY(!button->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QVERIFY(queue->setProperty("playListIndex", 1));
+    QVERIFY(!button->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QVERIFY(queue->setProperty("source", -1)); QVERIFY(queue->setProperty("playListIndex", 0));
+    QVERIFY(!button->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QCOMPARE(api->property("requests").toInt(), 1);
 }
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,

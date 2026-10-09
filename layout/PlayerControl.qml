@@ -338,6 +338,13 @@ Rectangle {
             }
         }
         SButton {
+            id: currentDownloadButton
+            objectName: "currentPlaybackDownloadButton"
+            // Current Source downloads need a capability-gated Host destination flow.
+            // Until that flow is connected, never fall back to the legacy hash request.
+            enabled: !window.sourceLyricsMode && playListModel.playListIndex >= 0
+                     && playListModel.playListIndex < playListModel.count
+                     && playListModel.get(playListModel.playListIndex).source !== -1
             x: 174
             y: 5
             //iconSize:
@@ -350,17 +357,10 @@ Rectangle {
             iconColor: Style.themes.textColor
             shadowEnabled: false
             onClicked: {
-                if(musicControlMin.securePlaybackActive)
-                    return;
-                if(playListModel.get(playListModel.playListIndex).path) {
-                    if(Options.settings.soundQuality === 0) {
-                        MusicApi.getMusicInfo(playListModel.get(playListModel.playListIndex).path,1);
-                    } else if(Options.settings.soundQuality === 1) {
-                        MusicApi.getMusicInfo(playListModel.get(playListModel.playListIndex).path,1);
-                    } else {
-                        MusicApi.getMusicInfo(playListModel.get(playListModel.playListIndex).path,1);
-                    }
-                }
+                if (window.sourceLyricsMode || !enabled) return;
+                const row = playListModel.get(playListModel.playListIndex);
+                if (row && typeof row.path === "string" && row.path)
+                    MusicApi.getMusicInfo(row.path, 1);
             }
             QTip {
                 visible: parent.hovered

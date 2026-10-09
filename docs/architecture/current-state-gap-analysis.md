@@ -297,6 +297,8 @@ Windows SMTC 随后接入统一播放桥接：Source 输入仅控制 Core，元�
 
 播放器音乐详情随后接入当前展示投影，仅保留 title/artist/album/sourceLabel 和显式 legacy 字段，不复制 SourceRef、资源或任意 metadata。Source 第一行显示来源，v2 未提供的文件名/日期/格式为未知；长度读取 Core 时钟，切歌更新，停播/无当前项清空，旧信息只在显式兼容模式可见。主程序构建和九个播放/UI 套件通过，详情弹窗采用实际 QML 逻辑与轻量容器夹具，真实视觉仍待验收。下载按钮、播放选项与频谱等剩余路径尚未统一；SDK ABI 不变。
 
+当前下载按钮随后封堵 Source 停播后的旧 hash 回退：sticky Source 模式始终禁用并在 handler 拒绝，显式 legacy 才允许原在线下载，越界和 Legacy Local 也拒绝。主程序构建及七个相关套件通过；实际按钮测试确认 Source 活跃/停播均零旧队列读取和零旧 API 调用。这并非 Source 下载功能完成：Router 已有 Download Provider 路由，但当前动作快照、Adapter 当前下载 API、用户目标文件选择及覆盖保护仍需接入，不能用旧路径或泄露播放资源替代。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口
