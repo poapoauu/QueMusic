@@ -481,6 +481,10 @@ Windows SMTC 随后接入统一播放桥接：Source 输入仅控制 Core，元�
 - 第三方开发文档从空目录开始可复现一个可安装、可配置、可播放的示例 Source；
 - Source SDK v2 与 Plugin UI 1.x 的兼容策略和弃用周期公开。
 
+### 后续增量：跨曲目下载会话记录
+
+Adapter 后续新增 downloadTasks 安全投影，独立于当前播放 token 保存 Router 已分发下载的 pending/completed/failed 状态。切歌/停播/Coordinator 销毁不抹去任务结果，Router 销毁与实例失效使进行中记录失败；完整身份、请求和目标仅保留在私有进行中记录。展示只含 opaque taskId、标题/歌手/来源、目标文件名和通用状态；相同进行中目标 URL 去重，终态移除不取消、不删文件。四个 Host/播放/路由/队列联合套件通过。下载页接入、取消、真实字节进度与跨启动恢复仍待实现，真实服务器和原生视觉未验收；Source SDK v2 与 Plugin UI API ABI 不变。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

@@ -180,22 +180,13 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
             emit currentFavoriteChanged();
         });
         connect(m_hub->actions(), &MediaActionRouter::actionSucceeded, this, [this](QUuid id, QVariantMap result) {
-            if (!downloadRequestIsCurrent(id)) return;
-            const auto destination = result.value("destination");
-            m_downloadFailed = result.value("action").toInt() != int(SourceActionV2::Download)
-                || result.value("subject").toMap() != m_downloadMedia
-                || destination.metaType().id() != QMetaType::QUrl || destination.toUrl() != m_downloadDestination;
-            m_downloadRequest = {}; m_downloadDestination = QUrl{};
-            m_downloadCompleted = !m_downloadFailed;
-            emit currentDownloadChanged();
+            finishDownload(id, result, true);
         });
         connect(m_hub->actions(), &MediaActionRouter::actionFailed, this, [this](QUuid id, const QVariantMap &) {
-            if (!downloadRequestIsCurrent(id)) return;
-            m_downloadRequest = {}; m_downloadDestination = QUrl{};
-            m_downloadFailed = true; m_downloadCompleted = false;
-            emit currentDownloadChanged();
+            finishDownload(id, {}, false);
         });
     }
+    connect(m_hub->actions(), &QObject::destroyed, this, &OriginalUiMusicAdapter::failPendingDownloadTasks);
     const auto observe = [this](MusicPageModel *model) {
         connect(model, &QAbstractItemModel::modelReset, this, &OriginalUiMusicAdapter::rebuild);
         connect(model, &QAbstractItemModel::rowsInserted, this, [this] { rebuild(); });
@@ -313,6 +304,58 @@ bool OriginalUiMusicAdapter::downloadRequestIsCurrent(const QUuid &id) const
         && m_playback->currentGeneration() == m_downloadGeneration
         && m_playback->currentActionItem().value("ref").toMap() == m_downloadMedia;
 }
+QVariantList OriginalUiMusicAdapter::downloadTasks() const
+{
+    QVariantList result;
+    for (const auto &task : m_downloadTasks) result.append(task.presentation);
+    return result;
+}
+bool OriginalUiMusicAdapter::dismissDownloadTask(const QString &taskId)
+{
+    for (qsizetype i = 0; i < m_downloadTasks.size(); ++i) {
+        const auto &task = m_downloadTasks.at(i);
+        if (task.presentation.value("taskId").toString() != taskId) continue;
+        if (task.presentation.value("state").toString() == QStringLiteral("pending")) return false;
+        m_downloadTasks.removeAt(i);
+        emit downloadTasksChanged();
+        return true;
+    }
+    return false;
+}
+void OriginalUiMusicAdapter::finishDownload(const QUuid &id, const QVariantMap &result, bool succeeded)
+{
+    bool changed = false;
+    for (auto &task : m_downloadTasks) {
+        if (id.isNull() || task.request != id || task.presentation.value("state").toString() != "pending") continue;
+        const auto destination = result.value("destination");
+        succeeded = succeeded && result.value("action").toInt() == int(SourceActionV2::Download)
+            && result.value("subject").toMap() == task.media
+            && destination.metaType().id() == QMetaType::QUrl && destination.toUrl() == task.destination;
+        task.presentation["state"] = succeeded ? QStringLiteral("completed") : QStringLiteral("failed");
+        task.request = {}; task.media.clear(); task.destination = QUrl{};
+        changed = true;
+        break;
+    }
+    const bool current = changed && downloadRequestIsCurrent(id);
+    if (current) {
+        m_downloadRequest = {}; m_downloadDestination = QUrl{};
+        m_downloadFailed = !succeeded; m_downloadCompleted = succeeded;
+    }
+    const QPointer<OriginalUiMusicAdapter> guard(this);
+    if (current) emit currentDownloadChanged();
+    if (guard && changed) emit downloadTasksChanged();
+}
+void OriginalUiMusicAdapter::failPendingDownloadTasks()
+{
+    bool changed = false;
+    for (auto &task : m_downloadTasks) {
+        if (task.presentation.value("state").toString() != "pending") continue;
+        task.presentation["state"] = QStringLiteral("failed");
+        task.request = {}; task.media.clear(); task.destination = QUrl{};
+        changed = true;
+    }
+    if (changed) emit downloadTasksChanged();
+}
 QUuid OriginalUiMusicAdapter::downloadCurrent(const QUrl &destination, const QString &expectedToken)
 {
     if (expectedToken.isEmpty() || !m_playback
@@ -323,7 +366,13 @@ QUuid OriginalUiMusicAdapter::downloadCurrent(const QUrl &destination, const QSt
     const auto item = m_playback->currentActionItem();
     if (item.isEmpty() || !actionCapability(item, SourceActionV2::Download).value("enabled").toBool()) return {};
     m_downloadCompleted = false;
-    if (!newDownloadDestination(destination)) {
+    const auto targetReserved = [this, &destination] {
+        for (const auto &task : m_downloadTasks)
+            if (task.presentation.value("state").toString() == "pending"
+                && task.destination == destination) return true;
+        return false;
+    };
+    if (!newDownloadDestination(destination) || targetReserved()) {
         m_downloadFailed = true; emit currentDownloadChanged(); return {};
     }
     const auto reservation = QUuid::createUuid();
@@ -331,13 +380,24 @@ QUuid OriginalUiMusicAdapter::downloadCurrent(const QUrl &destination, const QSt
     emit currentDownloadChanged();
     if (!guard || !downloadRequestIsCurrent(reservation)) return {};
     // Observers may create the target while reacting to pending; recheck before dispatch.
-    if (!newDownloadDestination(destination)) {
+    if (!newDownloadDestination(destination) || targetReserved()) {
         m_downloadRequest = {}; m_downloadDestination = QUrl{}; m_downloadFailed = true;
         emit currentDownloadChanged(); return {};
     }
+    // Session-local presentation is independent of the current playback generation.
+    // Keep the request/ref/destination private; v2 provides terminal state, not byte progress.
+    const QVariantMap presentation{{"taskId", reservation.toString(QUuid::WithoutBraces)},
+        {"title", item.value("title").toString()}, {"artist", artistName(item)},
+        {"sourceLabel", item.value("sourceLabel").toString()},
+        {"fileName", QFileInfo(destination.toLocalFile()).fileName()}, {"state", QStringLiteral("pending")}};
+    m_downloadTasks.append({presentation, {}, item.value("ref").toMap(), destination});
     const auto request = m_hub->actions()->download(item, destination);
     if (!guard) return request;
+    for (auto &task : m_downloadTasks)
+        if (task.presentation.value("taskId") == presentation.value("taskId")
+            && task.presentation.value("state").toString() == "pending") task.request = request;
     if (downloadRequestIsCurrent(reservation)) m_downloadRequest = request;
+    emit downloadTasksChanged();
     return request;
 }
 

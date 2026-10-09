@@ -210,6 +210,14 @@ Host 只接受用户指定的新绝对本地文件目标：拒绝远程/相对/�
 
 主程序构建及八个联合套件通过：OriginalUiMusicAdapter、OriginalUiPlaybackQml、OriginalUiActionsQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration、NavidromeSource。新增实际按钮/对话框 handlers 与真实展示桥接测试验证捕获 token、重复打开/提交、取消、旧确认、pending、重试、降权/停播/缺 Adapter 拒绝和零 legacy 回退；原生 FileDialog 用轻量夹具替换，不能证明 OS 弹窗视觉或信号顺序。既有 Navidrome 套件验证本机 HTTP 夹具下真实字节提交及错误/取消临时文件清理；真实服务器、原生保存对话框与跨曲目下载管理仍待验收。SDK v2/Plugin UI API ABI 不变。
 
+### 跨曲目 Source 下载会话记录
+
+Adapter 新增独立于当前播放 token 的 downloadTasks 展示投影。已分发请求仍由 Router 管理，切歌、停播、页面替换及 Coordinator 销毁不清除记录；完整 MediaRef、Router 请求 ID 和目标 URL 仅存在私有进行中记录，终态释放这些值。公开字段严格限制为 taskId/title/artist/sourceLabel/fileName/state；同实体 ID 的不同实例不混用，迟到结果不能改变新歌曲状态。进行中的相同目标 URL 不重复分发，第三方插件仍须保证最终提交不覆盖。
+
+状态只有 pending/completed/failed，不猜造 SDK v2 未提供的字节进度。Router 失效结果及 Router 销毁使进行中记录失败；dismissDownloadTask 只允许移除终态展示记录，不取消请求、不删除任何文件。记录仅在当前 Adapter 会话内有效，不自动持久化、不自动重试，也不将下载文件直接送入播放器或自动扩张 Local 根目录。
+
+OriginalUiMusicAdapter、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration 四个联合套件通过。新增测试覆盖跨实例同 ID、切歌后目标去重、停播及 Coordinator 销毁后的完成/失败、Router 销毁及实例禁用、重复终态、字段白名单、终态移除与文件保留；既有 inline 完成、错误目标拒绝和权限检查回归继续通过。下载页显示将在下一切片接入；没有新增 SDK v2/Plugin UI API 虚接口或 ABI 变化，真实服务器与原生 UI 验收仍待完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

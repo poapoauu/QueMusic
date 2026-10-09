@@ -322,6 +322,68 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void downloadTasksSurvivePlaybackChangesWithoutExposingPrivateData()
+    {
+        RoutingHarness h; QVERIFY(h.init(true));
+        auto *home = h.session(); auto *office = h.session("adapter/office"); QVERIFY(home); QVERIFY(office);
+        home->setProperty("holdDownload", true); office->setProperty("holdDownload", true);
+        const auto a = routedItem(MediaEntityTypeV2::Track, "same-id");
+        auto b = a; b.ref.sourceInstanceId = "adapter/office"; b.ref.accountId = "office";
+        accept(h.hub->category(), resultWith({a, b}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        const auto targetA = QUrl::fromLocalFile(h.dir.filePath("A.bin"));
+        QVERIFY(!h.adapter->downloadCurrent(targetA, h.adapter->currentDownload().value("token").toString()).isNull());
+        QCOMPARE(h.adapter->downloadTasks().size(), 1);
+        const auto taskA = h.adapter->downloadTasks().first().toMap();
+        QCOMPARE(taskA.keys(), QStringList({"artist", "fileName", "sourceLabel", "state", "taskId", "title"}));
+        QCOMPARE(taskA.value("title").toString(), a.title); QCOMPARE(taskA.value("artist").toString(), QString("Artist"));
+        QCOMPARE(taskA.value("fileName").toString(), QString("A.bin")); QCOMPARE(taskA.value("state").toString(), QString("pending"));
+        const auto taskIdA = taskA.value("taskId").toString(); QVERIFY(!QUuid(taskIdA).isNull());
+        QVERIFY(!h.adapter->dismissDownloadTask(taskIdA)); QVERIFY(!h.adapter->dismissDownloadTask("forged"));
+        const auto idA = home->property("downloadRequests").toList().last().toMap().value("id").toUuid();
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(1)).isNull()); QTRY_COMPARE(h.sink.plays, 2);
+        const auto tokenB = h.adapter->currentDownload().value("token").toString();
+        // A different song/account cannot reserve the same pending destination.
+        QVERIFY(h.adapter->downloadCurrent(targetA, tokenB).isNull()); QCOMPARE(h.adapter->downloadTasks().size(), 1);
+        const auto targetB = QUrl::fromLocalFile(h.dir.filePath("B.bin"));
+        QVERIFY(!h.adapter->downloadCurrent(targetB, tokenB).isNull());
+        const auto idB = office->property("downloadRequests").toList().last().toMap().value("id").toUuid();
+        QCOMPARE(h.adapter->downloadTasks().size(), 2);
+        QVERIFY(h.adapter->downloadTasks().last().toMap().value("taskId").toString() != taskIdA);
+        emit home->actionCompleted(idA, {SourceActionV2::Download, a.ref, {{"destination", targetA}}});
+        QTRY_COMPARE(h.adapter->downloadTasks().first().toMap().value("state").toString(), QString("completed"));
+        QVERIFY(h.adapter->currentDownload().value("pending").toBool());
+        QVERIFY(h.playback->stop()); h.playback.reset();
+        emit office->requestFailed(idB, {SourceErrorKindV2::Network, "private", "https://secret.invalid/diagnostic"});
+        QTRY_COMPARE(h.adapter->downloadTasks().last().toMap().value("state").toString(), QString("failed"));
+        QVERIFY(!h.adapter->currentDownload().value("completed").toBool());
+        emit home->actionCompleted(idA, {SourceActionV2::Download, a.ref, {{"destination", targetA}}});
+        QCoreApplication::processEvents(); QCOMPARE(h.adapter->downloadTasks().size(), 2);
+        // Dismissal is presentation-only; it must not remove an actual saved file.
+        QFile saved(targetA.toLocalFile()); QVERIFY(saved.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+        QCOMPARE(saved.write("keep"), 4LL); saved.close();
+        QVERIFY(h.adapter->dismissDownloadTask(taskIdA)); QCOMPARE(h.adapter->downloadTasks().size(), 1);
+        QVERIFY(saved.open(QIODevice::ReadOnly)); QCOMPARE(saved.readAll(), QByteArray("keep"));
+        h.hub.reset(); QCOMPARE(h.adapter->downloadTasks().last().toMap().value("state").toString(), QString("failed"));
+    }
+    void downloadTaskFailureFollowsRouterLifecycleNotCurrentSelection()
+    {
+        for (bool destroyHub : {false, true}) {
+            RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
+            session->setProperty("holdDownload", true);
+            accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "pending-download")}, "tracks"));
+            QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+            QVERIFY(!h.adapter->downloadCurrent(QUrl::fromLocalFile(h.dir.filePath("pending.bin")),
+                                              h.adapter->currentDownload().value("token").toString()).isNull());
+            QVERIFY(h.playback->stop());
+            QCOMPARE(h.adapter->downloadTasks().first().toMap().value("state").toString(), QString("pending"));
+            if (destroyHub) h.hub.reset();
+            else QVERIFY(h.registry.disableInstance("adapter/home"));
+            QTRY_COMPARE(h.adapter->downloadTasks().first().toMap().value("state").toString(), QString("failed"));
+            QVERIFY(h.adapter->dismissDownloadTask(h.adapter->downloadTasks().first().toMap().value("taskId").toString()));
+            QVERIFY(h.adapter->downloadTasks().isEmpty());
+        }
+    }
     void currentDownloadRequiresIdentityPermissionsAndANewLocalDestination()
     {
         RoutingHarness h; QVERIFY(h.init()); auto *session = h.session(); QVERIFY(session);
@@ -369,6 +431,7 @@ private slots:
         QVERIFY(!h.adapter->downloadCurrent(target, token).isNull());
         QTRY_VERIFY(h.adapter->currentDownload().value("failed").toBool());
         QVERIFY(!h.adapter->currentDownload().value("completed").toBool());
+        QCOMPARE(h.adapter->downloadTasks().last().toMap().value("state").toString(), QString("failed"));
         session->setProperty("failDownload", false); QVERIFY(!h.adapter->downloadCurrent(target, token).isNull());
         QTRY_VERIFY(h.adapter->currentDownload().value("completed").toBool());
         session->setProperty("holdDownload", true); QVERIFY(!h.adapter->downloadCurrent(target, token).isNull());

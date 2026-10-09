@@ -42,6 +42,7 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(QUrl currentCover READ currentCover NOTIFY currentCoverChanged)
     Q_PROPERTY(QVariantMap currentFavorite READ currentFavorite NOTIFY currentFavoriteChanged)
     Q_PROPERTY(QVariantMap currentDownload READ currentDownload NOTIFY currentDownloadChanged)
+    Q_PROPERTY(QVariantList downloadTasks READ downloadTasks NOTIFY downloadTasksChanged)
     Q_PROPERTY(bool directoryCanNavigateBack READ directoryCanNavigateBack NOTIFY directoryChanged)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY sourceOptionsChanged)
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
@@ -57,6 +58,9 @@ public:
     Q_INVOKABLE QUuid setCurrentFavorite(bool favorite, const QString &expectedToken = {});
     QVariantMap currentDownload() const;
     Q_INVOKABLE QUuid downloadCurrent(const QUrl &destination, const QString &expectedToken);
+    QVariantList downloadTasks() const;
+    // Removes only a terminal presentation record, never a request or a file.
+    Q_INVOKABLE bool dismissDownloadTask(const QString &taskId);
     Q_INVOKABLE void retryCurrentLyrics();
 
     OnlineListModel *recommendSongs() const;
@@ -116,6 +120,7 @@ signals:
     void currentCoverChanged();
     void currentFavoriteChanged();
     void currentDownloadChanged();
+    void downloadTasksChanged();
 
 private:
     QVariantMap resolvePresentationItem(const QVariantMap &presentationItem) const;
@@ -136,6 +141,15 @@ private:
     bool favoriteRequestIsCurrent(const QUuid &id) const;
     void syncCurrentDownload(bool notify = true);
     bool downloadRequestIsCurrent(const QUuid &id) const;
+    void finishDownload(const QUuid &id, const QVariantMap &result, bool succeeded);
+    void failPendingDownloadTasks();
+    struct DownloadTask {
+        QVariantMap presentation;
+        QUuid request;
+        QVariantMap media;
+        QUrl destination;
+    };
+    QList<DownloadTask> m_downloadTasks;
 
     QPointer<MusicHub> m_hub;
     QPointer<PlaybackCoordinator> m_playback;
