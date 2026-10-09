@@ -33,6 +33,12 @@ Window {
     onCurrentCoverChanged: {
         if (window.sourceLyricsMode) colorExtractor.extractColorsFromUrl(window.currentCover);
     }
+    Binding {
+        target: window.playbackAdapter
+        property: "spectrumEnabled"
+        value: window.sourceLyricsMode && window.securePlaybackCurrent && Style.settings.waveDisplay
+        when: !!window.playbackAdapter
+    }
     PlaybackLyricsAdapter {
         id: playbackLyrics
         musicAdapter: window.musicAdapter
@@ -40,6 +46,7 @@ Window {
         legacyPlayer: mainMedia
         sourceMode: window.sourceLyricsMode
         sourceActive: window.securePlaybackCurrent
+        waveEnabled: Style.settings.waveDisplay
         legacyLines: MusicApi.lyricsData || []
         legacyTranslations: MusicApi.lyricsTranslate || []
         legacyPosition: mainMedia.position

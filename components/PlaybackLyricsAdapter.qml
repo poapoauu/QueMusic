@@ -20,8 +20,10 @@ QtObject {
     property var sourceItem: ({})
     property var legacyDetails: ({})
     property var legacyWavePath: []
-    // Core visualization is not wired yet; Source must never reuse a legacy frame.
-    readonly property var wavePath: sourceMode ? [] : legacyWavePath
+    property bool waveEnabled: false
+    // Core exports geometry only. Sticky Source mode never borrows Legacy PCM.
+    readonly property var wavePath: sourceMode
+        ? (waveEnabled && playing && controls ? controls.wavePath || [] : []) : legacyWavePath
     // Display-only projection. Never copy arbitrary metadata, identities or resources.
     readonly property var details: {
         if (sourceMode) {

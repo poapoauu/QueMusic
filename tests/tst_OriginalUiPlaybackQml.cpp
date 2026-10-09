@@ -65,6 +65,7 @@ class PlaybackControllerDouble final : public QObject {
     Q_PROPERTY(qreal playbackRate MEMBER playbackRate NOTIFY playbackRateChanged)
     Q_PROPERTY(bool muted MEMBER muted NOTIFY mutedChanged)
     Q_PROPERTY(int state MEMBER state NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList wavePath MEMBER wavePath NOTIFY wavePathChanged)
 public:
     qint64 position = 100;
     qint64 duration = 1000;
@@ -78,6 +79,7 @@ public:
     int pauseCalls = 0;
     int stopCalls = 0;
     int rateCalls = 0;
+    QVariantList wavePath;
     qint64 sought = -1;
 
     Q_INVOKABLE void play() { ++playCalls; }
@@ -98,6 +100,7 @@ signals:
     void mutedChanged();
     void stateChanged();
     void playbackError(QString messageKey);
+    void wavePathChanged();
 };
 
 class OriginalUiPlaybackQmlTest final : public QObject {
@@ -117,6 +120,7 @@ private slots:
     void actualSourceDownloadDialogKeepsTheCapturedPlaybackToken();
     void actualPlayerOptionsNeverConfigureTheLegacyPlayerInSourceMode();
     void spectrumBridgeRejectsLegacyFramesInStickySourceMode();
+    void actualSpectrumBindingControlsCoreFromOriginalDisplayPreference();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -251,15 +255,77 @@ Item {
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
 }
 
+void OriginalUiPlaybackQmlTest::actualSpectrumBindingControlsCoreFromOriginalDisplayPreference()
+{
+    QQmlEngine engine;
+    QtPlaybackController first, second;
+    QQmlComponent controlsComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackControlsAdapter.qml"));
+    QVERIFY2(controlsComponent.isReady(), qPrintable(controlsComponent.errorString()));
+    std::unique_ptr<QObject> firstControls(controlsComponent.createWithInitialProperties({
+        {"controller", QVariant::fromValue<QObject *>(&first)}}));
+    std::unique_ptr<QObject> secondControls(controlsComponent.createWithInitialProperties({
+        {"controller", QVariant::fromValue<QObject *>(&second)}}));
+    QVERIFY(firstControls); QVERIFY(secondControls);
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.indexOf("    Binding {"); QVERIFY(start >= 0);
+    const auto end = source.indexOf("\n    }", start); QVERIFY(end > start);
+    auto binding = source.mid(start, end + 6 - start);
+    QVERIFY(binding.contains("property: \"spectrumEnabled\""));
+    binding.replace("Style.settings.waveDisplay", "window.displayWave");
+    QQmlComponent component(&engine);
+    component.setData((QStringLiteral("import QtQml\nQtObject { id: window; required property var playbackAdapter; "
+        "property bool sourceLyricsMode: false; property bool securePlaybackCurrent: false; property bool displayWave: true; "
+        "property Binding spectrumBinding: ") + binding + "\n}").toUtf8(), QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({
+        {"playbackAdapter", QVariant::fromValue(firstControls.get())}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    QVERIFY(!first.spectrumEnabled());
+    QVERIFY(root->setProperty("sourceLyricsMode", true));
+    QVERIFY(!first.spectrumEnabled());
+    QVERIFY(root->setProperty("securePlaybackCurrent", true));
+    QVERIFY(first.spectrumEnabled());
+    QVERIFY(root->setProperty("displayWave", false));
+    QVERIFY(!first.spectrumEnabled());
+    QVERIFY(root->setProperty("displayWave", true));
+    QVERIFY(first.spectrumEnabled());
+    QVERIFY(root->setProperty("playbackAdapter", QVariant::fromValue(secondControls.get())));
+    QVERIFY(!first.spectrumEnabled()); QVERIFY(second.spectrumEnabled());
+    QVERIFY(root->setProperty("playbackAdapter", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(!second.spectrumEnabled());
+    QVERIFY(root->setProperty("playbackAdapter", QVariant::fromValue(secondControls.get())));
+    QVERIFY(second.spectrumEnabled());
+    QVERIFY(root->setProperty("securePlaybackCurrent", false));
+    QVERIFY(!second.spectrumEnabled());
+    QVERIFY(root->setProperty("securePlaybackCurrent", true));
+    QVERIFY(second.spectrumEnabled());
+    QVERIFY(root->setProperty("sourceLyricsMode", false));
+    QVERIFY(!second.spectrumEnabled());
+}
+
 void OriginalUiPlaybackQmlTest::spectrumBridgeRejectsLegacyFramesInStickySourceMode()
 {
     QQmlEngine engine;
+    PlaybackControllerDouble controls;
+    controls.playing = true;
+    controls.wavePath = {QPointF(0, 80), QPointF(256, 25), QPointF(512, 80)};
     QQmlComponent component(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
     const QVariantList legacy{QPointF(1, 2), QPointF(3, 4)};
     std::unique_ptr<QObject> bridge(component.createWithInitialProperties({
-        {"sourceMode", true}, {"sourceActive", true}, {"legacyWavePath", legacy}})); QVERIFY(bridge);
+        {"sourceMode", true}, {"sourceActive", true}, {"legacyWavePath", legacy},
+        {"controls", QVariant::fromValue<QObject *>(&controls)}})); QVERIFY(bridge);
     QVERIFY(bridge->property("wavePath").toList().isEmpty());
+    QVERIFY(bridge->setProperty("waveEnabled", true));
+    QCOMPARE(bridge->property("wavePath").toList(), controls.wavePath);
+    controls.playing = false; emit controls.playingChanged();
+    QVERIFY(bridge->property("wavePath").toList().isEmpty());
+    controls.playing = true; emit controls.playingChanged();
+    QCOMPARE(bridge->property("wavePath").toList(), controls.wavePath);
+    QVERIFY(bridge->setProperty("waveEnabled", false));
+    QVERIFY(bridge->property("wavePath").toList().isEmpty());
+    QVERIFY(bridge->setProperty("waveEnabled", true));
     QVERIFY(bridge->setProperty("sourceActive", false)); QVERIFY(bridge->property("wavePath").toList().isEmpty());
     QVERIFY(bridge->setProperty("legacyWavePath", QVariantList{QPointF(5, 6)}));
     QVERIFY(bridge->property("wavePath").toList().isEmpty());
@@ -268,6 +334,8 @@ void OriginalUiPlaybackQmlTest::spectrumBridgeRejectsLegacyFramesInStickySourceM
     const auto main = QString::fromUtf8(file.readAll());
     QVERIFY(main.contains("mediaPlayer: window.sourceLyricsMode ? null : mainMedia"));
     QVERIFY(main.contains("enabled: !window.sourceLyricsMode && Style.settings.waveDisplay && mainMedia.playing"));
+    QVERIFY(main.contains("value: window.sourceLyricsMode && window.securePlaybackCurrent && Style.settings.waveDisplay"));
+    QVERIFY(main.contains("waveEnabled: Style.settings.waveDisplay"));
     QFile maxFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerMaxCenter.qml")); QVERIFY(maxFile.open(QIODevice::ReadOnly));
     const auto max = QString::fromUtf8(maxFile.readAll()); QVERIFY(!max.contains("getWave.wavePath"));
     QVERIFY(max.contains("path: window.lyricsAdapter.wavePath"));

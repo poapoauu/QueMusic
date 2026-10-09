@@ -1006,7 +1006,7 @@ if(BUILD_TESTING)
             components/PlaybackLyricsAdapter.qml
             components/PlaybackControlsAdapter.qml)
     target_link_libraries(quemusic_original_ui_playback_qml_test PRIVATE
-        Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
+        quemusic_qt_playback_controller Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
     add_test(NAME quemusic_original_ui_playback_qml_test
         COMMAND quemusic_original_ui_playback_qml_test)
     set_tests_properties(quemusic_original_ui_playback_qml_test PROPERTIES

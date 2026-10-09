@@ -3,6 +3,8 @@
 #include "PlaybackSink.h"
 
 #include <QPointer>
+#include <QPointF>
+#include <QVector>
 
 #include <functional>
 #include <memory>
@@ -24,6 +26,8 @@ class QtPlaybackController final : public PlaybackSink {
     Q_PROPERTY(qreal playbackRate READ playbackRate NOTIFY playbackRateChanged)
     Q_PROPERTY(bool muted READ muted NOTIFY mutedChanged)
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
+    Q_PROPERTY(bool spectrumEnabled READ spectrumEnabled WRITE setSpectrumEnabled NOTIFY spectrumEnabledChanged)
+    Q_PROPERTY(QVector<QPointF> wavePath READ wavePath NOTIFY wavePathChanged)
 public:
     enum State { Idle, Loading, Playing, Paused, Stopped, Error };
     Q_ENUM(State)
@@ -39,6 +43,8 @@ public:
     qreal playbackRate() const;
     bool muted() const;
     State state() const;
+    bool spectrumEnabled() const;
+    QVector<QPointF> wavePath() const;
 
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
@@ -47,6 +53,7 @@ public:
     Q_INVOKABLE void setVolume(qreal volume);
     Q_INVOKABLE void setPlaybackRate(qreal rate);
     Q_INVOKABLE void setMuted(bool muted);
+    Q_INVOKABLE void setSpectrumEnabled(bool enabled);
 
     void setCoordinator(PlaybackCoordinator *coordinator);
     bool prepare(StreamDescriptorV2 stream, QUuid generation) override;
@@ -63,6 +70,8 @@ signals:
     void mutedChanged();
     void stateChanged();
     void playbackError(QString messageKey);
+    void spectrumEnabledChanged();
+    void wavePathChanged();
 
 private:
     enum class BackendPlaybackState { Idle, Playing, Paused, Stopped };
@@ -74,6 +83,7 @@ private:
         std::function<void(BackendPlaybackState)> playbackState;
         std::function<void(BackendMediaStatus)> mediaStatus;
         std::function<void()> error;
+        std::function<void(QVector<QPointF>, quint64)> wavePath;
     };
     class Backend {
     public:
@@ -88,6 +98,7 @@ private:
         virtual void setVolume(qreal volume) = 0;
         virtual void setPlaybackRate(qreal rate) = 0;
         virtual void setMuted(bool muted) = 0;
+        virtual void setSpectrumEnabled(bool, quint64) {}
     };
     using BackendFactory = std::function<std::unique_ptr<Backend>()>;
     struct Reporter {
@@ -106,6 +117,7 @@ private:
     void setPlayingValue(bool value);
     void setStateValue(State value);
     void reportTerminal(QUuid generation, bool error);
+    void clearWavePath();
 
     BackendFactory m_factory;
     Reporter m_reporter;
@@ -126,6 +138,9 @@ private:
     bool m_errorEmitted = false;
     bool m_destroying = false;
     State m_state = Idle;
+    bool m_spectrumEnabled = false;
+    quint64 m_spectrumEpoch = 0;
+    QVector<QPointF> m_wavePath;
 
     friend class QtPlaybackControllerTestAccess;
     friend class QtMultimediaBackend;

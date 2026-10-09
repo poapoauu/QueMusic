@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <memory>
+#include <limits>
 
 class QtPlaybackControllerTestAccess {
 public:
@@ -25,6 +26,8 @@ public:
         qreal volume = -1;
         qreal rate = -1;
         bool muted = false;
+        bool spectrumEnabled = false;
+        quint64 spectrumEpoch = 0;
 
         void setCallbacks(QtPlaybackController::BackendCallbacks value) override
         {
@@ -39,6 +42,8 @@ public:
         void setVolume(qreal value) override { volume = value; }
         void setPlaybackRate(qreal value) override { rate = value; }
         void setMuted(bool value) override { muted = value; }
+        void setSpectrumEnabled(bool value, quint64 epoch) override
+        { spectrumEnabled = value; spectrumEpoch = epoch; }
     };
 
     struct Harness {
@@ -87,6 +92,97 @@ QSet<QByteArray> metaNames(const QMetaObject &metaObject)
 class QtPlaybackControllerTest final : public QObject {
     Q_OBJECT
 private slots:
+    void spectrumIsOptionalBoundedAndFencedByOccurrenceAndDisplayEpoch()
+    {
+        using Access = QtPlaybackControllerTestAccess;
+        Access::Harness h;
+        const auto generation = QUuid::createUuid();
+        QVERIFY(h.controller->prepare(stream(), generation));
+        auto *backend = h.backends.constLast();
+        auto callbacks = backend->callbacks;
+        const QVector<QPointF> path{{0, 80}, {256, 20}, {512, 80}, {0, 80}};
+        callbacks.playbackState(Access::BackendPlaybackState::Playing);
+        QVERIFY(!backend->spectrumEnabled);
+        callbacks.wavePath(path, backend->spectrumEpoch);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        h.controller->setSpectrumEnabled(true);
+        QVERIFY(backend->spectrumEnabled);
+        const auto oldEpoch = backend->spectrumEpoch;
+        callbacks.wavePath(path, oldEpoch);
+        QCOMPARE(h.controller->wavePath(), path);
+        callbacks.seekable(true);
+        h.controller->seek(42);
+        QCOMPARE(backend->sought, 42);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        callbacks.wavePath(path, oldEpoch);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        callbacks.wavePath(path, backend->spectrumEpoch);
+        QCOMPARE(h.controller->wavePath(), path);
+        const auto activeEpoch = backend->spectrumEpoch;
+        callbacks.wavePath({{0, std::numeric_limits<qreal>::quiet_NaN()}}, activeEpoch);
+        callbacks.wavePath({{513, 0}}, activeEpoch);
+        callbacks.wavePath(QVector<QPointF>(131, {0, 80}), activeEpoch);
+        QCOMPARE(h.controller->wavePath(), path);
+        h.controller->pause();
+        QVERIFY(!backend->spectrumEnabled);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        callbacks.playbackState(Access::BackendPlaybackState::Playing);
+        callbacks.wavePath(path, oldEpoch);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        callbacks.wavePath(path, backend->spectrumEpoch);
+        QCOMPARE(h.controller->wavePath(), path);
+        h.controller->setSpectrumEnabled(false);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        h.controller->setSpectrumEnabled(true);
+        callbacks.wavePath(path, oldEpoch);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        const auto lastEpoch = backend->spectrumEpoch;
+        callbacks.wavePath(path, lastEpoch);
+        QVERIFY(h.controller->prepare(stream(), QUuid::createUuid()));
+        QVERIFY(h.controller->wavePath().isEmpty());
+        callbacks.wavePath(path, lastEpoch);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        backend = h.backends.constLast();
+        auto current = backend->callbacks;
+        current.playbackState(Access::BackendPlaybackState::Playing);
+        current.wavePath(path, backend->spectrumEpoch);
+        QCOMPARE(h.controller->wavePath(), path);
+        current.error();
+        QVERIFY(h.controller->wavePath().isEmpty());
+        QVERIFY(!backend->spectrumEnabled);
+        current.wavePath(path, backend->spectrumEpoch);
+        QVERIFY(h.controller->wavePath().isEmpty());
+        h.controller.reset();
+        current.wavePath(path, lastEpoch); // A retained geometry callback cannot use freed Host state.
+    }
+
+    void spectrumClearObserverMayReplaceOrDestroyPlayback()
+    {
+        using Access = QtPlaybackControllerTestAccess;
+        Access::Harness h;
+        QVERIFY(h.controller->prepare(stream(), QUuid::createUuid()));
+        auto *backend = h.backends.constLast();
+        auto callbacks = backend->callbacks;
+        h.controller->setSpectrumEnabled(true);
+        callbacks.playbackState(Access::BackendPlaybackState::Playing);
+        const QVector<QPointF> path{{0, 80}, {512, 80}};
+        callbacks.wavePath(path, backend->spectrumEpoch);
+        const auto replacement = QUuid::createUuid();
+        auto connection = connect(h.controller.get(), &QtPlaybackController::wavePathChanged, this, [&] {
+            if (h.controller->wavePath().isEmpty()) QVERIFY(h.controller->prepare(stream(), replacement));
+        });
+        callbacks.playbackState(Access::BackendPlaybackState::Stopped);
+        QCOMPARE(h.controller->state(), QtPlaybackController::Loading);
+        QVERIFY(h.stopped.isEmpty());
+        disconnect(connection);
+        backend = h.backends.constLast(); callbacks = backend->callbacks;
+        callbacks.playbackState(Access::BackendPlaybackState::Playing);
+        callbacks.wavePath(path, backend->spectrumEpoch);
+        connect(h.controller.get(), &QtPlaybackController::wavePathChanged, this, [&] { h.controller.reset(); });
+        callbacks.mediaStatus(Access::BackendMediaStatus::EndOfMedia);
+        QVERIFY(!h.controller);
+    }
+
     void facadeDoesNotExposePlaybackSecrets()
     {
         QtPlaybackController controller;

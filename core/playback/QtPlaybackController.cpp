@@ -1,7 +1,9 @@
 #include "QtPlaybackController.h"
 
 #include "PlaybackCoordinator.h"
+#include "AudioSpectrumAnalyzer.h"
 
+#include <QAudioBufferOutput>
 #include <QAudioOutput>
 #include <QDir>
 #include <QMediaPlayer>
@@ -14,9 +16,12 @@ class QtMultimediaBackend final : public QtPlaybackController::Backend {
 public:
     QtMultimediaBackend()
         : m_audio(std::make_unique<QAudioOutput>()),
-          m_player(std::make_unique<QMediaPlayer>())
+          m_player(std::make_unique<QMediaPlayer>()),
+          m_buffer(std::make_unique<QAudioBufferOutput>()),
+          m_spectrum(std::make_unique<AudioSpectrumAnalyzer>())
     {
         m_player->setAudioOutput(m_audio.get());
+        m_player->setAudioBufferOutput(m_buffer.get());
     }
 
     ~QtMultimediaBackend() override
@@ -30,40 +35,53 @@ public:
     {
         clearCallbacks();
         m_callbacks = std::move(callbacks);
+        m_connections << QObject::connect(m_spectrum.get(), &AudioSpectrumAnalyzer::frameChanged,
+                                          m_spectrum.get(), [this] {
+            if (m_resettingSpectrum || !m_spectrum->enabled()) return;
+            // The receiver may retire this backend. Hold values, not a callback
+            // reference inside an object that can be destroyed during delivery.
+            const auto callback = m_callbacks.wavePath;
+            const auto epoch = m_spectrumEpoch;
+            auto path = m_spectrum->frame().path;
+            if (callback) callback(std::move(path), epoch);
+        });
         m_connections << QObject::connect(m_player.get(), &QMediaPlayer::positionChanged,
-                                           [this](qint64 value) { if (m_callbacks.position) m_callbacks.position(value); });
+                                           [this](qint64 value) { auto callback = m_callbacks.position; if (callback) callback(value); });
         m_connections << QObject::connect(m_player.get(), &QMediaPlayer::durationChanged,
-                                           [this](qint64 value) { if (m_callbacks.duration) m_callbacks.duration(value); });
+                                           [this](qint64 value) { auto callback = m_callbacks.duration; if (callback) callback(value); });
         m_connections << QObject::connect(m_player.get(), &QMediaPlayer::seekableChanged,
-                                           [this](bool value) { if (m_callbacks.seekable) m_callbacks.seekable(value); });
+                                           [this](bool value) { auto callback = m_callbacks.seekable; if (callback) callback(value); });
         m_connections << QObject::connect(m_player.get(), &QMediaPlayer::playbackStateChanged,
                                            [this](QMediaPlayer::PlaybackState state) {
-            if (!m_callbacks.playbackState) return;
+            const auto callback = m_callbacks.playbackState;
+            if (!callback) return;
             using Public = QtPlaybackController::BackendPlaybackState;
             switch (state) {
-            case QMediaPlayer::PlayingState: m_callbacks.playbackState(Public::Playing); break;
-            case QMediaPlayer::PausedState: m_callbacks.playbackState(Public::Paused); break;
-            case QMediaPlayer::StoppedState: m_callbacks.playbackState(Public::Stopped); break;
+            case QMediaPlayer::PlayingState: callback(Public::Playing); break;
+            case QMediaPlayer::PausedState: callback(Public::Paused); break;
+            case QMediaPlayer::StoppedState: callback(Public::Stopped); break;
             }
         });
         m_connections << QObject::connect(m_player.get(), &QMediaPlayer::mediaStatusChanged,
                                            [this](QMediaPlayer::MediaStatus status) {
-            if (!m_callbacks.mediaStatus) return;
+            const auto callback = m_callbacks.mediaStatus;
+            if (!callback) return;
             using Public = QtPlaybackController::BackendMediaStatus;
             switch (status) {
-            case QMediaPlayer::NoMedia: m_callbacks.mediaStatus(Public::NoMedia); break;
+            case QMediaPlayer::NoMedia: callback(Public::NoMedia); break;
             case QMediaPlayer::LoadingMedia:
             case QMediaPlayer::StalledMedia:
-            case QMediaPlayer::BufferingMedia: m_callbacks.mediaStatus(Public::Loading); break;
+            case QMediaPlayer::BufferingMedia: callback(Public::Loading); break;
             case QMediaPlayer::LoadedMedia:
-            case QMediaPlayer::BufferedMedia: m_callbacks.mediaStatus(Public::Loaded); break;
-            case QMediaPlayer::EndOfMedia: m_callbacks.mediaStatus(Public::EndOfMedia); break;
-            case QMediaPlayer::InvalidMedia: m_callbacks.mediaStatus(Public::InvalidMedia); break;
+            case QMediaPlayer::BufferedMedia: callback(Public::Loaded); break;
+            case QMediaPlayer::EndOfMedia: callback(Public::EndOfMedia); break;
+            case QMediaPlayer::InvalidMedia: callback(Public::InvalidMedia); break;
             }
         });
         m_connections << QObject::connect(m_player.get(), &QMediaPlayer::errorOccurred,
                                            [this](QMediaPlayer::Error, const QString &) {
-            if (m_callbacks.error) m_callbacks.error();
+            const auto callback = m_callbacks.error;
+            if (callback) callback();
         });
     }
 
@@ -72,6 +90,7 @@ public:
         for (const auto &connection : std::exchange(m_connections, {}))
             QObject::disconnect(connection);
         m_callbacks = {};
+        setSpectrumEnabled(false, m_spectrumEpoch + 1);
     }
     void setSource(const QUrl &source) override { m_player->setSource(source); }
     void play() override { m_player->play(); }
@@ -81,10 +100,29 @@ public:
     void setVolume(qreal volume) override { m_audio->setVolume(float(volume)); }
     void setPlaybackRate(qreal rate) override { m_player->setPlaybackRate(rate); }
     void setMuted(bool muted) override { m_audio->setMuted(muted); }
+    void setSpectrumEnabled(bool enabled, quint64 epoch) override
+    {
+        QObject::disconnect(m_bufferConnection);
+        m_spectrumEpoch = epoch;
+        m_resettingSpectrum = true;
+        m_spectrum->setEnabled(enabled);
+        m_spectrum->reset();
+        m_resettingSpectrum = false;
+        if (!enabled) return;
+        m_bufferConnection = QObject::connect(m_buffer.get(), &QAudioBufferOutput::audioBufferReceived,
+                                              m_spectrum.get(), [this, epoch](const QAudioBuffer &buffer) {
+            if (epoch == m_spectrumEpoch && m_spectrum->enabled()) m_spectrum->consume(buffer);
+        });
+    }
 
 private:
     std::unique_ptr<QAudioOutput> m_audio;
     std::unique_ptr<QMediaPlayer> m_player;
+    std::unique_ptr<QAudioBufferOutput> m_buffer;
+    std::unique_ptr<AudioSpectrumAnalyzer> m_spectrum;
+    QMetaObject::Connection m_bufferConnection;
+    quint64 m_spectrumEpoch = 0;
+    bool m_resettingSpectrum = false;
     QtPlaybackController::BackendCallbacks m_callbacks;
     QList<QMetaObject::Connection> m_connections;
 };
@@ -113,6 +151,8 @@ qreal QtPlaybackController::volume() const { return m_volume; }
 qreal QtPlaybackController::playbackRate() const { return m_playbackRate; }
 bool QtPlaybackController::muted() const { return m_muted; }
 QtPlaybackController::State QtPlaybackController::state() const { return m_state; }
+bool QtPlaybackController::spectrumEnabled() const { return m_spectrumEnabled; }
+QVector<QPointF> QtPlaybackController::wavePath() const { return m_wavePath; }
 
 bool QtPlaybackController::ownerThread() const
 {
@@ -156,8 +196,11 @@ bool QtPlaybackController::prepare(StreamDescriptorV2 stream, QUuid generation)
     }
     setDurationValue(0);
     setSeekableValue(false);
+    const QPointer<QtPlaybackController> guard(this);
     setPlayingValue(false);
+    if (!guard || m_generation != generation) return false;
     setStateValue(Loading);
+    if (!guard || m_generation != generation) return false;
     auto *identity = m_backend.get();
     bindCallbacks(identity, generation);
     m_backend->setVolume(m_volume);
@@ -178,6 +221,10 @@ void QtPlaybackController::retireBackend()
 
 void QtPlaybackController::bindCallbacks(Backend *identity, QUuid generation)
 {
+    const auto current = [guard = QPointer<QtPlaybackController>(this), identity, generation] {
+        return guard && !guard->m_occurrenceClosed && guard->m_backend.get() == identity
+            && guard->m_generation == generation;
+    };
     BackendCallbacks callbacks;
     callbacks.position = [this, identity, generation](qint64 value) {
         setPositionValue(value, generation, identity);
@@ -190,20 +237,23 @@ void QtPlaybackController::bindCallbacks(Backend *identity, QUuid generation)
         if (!m_occurrenceClosed && m_backend.get() == identity && m_generation == generation)
             setSeekableValue(m_descriptorSeekable && value);
     };
-    callbacks.playbackState = [this, identity, generation](BackendPlaybackState value) {
-        if (m_occurrenceClosed || m_backend.get() != identity || m_generation != generation) return;
+    callbacks.playbackState = [this, generation, current](BackendPlaybackState value) {
+        if (!current()) return;
+        const bool playing = value == BackendPlaybackState::Playing;
+        setPlayingValue(playing);
+        if (!current()) return;
         switch (value) {
-        case BackendPlaybackState::Idle: setPlayingValue(false); setStateValue(Idle); break;
-        case BackendPlaybackState::Playing: setPlayingValue(true); setStateValue(Playing); break;
-        case BackendPlaybackState::Paused: setPlayingValue(false); setStateValue(Paused); break;
+        case BackendPlaybackState::Idle: setStateValue(Idle); break;
+        case BackendPlaybackState::Playing: setStateValue(Playing); break;
+        case BackendPlaybackState::Paused: setStateValue(Paused); break;
         case BackendPlaybackState::Stopped:
-            setPlayingValue(false); setStateValue(Stopped);
-            if (m_terminalEligible) reportTerminal(generation, false);
+            setStateValue(Stopped);
+            if (current() && m_terminalEligible) reportTerminal(generation, false);
             break;
         }
     };
-    callbacks.mediaStatus = [this, identity, generation](BackendMediaStatus value) {
-        if (m_occurrenceClosed || m_backend.get() != identity || m_generation != generation) return;
+    callbacks.mediaStatus = [this, generation, current](BackendMediaStatus value) {
+        if (!current()) return;
         switch (value) {
         case BackendMediaStatus::NoMedia: setStateValue(Idle); break;
         case BackendMediaStatus::Loading: setStateValue(Loading); break;
@@ -211,14 +261,38 @@ void QtPlaybackController::bindCallbacks(Backend *identity, QUuid generation)
             if (m_state == Loading) setStateValue(Idle);
             break;
         case BackendMediaStatus::EndOfMedia:
-            setPlayingValue(false); setStateValue(Stopped); reportTerminal(generation, false); break;
+            setPlayingValue(false);
+            if (!current()) return;
+            setStateValue(Stopped);
+            if (current()) reportTerminal(generation, false);
+            break;
         case BackendMediaStatus::InvalidMedia:
-            setPlayingValue(false); setStateValue(Error); reportTerminal(generation, true); break;
+            setPlayingValue(false);
+            if (!current()) return;
+            setStateValue(Error);
+            if (current()) reportTerminal(generation, true);
+            break;
         }
     };
-    callbacks.error = [this, identity, generation] {
-        if (m_occurrenceClosed || m_backend.get() != identity || m_generation != generation) return;
-        setPlayingValue(false); setStateValue(Error); reportTerminal(generation, true);
+    callbacks.error = [this, generation, current] {
+        if (!current()) return;
+        setPlayingValue(false);
+        if (!current()) return;
+        setStateValue(Error);
+        if (current()) reportTerminal(generation, true);
+    };
+    callbacks.wavePath = [guard = QPointer<QtPlaybackController>(this), identity, generation]
+            (QVector<QPointF> path, quint64 epoch) {
+        if (!guard || !guard->ownerThread() || guard->m_occurrenceClosed
+            || guard->m_backend.get() != identity || guard->m_generation != generation
+            || !guard->m_spectrumEnabled || !guard->m_playing || guard->m_spectrumEpoch != epoch) return;
+        if (path.size() > 130) return;
+        for (const auto &point : path)
+            if (!std::isfinite(point.x()) || !std::isfinite(point.y())
+                || point.x() < 0 || point.x() > 512 || point.y() < 0 || point.y() > 80) return;
+        if (guard->m_wavePath == path) return;
+        guard->m_wavePath = std::move(path);
+        emit guard->wavePathChanged();
     };
     m_backend->setCallbacks(std::move(callbacks));
 }
@@ -248,10 +322,13 @@ void QtPlaybackController::stop(QUuid generation)
     if (!ownerThread() || !m_backend || m_occurrenceClosed
         || generation.isNull() || generation != m_generation) return;
     m_terminalEligible = true;
+    const QPointer<QtPlaybackController> guard(this);
     m_backend->stop();
+    if (!guard || m_generation != generation || m_occurrenceClosed) return;
     setPlayingValue(false);
+    if (!guard || m_generation != generation || m_occurrenceClosed) return;
     setStateValue(Stopped);
-    reportTerminal(generation, false);
+    if (guard && m_generation == generation) reportTerminal(generation, false);
 }
 
 void QtPlaybackController::play()
@@ -262,8 +339,12 @@ void QtPlaybackController::play()
 void QtPlaybackController::pause()
 {
     if (!ownerThread() || !m_backend || m_occurrenceClosed || m_generation.isNull()) return;
+    const auto generation = m_generation;
+    const QPointer<QtPlaybackController> guard(this);
     m_backend->pause();
+    if (!guard || m_generation != generation || m_occurrenceClosed) return;
     setPlayingValue(false);
+    if (!guard || m_generation != generation || m_occurrenceClosed) return;
     setStateValue(Paused);
 }
 
@@ -276,7 +357,12 @@ void QtPlaybackController::seek(qint64 value)
 {
     if (!ownerThread() || !m_backend || m_occurrenceClosed || !m_seekable || value < 0
         || (m_duration > 0 && value > m_duration)) return;
-    m_backend->setPosition(value);
+    ++m_spectrumEpoch;
+    m_backend->setSpectrumEnabled(m_spectrumEnabled && m_playing, m_spectrumEpoch);
+    const auto generation = m_generation;
+    const QPointer<QtPlaybackController> guard(this);
+    clearWavePath();
+    if (guard && m_generation == generation && !m_occurrenceClosed) m_backend->setPosition(value);
 }
 
 void QtPlaybackController::setVolume(qreal value)
@@ -331,9 +417,34 @@ void QtPlaybackController::setSeekableValue(bool value)
 
 void QtPlaybackController::setPlayingValue(bool value)
 {
-    if (m_playing == value) return;
+    const bool changed = m_playing != value;
+    if (!changed && value) return;
     m_playing = value;
+    ++m_spectrumEpoch;
+    if (m_backend) m_backend->setSpectrumEnabled(value && m_spectrumEnabled, m_spectrumEpoch);
+    const QPointer<QtPlaybackController> guard(this);
+    const auto generation = m_generation;
+    if (!value) clearWavePath();
+    if (!guard || m_generation != generation || m_playing != value || !changed) return;
     emit playingChanged();
+}
+
+void QtPlaybackController::clearWavePath()
+{
+    if (m_wavePath.isEmpty()) return;
+    m_wavePath.clear();
+    emit wavePathChanged();
+}
+
+void QtPlaybackController::setSpectrumEnabled(bool value)
+{
+    if (!ownerThread() || m_spectrumEnabled == value) return;
+    m_spectrumEnabled = value;
+    ++m_spectrumEpoch;
+    if (m_backend) m_backend->setSpectrumEnabled(value && m_playing && !m_occurrenceClosed, m_spectrumEpoch);
+    const QPointer<QtPlaybackController> guard(this);
+    if (!value) clearWavePath();
+    if (guard && m_spectrumEnabled == value) emit spectrumEnabledChanged();
 }
 
 void QtPlaybackController::setStateValue(State value)

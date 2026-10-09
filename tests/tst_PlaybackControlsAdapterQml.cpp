@@ -1,6 +1,7 @@
 #include <QMetaMethod>
 #include <QMetaProperty>
 #include <QSignalSpy>
+#include <QPointF>
 #include <QTest>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
@@ -15,6 +16,7 @@ class FakePlaybackController final : public QObject {
     Q_PROPERTY(qreal playbackRate MEMBER playbackRate NOTIFY playbackRateChanged)
     Q_PROPERTY(bool muted MEMBER muted NOTIFY mutedChanged)
     Q_PROPERTY(int state MEMBER state NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList wavePath MEMBER wavePath NOTIFY wavePathChanged)
 public:
     qint64 position = 1250;
     qint64 duration = 9000;
@@ -31,6 +33,8 @@ public:
     qreal requestedVolume = -1;
     qreal requestedRate = -1;
     bool requestedMuted = false;
+    bool spectrumEnabled = false;
+    QVariantList wavePath;
 
     Q_INVOKABLE void play() { ++plays; }
     Q_INVOKABLE void pause() { ++pauses; }
@@ -39,6 +43,7 @@ public:
     Q_INVOKABLE void setVolume(qreal value) { requestedVolume = value; }
     Q_INVOKABLE void setPlaybackRate(qreal value) { requestedRate = value; }
     Q_INVOKABLE void setMuted(bool value) { requestedMuted = value; }
+    Q_INVOKABLE void setSpectrumEnabled(bool value) { spectrumEnabled = value; }
 
 signals:
     void positionChanged();
@@ -50,6 +55,7 @@ signals:
     void mutedChanged();
     void stateChanged();
     void playbackError(QString messageKey);
+    void wavePathChanged();
 };
 
 namespace {
@@ -73,6 +79,33 @@ std::unique_ptr<QObject> createAdapter(QQmlEngine &engine, QObject *controller,
 class PlaybackControlsAdapterQmlTest final : public QObject {
     Q_OBJECT
 private slots:
+    void spectrumProjectionAndControllerReplacementUseOnlyTypedControls()
+    {
+        QQmlEngine engine;
+        FakePlaybackController first, second;
+        auto adapter = createAdapter(engine, &first);
+        QVERIFY(adapter);
+        QVERIFY(!first.spectrumEnabled);
+        QVERIFY(adapter->setProperty("spectrumEnabled", true));
+        QVERIFY(first.spectrumEnabled);
+        first.wavePath = {QPointF(0, 80), QPointF(256, 25), QPointF(512, 80)};
+        emit first.wavePathChanged();
+        QCOMPARE(adapter->property("wavePath").toList(), first.wavePath);
+        QVERIFY(adapter->setProperty("controller", QVariant::fromValue<QObject *>(&second)));
+        QVERIFY(!first.spectrumEnabled);
+        QVERIFY(second.spectrumEnabled);
+        QVERIFY(adapter->property("wavePath").toList().isEmpty());
+        emit first.wavePathChanged();
+        QVERIFY(adapter->property("wavePath").toList().isEmpty());
+        QVERIFY(adapter->setProperty("controller", QVariant::fromValue<QObject *>(nullptr)));
+        QVERIFY(!second.spectrumEnabled);
+        QVERIFY(adapter->property("wavePath").toList().isEmpty());
+        QVERIFY(adapter->setProperty("controller", QVariant::fromValue<QObject *>(&second)));
+        QVERIFY(second.spectrumEnabled);
+        adapter.reset();
+        QVERIFY(!second.spectrumEnabled);
+    }
+
     void mirrorsOnlySafePlaybackState()
     {
         QQmlEngine engine;

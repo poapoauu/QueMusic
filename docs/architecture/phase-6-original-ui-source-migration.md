@@ -255,6 +255,15 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 验证：主程序构建及 spectrum、PlaybackCoordinator、QtPlaybackController、controls QML、original playback QML、UI structure、queue/history 共 7 项回归通过。包括延迟完成、销毁、重入及真实 Qt PCM 信号测试；不代表物理音频/GPU 视觉验收。
 - SDK v2、Source 插件 ABI 与 Plugin UI API 不变；新增 Host 内部静态库，应用需同步重建。
 
+### 频谱迁移第二切片：Core PCM 与原 UI 接线
+
+- Core 的私有 Qt Multimedia backend 从自身 `QAudioBufferOutput` 采集解码 PCM，复用安全分析器；播放器、输出和分析器均不成为 QML 门面的子对象。
+- `QtPlaybackController` 仅新增显示开关与最多 130 个有限、边界内的 `QPointF` 路径。PCM、媒体地址、headers、原始诊断及播放器指针不进入 QML；这是 Host 内部 API 增量，不改变 Source SDK v2 / Plugin UI API。
+- 后端身份、播放 occurrence generation、显示 epoch 三重校验拒绝旧帧；暂停、停止、结束、失败、切曲、seek 和禁用均清空路径/分析窗口。连接代次同时隔离已排队的旧 PCM 信号；后台旧 FFT 结果由分析器自身代次拒绝。
+- 原 `waveDisplay` 设置驱动 Source 采样，实际运行 main 中的 Binding 验证 Source/current/display 三个条件，以及适配器替换/移除关闭旧门面的采样。播放视图仅经 `PlaybackLyricsAdapter` 读取 Core 几何，保留原频谱尺寸及绘制布局。
+- 验证：主程序构建及上一切片所列 7 项联合回归通过；补充 seek、非法/超量几何、暂停恢复、禁用重启、切曲旧回调、销毁及清空观察者重入测试。尚无真实服务器音频、物理设备或 GPU 视觉验收，不据此宣称全项目迁移完成。
+- 后续继续迁移桌面悬浮播放卡，其标题、时钟与播放/拖动仍有直接 Legacy 访问；平台业务及其他剩余 Legacy 分支仍按既定阶段迁移。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

@@ -7,6 +7,25 @@ QtObject {
     id: root
 
     required property var controller
+    property bool spectrumEnabled: false
+    property var spectrumController: null
+    readonly property var wavePath: controller ? controller.wavePath || [] : []
+
+    function syncSpectrum() {
+        if (spectrumController && spectrumController !== controller
+                && typeof spectrumController.setSpectrumEnabled === "function")
+            spectrumController.setSpectrumEnabled(false);
+        spectrumController = controller;
+        if (controller && typeof controller.setSpectrumEnabled === "function")
+            controller.setSpectrumEnabled(spectrumEnabled);
+    }
+    onControllerChanged: syncSpectrum()
+    onSpectrumEnabledChanged: syncSpectrum()
+    Component.onCompleted: syncSpectrum()
+    Component.onDestruction: {
+        if (spectrumController && typeof spectrumController.setSpectrumEnabled === "function")
+            spectrumController.setSpectrumEnabled(false);
+    }
 
     readonly property real position: controller ? controller.position : 0
     readonly property real duration: controller ? controller.duration : 0
