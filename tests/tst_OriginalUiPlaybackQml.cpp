@@ -160,6 +160,7 @@ private slots:
     void sourceShutdownDoesNotMixLegacyPersistence();
     void coverDialogUsesSafeCurrentLabelsAndFileNames();
     void coverSaveKeepsTheCapturedDestination();
+    void coverSaveRejectsFailuresAndChangedImages();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -378,6 +379,7 @@ Item { id: musicpic; width: 100; height: 100
         property string currentCover: "file:///fixture/host-cover.png" }
     property QtObject picWatch: QtObject { id: picWatch
         property string source; property string fileName; property int opens: 0
+        property double coverRevision: 0
         function open() { ++opens; }
 %1
 %2
@@ -419,12 +421,14 @@ void OriginalUiPlaybackQmlTest::coverSaveKeepsTheCapturedDestination()
     save.replace("onCancel:", "function saveCover()");
     save.replace("StandardPaths.writableLocation(StandardPaths.PicturesLocation)", "\"/fixture/pictures\"");
     save.replace("Image.Ready", "1");
+    save.replace("Image.Loading", "2");
     const auto fixture = QStringLiteral(R"(import QtQml
 QtObject { id: picWatch; property string fileName: "First.png"; property string savedPath: ""
+    property double coverRevision: 0; property bool savePending: false
     property QtObject imageWatch: QtObject { property int status: 1; property var pending: null
-        function grabToImage(callback, size) { pending = callback; }
+        function grabToImage(callback, size) { pending = callback; return true; }
         function complete() { var callback = pending; pending = null;
-            callback({saveToFile: function(path) { picWatch.savedPath = path; }}); }
+            callback({saveToFile: function(path) { picWatch.savedPath = path; return true; }}); }
     }
     property QtObject mainWarn: QtObject { function tiped(message, kind) {} }
 %1
@@ -437,6 +441,85 @@ QtObject { id: picWatch; property string fileName: "First.png"; property string 
     auto *image = root->property("imageWatch").value<QObject *>(); QVERIFY(image);
     QVERIFY(QMetaObject::invokeMethod(image, "complete"));
     QCOMPARE(root->property("savedPath").toString(), QString("/fixture/pictures/First.png"));
+}
+
+void OriginalUiPlaybackQmlTest::coverSaveRejectsFailuresAndChangedImages()
+{
+    QQmlEngine engine;
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.indexOf("id: picWatch"); QVERIFY(start >= 0);
+    auto save = capturedQmlBlock(source, source.indexOf("onCancel: {", start)); QVERIFY(!save.isEmpty());
+    save.replace("onCancel:", "function saveCover()");
+    save.replace("StandardPaths.writableLocation(StandardPaths.PicturesLocation)", "picWatch.directory");
+    save.replace("Image.Ready", "1"); save.replace("Image.Loading", "2");
+    const auto sourceChanged = capturedQmlBlock(source, source.indexOf("onSourceChanged:", start));
+    const auto dialog = capturedQmlBlock(source, source.indexOf("function dialog(_source,_title)", start));
+    const auto helper = capturedQmlBlock(source, source.indexOf("function safeFileName(title)", start));
+    QVERIFY(!sourceChanged.isEmpty()); QVERIFY(!dialog.isEmpty()); QVERIFY(!helper.isEmpty());
+    const auto fixture = QStringLiteral(R"(import QtQml
+QtObject { id: picWatch; property string fileName: "First.png"; property string source: "first"
+    property double coverRevision: 0; property bool savePending: false
+    property string directory: "/fixture/pictures"; property int writes: 0
+    %1
+    function open() {}
+    property QtObject imageWatch: QtObject { property int status: 1; property var pending: null
+        property int grabs: 0; property bool accepted: true; property int resultMode: 0
+        function grabToImage(callback, size) { ++grabs; if (accepted) pending = callback; return accepted; }
+        function complete() { var callback = pending; pending = null;
+            if (resultMode === 2) { callback(null); return; }
+            callback({saveToFile: function(path) {
+                ++picWatch.writes;
+                if (imageWatch.resultMode === 3) throw new Error("private path or diagnostic");
+                return imageWatch.resultMode === 0;
+            }});
+        }
+    }
+    property QtObject mainWarn: QtObject { property string message; property int kind: -1; property int calls: 0
+        function tiped(text, type) { message = text; kind = type; ++calls; } }
+%2
+%3
+%4
+})").arg(sourceChanged, helper, dialog, save);
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/cover-save-failures.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create()); QVERIFY2(root, qPrintable(component.errorString()));
+    auto *image = root->property("imageWatch").value<QObject *>(); QVERIFY(image);
+    auto *warn = root->property("mainWarn").value<QObject *>(); QVERIFY(warn);
+    const auto saveCover = [&] { return QMetaObject::invokeMethod(root.get(), "saveCover"); };
+    const auto complete = [&] { return QMetaObject::invokeMethod(image, "complete"); };
+    QVERIFY(saveCover()); QVERIFY(root->property("savePending").toBool());
+    QVERIFY(saveCover()); QCOMPARE(image->property("grabs").toInt(), 1); QCOMPARE(warn->property("calls").toInt(), 0);
+    QVERIFY(complete()); QVERIFY(!root->property("savePending").toBool());
+    QCOMPARE(warn->property("message").toString(), QString("已保存至系统图片文件夹")); QCOMPARE(warn->property("kind").toInt(), 1);
+    for (int mode : {1, 2, 3}) {
+        QVERIFY(image->setProperty("resultMode", mode)); QVERIFY(saveCover()); QVERIFY(complete());
+        QVERIFY(!root->property("savePending").toBool()); QCOMPARE(warn->property("kind").toInt(), 2);
+        QCOMPARE(warn->property("message").toString(), QString("图片保存失败，请检查文件夹权限或磁盘空间"));
+    }
+    const auto writes = root->property("writes").toInt();
+    QVERIFY(image->setProperty("resultMode", 0)); QVERIFY(saveCover());
+    QVERIFY(root->setProperty("source", "second")); QVERIFY(root->setProperty("source", "first"));
+    QVERIFY(complete()); QCOMPARE(root->property("writes").toInt(), writes);
+    QCOMPARE(warn->property("message").toString(), QString("图片已变化，请重新保存"));
+    QVERIFY(saveCover()); // Reopening even the same source invalidates the previous view's grab.
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "dialog", Q_ARG(QVariant, QStringLiteral("first")), Q_ARG(QVariant, QStringLiteral("Reopened"))));
+    QVERIFY(complete()); QCOMPARE(root->property("writes").toInt(), writes);
+    QVERIFY(saveCover()); QVERIFY(image->setProperty("status", 3)); QVERIFY(complete());
+    QCOMPARE(root->property("writes").toInt(), writes); QVERIFY(!root->property("savePending").toBool());
+    const auto grabs = image->property("grabs").toInt();
+    for (int status : {0, 2, 3}) {
+        QVERIFY(image->setProperty("status", status)); QVERIFY(saveCover());
+        QCOMPARE(image->property("grabs").toInt(), grabs); QCOMPARE(root->property("writes").toInt(), writes);
+        QCOMPARE(warn->property("message").toString(), status == 2 ? QString("图片正在快速加载") : QString("图片不可用，请重新加载"));
+    }
+    QVERIFY(image->setProperty("status", 1)); QVERIFY(root->setProperty("directory", "")); QVERIFY(saveCover());
+    QCOMPARE(image->property("grabs").toInt(), grabs); QCOMPARE(warn->property("message").toString(), QString("系统图片文件夹不可用"));
+    QVERIFY(root->setProperty("directory", "/fixture/pictures")); QVERIFY(image->setProperty("accepted", false));
+    QVERIFY(saveCover()); QVERIFY(!root->property("savePending").toBool()); QCOMPARE(root->property("writes").toInt(), writes);
+    QCOMPARE(warn->property("message").toString(), QString("图片捕获失败，请重新保存"));
+    QVERIFY(image->setProperty("accepted", true)); QVERIFY(saveCover()); QVERIFY(complete());
+    QCOMPARE(root->property("writes").toInt(), writes + 1); QCOMPARE(warn->property("kind").toInt(), 1);
 }
 
 void OriginalUiPlaybackQmlTest::actualSettingsNavigationPreservesPluginAndInstanceSelection()

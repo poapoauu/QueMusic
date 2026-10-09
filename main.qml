@@ -1353,24 +1353,45 @@ Window {
         id: picWatch
         property string source: "qrc:/QueMusic/resources/app/musicpic.png"
         property string fileName: "Picture.png"
+        property double coverRevision: 0
+        property bool savePending: false
+        onSourceChanged: { ++coverRevision; }
         title: "查看图片"
         dialogContentHeight: 320
         cancelText: "保存"
         cancelIcon: "\uf00f"
         onCancel: {
-            var sysPicPath = StandardPaths.writableLocation(StandardPaths.PicturesLocation)
-            if(imageWatch.status === Image.Ready) {
-                const destination = sysPicPath + "/" + picWatch.fileName;
-                imageWatch.grabToImage(function(result) {
-                    result.saveToFile(destination);
-                    console.log("图片已保存！");
-                    mainWarn.tiped("已保存至系统图片文件夹",1);
-                },Qt.size(512,512))
-            } else {
-                mainWarn.tiped("图片正在快速加载",0);
+            if (picWatch.savePending) return;
+            if (imageWatch.status !== Image.Ready) {
+                mainWarn.tiped(imageWatch.status === Image.Loading ? "图片正在快速加载" : "图片不可用，请重新加载", 0);
+                return;
+            }
+            const sysPicPath = StandardPaths.writableLocation(StandardPaths.PicturesLocation);
+            if (!sysPicPath) {
+                mainWarn.tiped("系统图片文件夹不可用", 2);
+                return;
+            }
+            const destination = sysPicPath + "/" + picWatch.fileName;
+            const revision = picWatch.coverRevision;
+            picWatch.savePending = true;
+            const accepted = imageWatch.grabToImage(function(result) {
+                picWatch.savePending = false;
+                if (revision !== picWatch.coverRevision || imageWatch.status !== Image.Ready) {
+                    mainWarn.tiped("图片已变化，请重新保存", 0);
+                    return;
+                }
+                let saved = false;
+                try { saved = !!result && result.saveToFile(destination) === true; }
+                catch (error) { /* Do not expose paths or raw image diagnostics. */ }
+                mainWarn.tiped(saved ? "已保存至系统图片文件夹" : "图片保存失败，请检查文件夹权限或磁盘空间", saved ? 1 : 2);
+            }, Qt.size(512,512));
+            if (!accepted) {
+                picWatch.savePending = false;
+                mainWarn.tiped("图片捕获失败，请重新保存", 2);
             }
         }
         function dialog(_source,_title) {
+            ++coverRevision;
             source = _source;
             fileName = safeFileName(_title);
             picWatch.open();

@@ -309,6 +309,14 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 主程序构建及 playback coordinator、audio spectrum、Qt playback controller、controls QML、original playback QML、UI structure、queue/history、plugin settings QML、management UI session 共 9 项联合回归通过。实际 main 处理器测试验证 Source 零 Legacy 读取、显式 Legacy 保存与文件名/目标快照；没有实际图片写入、物理音频或原生视觉验收。
 - SDK v2 / Source 插件 ABI / Plugin UI API 不变。封面保存仍未检查实际写入结果，图像异步捕获生命周期也需进一步审计；平台登录业务及其余页面迁移仍未整体完成。
 
+### 封面导出：真实结果反馈与异步视图失效
+
+- 实际 `grabToImage` 拒绝与 `saveToFile` 返回失败不再提示成功；空系统图片目录、未加载/加载失败和空捕获结果有明确提示。异常只给通用提示，不向 UI 透传文件路径或原始诊断。
+- pending 期间重复保存不重复提交；完成或捕获拒绝后释放状态，允许用户主动重试。目录/文件名仍使用提交时快照，不引入自动重试、删除或新的覆盖策略。
+- 查看窗口的源变化及重新打开均推进视图代次；异步完成时若代次变化或图像不再 Ready，则不调用写盘，避免旧目标与新封面混配。保持原弹窗与保存按钮交互，不要求回调时弹窗仍可见。
+- 主程序构建及前述 9 项联合回归通过；实际生产处理器测试覆盖成功、失败/异常/空结果、捕获拒绝、重复提交、源往返、同源重新打开、状态变化及失败后重试。写盘和抓图为可控测试替身，尚需真实 macOS 权限、窗口/GPU 捕获及图片内容验收。
+- 本切片关闭上一切片的未检查写入结果差距，补充已识别的视图变化边界；不据此宣称全部图形生命周期或 Phase 6 验收完成。SDK v2 / Source 插件 ABI / Plugin UI API 未改，后续进行全量构建/测试核验并继续其余页面迁移。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
