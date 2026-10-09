@@ -990,6 +990,7 @@ if(BUILD_TESTING)
         PREFIX "/QueMusic"
         FILES
             components/LegacyQueueController.qml
+            components/PlaybackLyricsAdapter.qml
             components/PlaybackControlsAdapter.qml)
     target_link_libraries(quemusic_original_ui_playback_qml_test PRIVATE
         Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)

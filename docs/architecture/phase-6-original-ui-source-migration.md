@@ -110,6 +110,16 @@ API 风险：QML 与 Host 目录聚合属性和新增重试方法需同步更新
 
 歌词展示层切片主程序构建及四个相关套件通过：OriginalUiMusicAdapter、PlaybackCoordinator、LocalLyrics、LocalSource。尚未执行真实音频设备或手工歌词视觉验收。
 
+### 全屏与桌面歌词 UI 接入
+
+全屏与桌面歌词现通过 Host 的 PlaybackLyricsAdapter 统一读取歌词、状态、播放时钟及倍速；Source 模式仅使用当前插件歌词，没有结果/Adapter 缺失/停播时不回退旧平台行或翻译。模式在第一次 Coordinator 播放后保持，只有真正收到旧平台播放请求才显式切回兼容模式；切换播放链路时停止另一播放器，防止双播放器同时运行。剩余旧平台入口尚未移除，因此兼容输入集中在 main.qml，不能把这个桥接组件当作全音源插件化已经完成。
+
+保留原全屏滚动/逐字等待动画与桌面双行布局，Source 暂只显示现有 v2 歌词文本，不伪造翻译/逐字字段。加载、失败及点击重试使用通用状态；歌词变化停止旧等待/滚动动画，末行没有下一行时不启动等待动画。桌面播放按钮复用统一 togglePlayback，进度/暂停/跳转使用当前播放器；歌词文本与翻译强制 PlainText，歌词中的 HTML 标签不得触发富文本资源加载。
+
+QML 桥接回归验证 Source/legacy 数据和时钟隔离、没有 Source 歌词也不回退、停播与移除 Adapter 后空态、翻译隔离、失败重试去重、显式兼容模式切换；结构检查两个歌词页面不再直接引用 MusicApi 歌词或 mainMedia.position。新增的是 Host 私有桥接，不改变 Source SDK v2/Plugin UI API。完整动画视觉与真实音频仍需手工验收，封面、收藏及其他旧播放器入口仍待迁移。
+
+歌词 UI 切片主程序构建及五个相关套件通过：OriginalUiPlaybackQml、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiStructure、LocalLyrics。Source 模式忽略旧播放器的迟到元数据/结束状态，避免覆盖当前展示或触发旧队列；真实视觉/音频验收未执行。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

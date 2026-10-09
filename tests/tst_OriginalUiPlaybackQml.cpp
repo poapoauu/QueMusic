@@ -86,7 +86,62 @@ private slots:
     void restoredQueueDoesNotSeizeLegacyPlayback();
     void transportAdapterForwardsOnlyTypedControls();
     void mainWiringKeepsSecurePlaybackBelowTheOriginalUi();
+    void sourceLyricsNeverFallBackToLegacyDataOrClock();
 };
+
+class LyricsAdapterDouble final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList currentLyrics MEMBER lines NOTIFY changed)
+    Q_PROPERTY(QString currentLyricsState MEMBER state NOTIFY changed)
+public:
+    QVariantList lines;
+    QString state = "empty";
+    int retries = 0;
+    Q_INVOKABLE void retryCurrentLyrics() { ++retries; state = "loading"; emit changed(); }
+signals:
+    void changed();
+};
+
+void OriginalUiPlaybackQmlTest::sourceLyricsNeverFallBackToLegacyDataOrClock()
+{
+    QQmlEngine engine; LyricsAdapterDouble lyrics; PlaybackControllerDouble controls;
+    QQmlComponent component(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    const QVariantList legacy{QVariantMap{{"time", 0}, {"text", "Legacy lyric"}}};
+    std::unique_ptr<QObject> adapter(component.createWithInitialProperties({
+        {"musicAdapter", QVariant::fromValue<QObject *>(&lyrics)}, {"controls", QVariant::fromValue<QObject *>(&controls)},
+        {"sourceMode", true}, {"sourceActive", true}, {"legacyLines", legacy},
+        {"legacyTranslations", QVariantList{"Legacy translation"}}, {"legacyPosition", 900},
+        {"legacyDuration", 9000}, {"legacyPlaying", true}, {"legacyActive", true}}));
+    QVERIFY2(adapter, qPrintable(component.errorString()));
+    QVERIFY(adapter->property("lines").toList().isEmpty());
+    QVERIFY(adapter->property("translations").toList().isEmpty());
+    QCOMPARE(adapter->property("position").toLongLong(), controls.position);
+    QCOMPARE(adapter->property("duration").toLongLong(), controls.duration);
+    QVERIFY(!adapter->property("playing").toBool());
+    lyrics.lines = {QVariantMap{{"time", 1000}, {"text", "<img src='https://private.invalid/'>"}}};
+    lyrics.state = "ready"; emit lyrics.changed();
+    QCOMPARE(adapter->property("lines").toList(), lyrics.lines);
+    controls.position = 1200; emit controls.positionChanged();
+    QCOMPARE(adapter->property("position").toLongLong(), 1200);
+    lyrics.lines.clear(); lyrics.state = "failed"; emit lyrics.changed();
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "retry"));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "retry"));
+    QCOMPARE(lyrics.retries, 1);
+    lyrics.lines = {QVariantMap{{"time", 0}, {"text", "Stopped stale lyric"}}}; emit lyrics.changed();
+    QVERIFY(adapter->setProperty("sourceActive", false));
+    QCOMPARE(adapter->property("position").toLongLong(), 0);
+    QVERIFY(adapter->property("lines").toList().isEmpty());
+    QVERIFY(!adapter->property("active").toBool());
+    QVERIFY(adapter->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(adapter->property("lines").toList().isEmpty());
+    QVERIFY(adapter->property("translations").toList().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "retry")); QCOMPARE(lyrics.retries, 1);
+    QVERIFY(adapter->setProperty("sourceMode", false)); // Only Host explicitly enters legacy mode.
+    QCOMPARE(adapter->property("lines").toList(), legacy);
+    QCOMPARE(adapter->property("position").toLongLong(), 900);
+    QVERIFY(adapter->property("playing").toBool());
+}
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,
                                                        QueueModelDouble *legacyQueue,
@@ -189,6 +244,19 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QVERIFY(source.contains(QStringLiteral("queueHistoryStore.retrySave()")));
     QVERIFY(source.contains(QStringLiteral("window.togglePlayback()")));
     QVERIFY(source.contains(QStringLiteral("LegacyQueueController")));
+    QVERIFY(source.contains(QStringLiteral("PlaybackLyricsAdapter")));
+    QVERIFY(source.contains(QStringLiteral("sourceMode: window.sourceLyricsMode")));
+    QVERIFY(source.contains(QStringLiteral("window.sourceLyricsMode = false")));
+
+    for (const QString &path : {QStringLiteral("/layout/PlayerMaxCenter.qml"), QStringLiteral("/components/DesktopLyrics.qml")}) {
+        QFile lyricsFile(QStringLiteral(QUEMUSIC_SOURCE_DIR) + path);
+        QVERIFY(lyricsFile.open(QIODevice::ReadOnly | QIODevice::Text));
+        const auto text = QString::fromUtf8(lyricsFile.readAll());
+        QVERIFY(!text.contains(QStringLiteral("MusicApi.lyrics")));
+        QVERIFY(text.contains(QStringLiteral("textFormat: Text.PlainText")));
+        QVERIFY(text.contains(QStringLiteral("window.lyricsAdapter")));
+        QVERIFY(!text.contains(QStringLiteral("mainMedia.position")));
+    }
 
     QFile queueFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/components/LegacyQueueController.qml"));
     QVERIFY(queueFile.open(QIODevice::ReadOnly | QIODevice::Text));

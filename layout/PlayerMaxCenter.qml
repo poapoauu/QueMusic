@@ -20,6 +20,9 @@ Item {
     property color mainColor: "#00ee66"
     property color secondColor: "#00b1ee"
     property color thirdColor: "#9d4edd"
+    readonly property var lyricsData: window.lyricsAdapter.lines
+    readonly property var lyricsTranslations: window.lyricsAdapter.translations
+    readonly property string lyricsState: window.lyricsAdapter.state
     Connections {
         target: colorExtractor
         function onColorExtractFinished() {
@@ -187,7 +190,7 @@ Item {
         y: musicControlMax.height - 130 + controlMaxLoader.hideHeight
         z: 5
         iconCharacter: "\uf079"
-        visible: MusicApi.lyricsTranslate.length !== 0
+        visible: musicControlMax.lyricsTranslations.length !== 0
         width: 36
         height: 36
         radius: 18
@@ -276,7 +279,7 @@ Item {
             height: mainLayout.piclong
             y: (musicControlMax.height - height) * 0.5
             x: controlMaxLoader.infoX
-            rotation: mainMedia.playing
+            rotation: window.lyricsAdapter.playing
             source: mainMedia.urlStr || "qrc:/QueMusic/resources/app/musicpic.png"
         }
     }
@@ -305,10 +308,10 @@ Item {
 
         Timer {
             interval: 60
-            running: mainMedia.onMedia
+            running: window.lyricsAdapter.active
             repeat: true
             onTriggered: {
-                lyricContent.currentPlayTime = mainMedia.position;
+                lyricContent.currentPlayTime = window.lyricsAdapter.position;
             }
         }
         readonly property int lyricHeight: musicControlMax.standHeight / 2
@@ -353,13 +356,13 @@ Item {
 
         Timer {
             interval: 320
-            running: mainMedia.onMedia
+            running: window.lyricsAdapter.active
             repeat: true
             onTriggered: {
-                var data = MusicApi.lyricsData;
+                var data = musicControlMax.lyricsData;
                 if (!data || data.length === 0) return;
-                var pos = mainMedia.position + 320;
-                var idx = lyricContent.currentLine;
+                var pos = window.lyricsAdapter.position + 320;
+                var idx = Math.min(lyricContent.currentLine, data.length - 1);
                 while (idx + 1 < data.length && pos >= data[idx + 1].time) idx++;
                 while (idx > 0 && pos < data[idx].time) idx--;
                 if (lyricContent.isUserScrolling) {
@@ -394,9 +397,9 @@ Item {
                     lyricContent.finalH = 0;
                     fixedAnime.running = true;
                 }
-                if(MusicApi.lyricsData[idx].info) {
-                    var lyricLastLineData = MusicApi.lyricsData[idx].info[MusicApi.lyricsData[idx].info.length - 1];
-                    if(MusicApi.lyricsData[idx + 1].time - MusicApi.lyricsData[idx].time - lyricLastLineData.offset - lyricLastLineData.duration > 2500 && mainMedia.position > MusicApi.lyricsData[idx].time + lyricLastLineData.offset + lyricLastLineData.duration) {
+                if(data[idx].info && data[idx].info.length > 0 && data[idx + 1]) {
+                    var lyricLastLineData = data[idx].info[data[idx].info.length - 1];
+                    if(data[idx + 1].time - data[idx].time - lyricLastLineData.offset - lyricLastLineData.duration > 2500 && window.lyricsAdapter.position > data[idx].time + lyricLastLineData.offset + lyricLastLineData.duration) {
                         if(!waitAnimeSection.visible) {
                             console.log("开始运行等待动画。");
                             waitOpenAnime.running = false;
@@ -417,9 +420,11 @@ Item {
         }
 
         Connections {
-            target: MusicApi
+            target: musicControlMax
             function onLyricsDataChanged() {
                 console.log("更换源，重排新歌词");
+                waitOpenAnime.stop(); waitOutAnime.stop(); waitAnimeSection.visible = false;
+                fixedAnime.stop(); scrollAnime.stop();
                 lyricContent.heights = [];
                 lyricContent.prefixSum = [];
                 lyricContent.currentLine = 0;
@@ -449,7 +454,9 @@ Item {
 
         Repeater {
             id: lyricRep
-            model: MusicApi.lyricsData ? MusicApi.lyricsData : [{time: 0, text: "纯音乐，请欣赏"}]
+            model: musicControlMax.lyricsData.length > 0 ? musicControlMax.lyricsData : [{time: 0,
+                text: musicControlMax.lyricsState === "loading" ? "正在加载歌词…"
+                    : musicControlMax.lyricsState === "failed" ? "歌词加载失败，点击重试" : "纯音乐，请欣赏"}]
 
             delegate: Item {
                 id: lyricItem
@@ -533,6 +540,7 @@ Item {
                 Text {
                     z: 0
                     id: lyricsText
+                    textFormat: Text.PlainText
                     width: lyricItem.width - lyricContent.lyricHeight / 4
                     text: modelData.text || ""
                     font.weight: Style.settings.textWidth
@@ -542,6 +550,11 @@ Item {
                     wrapMode: Text.Wrap
                     scale: lyricItem.isCurrent && !modelData.info ? 1.02 : 1.00
                     opacity: modelData.info ? 0.4 : (0.4 + lyricItem.opacityAnime * 0.5)
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: musicControlMax.lyricsState === "failed"
+                        onClicked: window.lyricsAdapter.retry()
+                    }
                     visible: modelData.info ? !lyricItem.isFlowActive : true
                     horizontalAlignment: controlMaxLoader.lyricsType === 2 ? Text.AlignHCenter : modelData.isOther ? Text.AlignRight : Text.AlignLeft
                     Behavior on scale { NumberAnimation { duration: 640; easing.type: Easing.InOutCubic } }
@@ -549,12 +562,13 @@ Item {
 
                 Text {
                     id: lyricTransText
+                    textFormat: Text.PlainText
                     anchors.top: lyricsText.bottom
                     transformOrigin: modelData.isOther ? Item.TopRight : Item.TopLeft
                     scale: lyricItem.isCurrent && !waitAnimeSection.visible ? 1.02 : 1.00
                     visible: text !== ""
                     height: visible ? implicitHeight * 1.5 : 0
-                    text: MusicApi.lyricsTranslate.length !== 0 && lyricContent.openTranslate ? (MusicApi.lyricsTranslate[index] || "") : ""
+                    text: musicControlMax.lyricsTranslations.length !== 0 && lyricContent.openTranslate ? (musicControlMax.lyricsTranslations[index] || "") : ""
                     width: parent.width
                     horizontalAlignment: controlMaxLoader.lyricsType === 2 ? Text.AlignHCenter : modelData.isOther ? Text.AlignRight : Text.AlignLeft
                     verticalAlignment: Text.AlignVCenter
@@ -607,6 +621,7 @@ Item {
 
                             Text {
                                 id: lyricFlowText
+                                textFormat: Text.PlainText
                                 text: linesText.model[index].text
                                 y: 0//lyricItem.nowPosition > linesText.model[index].offset && lyricItem.isCurrent ? -3 : 0
                                 font.weight: Style.settings.textWidth
@@ -618,7 +633,7 @@ Item {
                             }
                             LinearGradient {
                                 property int countToWidth: lyricItem.nowPosition > linesText.model[index].offset && lyricItem.isFlowActive ? width + 16 : 0
-                                Behavior on countToWidth { NumberAnimation { Component.onCompleted: duration = linesText.model[index].duration / mainMedia.playbackRate * (width + 16) / width } }
+                                Behavior on countToWidth { NumberAnimation { Component.onCompleted: duration = linesText.model[index].duration / Math.max(0.1, window.lyricsAdapter.playbackRate) * (width + 16) / Math.max(1, width) } }
                                 //linesText.model[index].duration !== 0 ? (lyricItem.nowPosition - linesText.model[index].offset) / linesText.model[index].duration * width : (lyricItem.nowPosition - linesText.model[index].offset) * width
                                 width: parent.width
                                 height: parent.height
@@ -677,13 +692,20 @@ Item {
         SequentialAnimation {
             id: waitOpenAnime
             property int lightDuration: 2500
-            ScriptAction { script: { waitAnimeSection.visible = true; waitAnimeSection.lightState = 0; waitOpenAnime.lightDuration = MusicApi.lyricsData[lyricContent.currentLine + 1].time - MusicApi.lyricsData[lyricContent.currentLine].time - MusicApi.lyricsData[lyricContent.currentLine].info[MusicApi.lyricsData[lyricContent.currentLine].info.length - 1].offset - MusicApi.lyricsData[lyricContent.currentLine].info[MusicApi.lyricsData[lyricContent.currentLine].info.length - 1].duration - 420 } }
+            ScriptAction { script: {
+                var row = musicControlMax.lyricsData[lyricContent.currentLine];
+                var next = musicControlMax.lyricsData[lyricContent.currentLine + 1];
+                if (!row || !next || !row.info || row.info.length === 0) { waitOpenAnime.stop(); return; }
+                var word = row.info[row.info.length - 1];
+                waitAnimeSection.visible = true; waitAnimeSection.lightState = 0;
+                waitOpenAnime.lightDuration = Math.max(0, next.time - row.time - word.offset - word.duration - 420);
+            } }
             PauseAnimation { duration: 100 }
             ParallelAnimation {
                 NumberAnimation { target: waitAnimeSection; property: "opacity"; from: 0; to: 1; duration: 460; easing.type: Easing.OutCubic }
                 NumberAnimation { target: waitAnimeSection; property: "scale"; from: 0; to: 1; duration: 460; easing.type: Easing.OutCubic }
             }
-            NumberAnimation { target: waitAnimeSection; property: "lightState"; from: 0; to: 3; duration: waitOpenAnime.lightDuration / mainMedia.playbackRate }
+            NumberAnimation { target: waitAnimeSection; property: "lightState"; from: 0; to: 3; duration: waitOpenAnime.lightDuration / Math.max(0.1, window.lyricsAdapter.playbackRate) }
             //ScriptAction { script: console.log("动画完成:",waitOpenAnime.lightDuration); }
         }
         SequentialAnimation {

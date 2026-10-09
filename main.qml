@@ -23,6 +23,23 @@ Window {
     readonly property bool securePlaybackActive: playbackCoordinator
         && playbackCoordinator.currentIndex >= 0
     readonly property bool securePlaybackCurrent: securePlaybackActive
+    property bool sourceLyricsMode: false
+    onSecurePlaybackCurrentChanged: if (securePlaybackCurrent) sourceLyricsMode = true
+    property var lyricsAdapter: playbackLyrics
+    PlaybackLyricsAdapter {
+        id: playbackLyrics
+        musicAdapter: window.musicAdapter
+        controls: window.playbackAdapter
+        sourceMode: window.sourceLyricsMode
+        sourceActive: window.securePlaybackCurrent
+        legacyLines: MusicApi.lyricsData || []
+        legacyTranslations: MusicApi.lyricsTranslate || []
+        legacyPosition: mainMedia.position
+        legacyDuration: mainMedia.duration
+        legacyRate: mainMedia.playbackRate
+        legacyPlaying: mainMedia.playing
+        legacyActive: mainMedia.onMedia
+    }
     width: 1140
     height: 720
     minimumWidth: 810
@@ -118,6 +135,8 @@ Window {
     function syncSecureCurrent() {
         if (!securePlaybackCurrent)
             return;
+        window.sourceLyricsMode = true;
+        mainMedia.stop();
         const item = playbackCoordinator.currentItem || {};
         const artists = item.artists || [];
         window.musicTitle = item.title || "QueMusic";
@@ -859,6 +878,8 @@ Window {
     Connections {
         target: MusicApi
         function onUrlplay(playurl,title,artist,cover,solve,hash,source) {
+            playbackCoordinator.stop();
+            window.sourceLyricsMode = false;
             mainMedia.urlLocal = false;
             mainMedia.source = playurl;
             mainMedia.noTitle = title;
@@ -937,6 +958,7 @@ Window {
         source: ""
         autoPlay: Options.settings.autoPlay
         onMetaDataChanged: {
+            if (window.sourceLyricsMode) return;
             console.log("QML: MediaPlayer created, audioBufferOutput =",audioBufferOutput)
             if(urlLocal) {
                 // 尝试不同的键名
@@ -1000,6 +1022,7 @@ Window {
         }
 
         onMediaStatusChanged: {
+            if (window.sourceLyricsMode) return;
             if(mainMedia.mediaStatus === MediaPlayer.EndOfMedia) {
                 switch(musicControlMin.cycleIndex) {
                     case 0:

@@ -20,7 +20,8 @@ Window {
     property bool active: true   // 外部控制显示/隐藏
 
     // 歌词数据引用
-    property var lyricsData: MusicApi.lyricsData || []
+    readonly property var lyricsData: window.lyricsAdapter.lines
+    onLyricsDataChanged: updateCurrentIndex()
     property int currentIndex: 0
     property int nextIndex: 1
 
@@ -35,7 +36,7 @@ Window {
 
     // 更新歌词索引
     function updateCurrentIndex() {
-        var pos = mainMedia.position || 0;
+        var pos = window.lyricsAdapter.position;
         var data = lyricsData;
         if (!data || data.length === 0) {
             currentIndex = -1;
@@ -51,18 +52,15 @@ Window {
     // 定时更新
     Timer {
         interval: 240
-        running: mainMedia.onMedia && desktopLyricsWindow.visible
+        running: window.lyricsAdapter.active && desktopLyricsWindow.visible
         repeat: true
         onTriggered: updateCurrentIndex()
     }
 
     // 歌词数据变化时重置
     Connections {
-        target: MusicApi
-        function onLyricsDataChanged() {
-            lyricsData = MusicApi.lyricsData || [];
-            updateCurrentIndex();
-        }
+        target: window.lyricsAdapter
+        function onPositionChanged() { desktopLyricsWindow.updateCurrentIndex() }
     }
 
     // 歌词文本容器（两行）
@@ -78,10 +76,18 @@ Window {
 
         Text {
             id: currentLineText
+            objectName: "desktopCurrentLyricsText"
+            textFormat: Text.PlainText
             width: parent.width
             text: (desktopLyricsWindow.currentIndex >= 0 && desktopLyricsWindow.currentIndex < lyricsData.length)
                   ? lyricsData[desktopLyricsWindow.currentIndex].text || ""
-                  : "🎵 纯音乐，请欣赏"
+                  : window.lyricsAdapter.state === "loading" ? "正在加载歌词…"
+                  : window.lyricsAdapter.state === "failed" ? "歌词加载失败，点击重试" : "🎵 纯音乐，请欣赏"
+            MouseArea {
+                anchors.fill: parent
+                enabled: window.lyricsAdapter.state === "failed"
+                onClicked: window.lyricsAdapter.retry()
+            }
             font.pixelSize: desktopLyricsLoader.lyricSize * 1.2
             font.bold: true
             font.weight: Font.Medium
@@ -102,6 +108,8 @@ Window {
 
         Text {
             id: nextLineText
+            objectName: "desktopNextLyricsText"
+            textFormat: Text.PlainText
             width: parent.width
             text: (desktopLyricsWindow.nextIndex >= 0 && desktopLyricsWindow.nextIndex < lyricsData.length)
                   ? lyricsData[desktopLyricsWindow.nextIndex].text || ""
@@ -184,17 +192,14 @@ Window {
                 // 播放/暂停
                 SButton {
                     width: 36; height: 36; radius: Style.settings.labelRadius
-                    iconCharacter: mainMedia.playing ? "\uf02f" : "\uf00e"
+                    iconCharacter: window.lyricsAdapter.playing ? "\uf02f" : "\uf00e"
                     iconSize: 16
                     buttonColor: "transparent"
                     hoverColor: "#66fafafa"
                     iconColor: "#fffdfdfd"
                     shadowEnabled: false
-                    onClicked: {
-                        if (mainMedia.playing) mainMedia.pause();
-                        else mainMedia.play();
-                    }
-                    QTip { visible: parent.hovered; text: mainMedia.playing ? "暂停" : "播放" }
+                    onClicked: window.togglePlayback()
+                    QTip { visible: parent.hovered; text: window.lyricsAdapter.playing ? "暂停" : "播放" }
                 }
 
                 // 下一首
@@ -215,7 +220,7 @@ Window {
                 x: desktopLyricsWindow.width - 60 - width
                 y: 12
                 height: 36
-                text: desktopLyricsWindow.formatTime(mainMedia.position) + " / " + desktopLyricsWindow.formatTime(mainMedia.duration)
+                text: desktopLyricsWindow.formatTime(window.lyricsAdapter.position) + " / " + desktopLyricsWindow.formatTime(window.lyricsAdapter.duration)
                 font.pixelSize: 13
                 verticalAlignment: Text.AlignVCenter
                 color: "#fffdfdfd"
