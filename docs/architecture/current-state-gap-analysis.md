@@ -533,6 +533,12 @@ main 可变兼容字段和明确 Legacy 收藏仍在使用；其他消费者、�
 
 核对到 main 仍有无调用方的 Navidrome 账号编辑函数/Loader 待处理标记，且其调用的旧设置页方法已不存在；下一切片移除该残留，保留已经存在的通用插件设置导航。
 
+### 后续增量：失效 Navidrome 主窗口账号入口已删除
+
+已移除无调用方且指向不存在方法的 Navidrome 账号打开函数、待加载标记和 Loader 专用分支。通用插件/实例设置入口保留，并以实际 main 函数/Loader 处理器测试加载前后、最新选择、空实例及不重放；主程序构建和 original playback、UI structure、plugin settings QML、management UI session 共 4 项回归通过。
+
+这是失效入口清理，不代表仍在使用的网易/酷狗 Host 登录 UI 已迁移。下一已识别差距为 Source 向 Legacy 标题字段的复制、关闭时混写旧 lastSongs 及封面查看旧标题读取；需先修正这些边界再删除兼容状态。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

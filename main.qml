@@ -106,16 +106,6 @@ Window {
         controller: playbackController
     }
 
-    function openNavidromeAccountEditor() {
-        settingsView.openNavidromeAccountWhenLoaded = true;
-        settingsView.active = true;
-        if (settingsView.item) {
-            settingsView.visible = true;
-            settingsView.item.editNavidromeAccount(null);
-            settingsView.openNavidromeAccountWhenLoaded = false;
-        }
-    }
-
     function openPluginSettings(packageId, instanceId) {
         settingsView.pendingPluginPackageId = packageId;
         settingsView.pendingPluginInstanceId = instanceId;
@@ -777,7 +767,6 @@ Window {
         active: false
         visible: false
         z: 6
-        property bool openNavidromeAccountWhenLoaded: false
         property string pendingPluginPackageId: ""
         property string pendingPluginInstanceId: ""
         source: "qrc:/QueMusic/SettingsView.qml"//"qrc:/QueMusic/SettingsView.qml"
@@ -786,10 +775,6 @@ Window {
         onLoaded: {
             visible = true;
             settingAnime.running = true;
-            if (openNavidromeAccountWhenLoaded) {
-                item.editNavidromeAccount(null);
-                openNavidromeAccountWhenLoaded = false;
-            }
             if (pendingPluginPackageId) {
                 item.openPluginSettings(pendingPluginPackageId, pendingPluginInstanceId);
                 pendingPluginPackageId = "";

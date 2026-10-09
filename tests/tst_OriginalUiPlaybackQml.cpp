@@ -128,6 +128,7 @@ private slots:
     void actualMenuLabelsTreatPluginTextAsPlainText();
     void remainingPlaybackCaptionsUseSafePresentation_data();
     void remainingPlaybackCaptionsUseSafePresentation();
+    void actualSettingsNavigationPreservesPluginAndInstanceSelection();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -260,6 +261,67 @@ Item {
     QCOMPARE(controls.rateCalls, rateCalls);
     QVERIFY(QMetaObject::invokeMethod(quality, "transformed", Q_ARG(QVariant, 1)));
     QCOMPARE(root->property("optionsFixture").toMap().value("settings").toMap().value("soundQuality").toInt(), 1);
+}
+
+void OriginalUiPlaybackQmlTest::actualSettingsNavigationPreservesPluginAndInstanceSelection()
+{
+    QQmlEngine engine;
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto block = [&source](qsizetype start) {
+        if (start < 0) return QString();
+        int depth = 0;
+        for (auto end = start; end < source.size(); ++end) {
+            if (source[end] == '{') ++depth;
+            else if (source[end] == '}' && --depth == 0) return source.mid(start, end + 1 - start);
+        }
+        return QString();
+    };
+    const auto open = block(source.indexOf("function openPluginSettings(packageId, instanceId)")); QVERIFY(!open.isEmpty());
+    const auto loader = source.indexOf("id: settingsView"); QVERIFY(loader >= 0);
+    auto loaded = block(source.indexOf("onLoaded: {", loader)); QVERIFY(!loaded.isEmpty());
+    loaded.replace("onLoaded:", "function fireLoaded()");
+    const auto fixture = QStringLiteral(R"(import QtQml
+QtObject { id: window
+    property QtObject settingsView: QtObject {
+        property bool active: false; property bool visible: false; property var item: null
+        property string pendingPluginPackageId: ""; property string pendingPluginInstanceId: ""
+%1
+    }
+    property QtObject settingAnime: QtObject { property bool running: false }
+    property QtObject page: QtObject {
+        property var selections: []
+        function openPluginSettings(packageId, instanceId) {
+            selections = selections.concat([{packageId: packageId, instanceId: instanceId}]);
+        }
+    }
+%2
+})").arg(loaded, open);
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/settings-navigation-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create()); QVERIFY2(root, qPrintable(component.errorString()));
+    auto *settings = root->property("settingsView").value<QObject *>(), *page = root->property("page").value<QObject *>();
+    QVERIFY(settings); QVERIFY(page);
+    const auto select = [&root](const QString &package, const QString &instance) {
+        return QMetaObject::invokeMethod(root.get(), "openPluginSettings", Q_ARG(QVariant, package), Q_ARG(QVariant, instance));
+    };
+    QVERIFY(select("fixture.alpha", "fixture.alpha/account-a"));
+    QVERIFY(settings->property("active").toBool()); QVERIFY(!settings->property("visible").toBool());
+    QCOMPARE(settings->property("pendingPluginPackageId").toString(), QString("fixture.alpha"));
+    QCOMPARE(settings->property("pendingPluginInstanceId").toString(), QString("fixture.alpha/account-a"));
+    QVERIFY(select("fixture.beta", "fixture.beta/account-b")); // Latest request wins before load.
+    QVERIFY(settings->setProperty("item", QVariant::fromValue(page)));
+    QVERIFY(QMetaObject::invokeMethod(settings, "fireLoaded"));
+    QCOMPARE(page->property("selections").toList(), QVariantList({QVariantMap{{"packageId", "fixture.beta"}, {"instanceId", "fixture.beta/account-b"}}}));
+    QVERIFY(settings->property("visible").toBool());
+    QVERIFY(settings->property("pendingPluginPackageId").toString().isEmpty());
+    QVERIFY(settings->property("pendingPluginInstanceId").toString().isEmpty());
+    QVERIFY(select("fixture.alpha", "fixture.alpha/account-a"));
+    QCOMPARE(page->property("selections").toList().last().toMap(), QVariantMap({{"packageId", "fixture.alpha"}, {"instanceId", "fixture.alpha/account-a"}}));
+    QVERIFY(select("fixture.alpha", ""));
+    QCOMPARE(page->property("selections").toList().last().toMap(), QVariantMap({{"packageId", "fixture.alpha"}, {"instanceId", ""}}));
+    QVERIFY(QMetaObject::invokeMethod(settings, "fireLoaded"));
+    QCOMPARE(page->property("selections").toList().size(), 3); // Cleared request is not replayed.
 }
 
 void OriginalUiPlaybackQmlTest::remainingPlaybackCaptionsUseSafePresentation_data()

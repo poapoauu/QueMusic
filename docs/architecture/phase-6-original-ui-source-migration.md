@@ -294,6 +294,13 @@ Source 下载会话展示与取消已具备，字节进度、跨启动记录恢�
 - 实际生产 Text 片段 + 真实桥接的双场景测试覆盖完整/单侧/空元数据、切曲、停止、迟到 Legacy、纯文本和显式兼容切换；只有阴影为 stand-in，不声称 GPU 视觉验收。主程序构建及 7 项联合回归通过。
 - Source SDK v2 / Plugin UI API 不变。下一切片清理 main 中无调用方的 Navidrome 旧账号入口，保留通用插件设置导航和仍在使用的 Legacy 播放业务。
 
+### 主窗口设置导航：删除失效 Navidrome 专用入口
+
+- 图检索与当前代码检索确认 `openNavidromeAccountEditor` 无调用方，其指向的旧设置页 `editNavidromeAccount` 已不存在。删除该函数、Loader 待处理标记和专用 onLoaded 分支；保留通用 `openPluginSettings(packageId, instanceId)`。
+- 实际 main 函数与 Loader 处理器测试覆盖加载前请求、最新请求覆盖、加载后直接打开、实例选择、空实例及请求清除后不重放。结构测试约束旧入口不得回流；既有插件设置 QML 和管理 UI session 回归通过。
+- 主程序构建及上述 4 项针对性回归通过。此清理不改变 SDK/Plugin UI API，不删除仍在使用的网易/酷狗 Legacy 登录业务，也不意味着 Host 的全部平台专用 UI 已清空。
+- 后续继续主窗口剩余兼容状态边界：Source 元数据仍被写入 Legacy 标题字段，关闭流程仍可能将 Source 标题与旧队列 path 混写到 lastSongs，封面查看入口也仍读旧标题；需成组修正并保留明确 Legacy 行为。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

@@ -26,6 +26,20 @@ private:
     }
 
 private slots:
+    void settingsShellHasNoRetiredConcreteSourceAccountRoute()
+    {
+        const auto main = readSource(QStringLiteral("main.qml"));
+        const auto settings = readSource(QStringLiteral("SettingsView.qml"));
+        QVERIFY(!main.isEmpty() && !settings.isEmpty());
+        QVERIFY(!main.contains(QStringLiteral("openNavidromeAccountEditor")));
+        QVERIFY(!main.contains(QStringLiteral("openNavidromeAccountWhenLoaded")));
+        QVERIFY(!main.contains(QStringLiteral("editNavidromeAccount")));
+        QVERIFY(main.contains(QStringLiteral("function openPluginSettings(packageId, instanceId)")));
+        QVERIFY(main.contains(QStringLiteral("item.openPluginSettings(pendingPluginPackageId, pendingPluginInstanceId)")));
+        QVERIFY(settings.contains(QStringLiteral("modset.selectPlugin(packageId)")));
+        QVERIFY(settings.contains(QStringLiteral("modset.selectInstance(instanceId || \"\")")));
+    }
+
     void musicShellMatchesRequiredStructure()
     {
         const QString sidebar = readSource(QStringLiteral("layout/LeftSideBar.qml"));
