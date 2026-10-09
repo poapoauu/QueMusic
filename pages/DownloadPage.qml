@@ -14,7 +14,7 @@ Item {
     property var musicAdapter: null
     readonly property var sourceTasks: musicAdapter ? musicAdapter.downloadTasks || [] : []
     readonly property var sourceActiveTasks: sourceTasks.filter(function(task) {
-        return task.state === "pending" || task.state === "failed"
+        return task.state === "pending" || task.state === "failed" || task.state === "cancelled"
     })
     readonly property var sourceCompletedTasks: sourceTasks.filter(function(task) {
         return task.state === "completed"
@@ -27,9 +27,16 @@ Item {
         if (!musicAdapter || typeof musicAdapter.dismissDownloadTask !== "function") return false
         for (var i = 0; i < sourceTasks.length; ++i) {
             var task = sourceTasks[i]
-            if (task.taskId === taskId && (task.state === "completed" || task.state === "failed"))
+            if (task.taskId === taskId && (task.state === "completed" || task.state === "failed" || task.state === "cancelled"))
                 return musicAdapter.dismissDownloadTask(taskId)
         }
+        return false
+    }
+    function cancelSourceTask(taskId) {
+        if (!musicAdapter || typeof musicAdapter.cancelDownloadTask !== "function") return false
+        for (var i = 0; i < sourceTasks.length; ++i)
+            if (sourceTasks[i].taskId === taskId && sourceTasks[i].state === "pending")
+                return musicAdapter.cancelDownloadTask(taskId)
         return false
     }
 
@@ -92,7 +99,8 @@ Item {
                 x: parent.width - 240
                 y: 22
                 text: modelData.state === "pending" ? "正在下载…"
-                    : modelData.state === "completed" ? "已完成" : "下载失败"
+                    : modelData.state === "completed" ? "已完成"
+                    : modelData.state === "cancelled" ? "已取消" : "下载失败"
                 color: Style.themes.textColor
                 font.pixelSize: Style.settings.text
                 textFormat: Text.PlainText
@@ -105,9 +113,21 @@ Item {
                 width: 100
                 height: 36
                 text: "移除记录"
-                visible: modelData.state === "completed" || modelData.state === "failed"
+                visible: modelData.state === "completed" || modelData.state === "failed" || modelData.state === "cancelled"
                 enabled: visible
                 onClicked: downloadPage.dismissSourceTask(modelData.taskId)
+            }
+            QButton {
+                objectName: "cancelSourceDownloadTask_" + modelData.taskId
+                anchors.right: parent.right
+                anchors.rightMargin: 8
+                y: 14
+                width: 100
+                height: 36
+                text: "取消下载"
+                visible: modelData.state === "pending"
+                enabled: visible
+                onClicked: downloadPage.cancelSourceTask(modelData.taskId)
             }
         }
     }

@@ -238,6 +238,18 @@ QUuid MediaActionRouter::download(const QVariantMap &media, const QUrl &destinat
     if (!parseItem(media, &r->item) || !localDestination(destination)) r->reject(invalidError());
     return submit(r);
 }
+bool MediaActionRouter::cancelDownload(const QUuid &requestId)
+{
+    const auto r = m_requests.value(requestId);
+    if (!r || r->action != SourceActionV2::Download || !r->returned || r->invoking
+        || r->settled || r->providerFinished || r->providerId.isNull() || !r->current()) return false;
+    r->reject(errorMap(AvailabilityV2::Unavailable, QStringLiteral("music.actionCancelled"),
+                       SourceErrorKindV2::Unavailable));
+    // No plugin call inside the UI handler; schedule() cancels once after unwind,
+    // rejects late provider terminals, releases the lease, then notifies consumers.
+    schedule(r);
+    return true;
+}
 QUuid MediaActionRouter::createPlaylist(const QString &instance, const QString &name)
 {
     auto r = std::make_shared<Request>(); r->action = SourceActionV2::CreatePlaylist;

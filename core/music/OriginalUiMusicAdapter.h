@@ -61,6 +61,7 @@ public:
     QVariantList downloadTasks() const;
     // Removes only a terminal presentation record, never a request or a file.
     Q_INVOKABLE bool dismissDownloadTask(const QString &taskId);
+    Q_INVOKABLE bool cancelDownloadTask(const QString &taskId);
     Q_INVOKABLE void retryCurrentLyrics();
 
     OnlineListModel *recommendSongs() const;
@@ -141,7 +142,7 @@ private:
     bool favoriteRequestIsCurrent(const QUuid &id) const;
     void syncCurrentDownload(bool notify = true);
     bool downloadRequestIsCurrent(const QUuid &id) const;
-    void finishDownload(const QUuid &id, const QVariantMap &result, bool succeeded);
+    void finishDownload(const QUuid &id, const QVariantMap &result, bool succeeded, bool cancelled = false);
     void failPendingDownloadTasks();
     struct DownloadTask {
         QVariantMap presentation;

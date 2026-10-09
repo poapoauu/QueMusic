@@ -33,9 +33,13 @@ public:
     }
     QUuid open() override { const auto id=QUuid::createUuid(); emit requestStarted(id); emit actionCompleted(id,{}); return id; }
     void close() override { current=SourceSessionStateV2::Closing; emit stateChanged(current); }
-    void cancel(const QUuid &id) override { setProperty("cancelled",id); setProperty("cancelCount",property("cancelCount").toInt()+1); }
+    void cancel(const QUuid &id) override {
+        setProperty("cancelled",id); setProperty("cancelCount",property("cancelCount").toInt()+1);
+        emit cancelObserved();
+    }
 signals:
     void capabilitiesRead();
+    void cancelObserved();
 };
 class ActionSession : public ActionSessionBase, public IFavoriteProviderV2,
     public IRatingProviderV2, public IDownloadProviderV2, public IPlaylistProviderV2,
@@ -191,6 +195,66 @@ static QVariantMap withAction(QVariantMap media,SourceActionV2 action,QVariant v
 class MediaActionRouterV2Test : public QObject {
     Q_OBJECT
 private slots:
+    void downloadCancellationOwnsTheRequestAndDefersLeaseProtectedCleanup()
+    {
+        ActionHarness h; QVERIFY(h.init()); auto *home = h.session(); auto *office = h.session("office");
+        home->setProperty("async", true); office->setProperty("async", true);
+        QSignalSpy failed(&h.router, &MediaActionRouter::actionFailed), done(&h.router, &MediaActionRouter::actionSucceeded);
+        const auto target = QUrl::fromLocalFile(h.dir.filePath("A.bin"));
+        const auto a = h.router.download(item(), target); const auto providerA = home->property("lastRequest").toUuid();
+        const auto b = h.router.download(item("office"), QUrl::fromLocalFile(h.dir.filePath("B.bin")));
+        const auto providerB = office->property("lastRequest").toUuid();
+        const auto favorite = h.router.setFavorite(item(), true);
+        QVERIFY(!h.router.cancelDownload({})); QVERIFY(!h.router.cancelDownload(QUuid::createUuid()));
+        QVERIFY(!h.router.cancelDownload(providerA)); QVERIFY(!h.router.cancelDownload(favorite));
+        MediaActionRouter other(&h.registry); QVERIFY(!other.cancelDownload(a));
+        PluginOperationResult unload = PluginOperationResult::Success;
+        ActionHook hook; hook.callback = [&] {
+            unload = h.plugins.unload("org.quemusic.source.task6");
+            // A provider terminal emitted synchronously by cancel cannot resurrect success.
+            emit home->actionCompleted(providerA, {SourceActionV2::Download,
+                mediaRefV2FromVariantMap(item().value("ref").toMap()), {{"destination", target}}});
+        };
+        connect(home, SIGNAL(cancelObserved()), &hook, SLOT(run()));
+        QVERIFY(h.router.cancelDownload(a)); QVERIFY(!h.router.cancelDownload(a));
+        QCOMPARE(home->property("cancelCount").toInt(), 0); QCOMPARE(failed.size(), 0);
+        QTRY_COMPARE(failed.size(), 1); QCOMPARE(failed[0][0].toUuid(), a);
+        QCOMPARE(failed[0][1].toMap().value("messageKey").toString(), QString("music.actionCancelled"));
+        QCOMPARE(home->property("cancelled").toUuid(), providerA); QCOMPARE(home->property("cancelCount").toInt(), 1);
+        QCOMPARE(unload, PluginOperationResult::Busy); QCOMPARE(done.size(), 0);
+        QVERIFY(!h.router.cancelDownload(a)); QCOMPARE(office->property("cancelCount").toInt(), 0);
+        emit office->actionCompleted(providerB, {SourceActionV2::Download,
+            mediaRefV2FromVariantMap(item("office").value("ref").toMap()),
+            {{"destination", QUrl::fromLocalFile(h.dir.filePath("B.bin"))}}});
+        QTRY_COMPARE(done.size(), 1); QCOMPARE(done[0][0].toUuid(), b);
+        QVERIFY(!h.router.cancelDownload(b));
+    }
+    void settledDownloadCannotBeCancelledAndCancelCallbackMayDestroyRouter()
+    {
+        ActionHarness h; QVERIFY(h.init()); auto *session = h.session();
+        QSignalSpy done(&h.router, &MediaActionRouter::actionSucceeded);
+        const auto inlineId = h.router.download(item(), QUrl::fromLocalFile(h.dir.filePath("inline.bin")));
+        QVERIFY(!h.router.cancelDownload(inlineId)); QTRY_COMPARE(done.size(), 1);
+        QCOMPARE(session->property("cancelCount").toInt(), 0);
+        session->setProperty("async", true);
+        QPointer<MediaActionRouter> router = new MediaActionRouter(&h.registry);
+        const auto id = router->download(item(), QUrl::fromLocalFile(h.dir.filePath("pending.bin")));
+        const auto provider = session->property("lastRequest").toUuid();
+        ActionHook hook; hook.callback = [&] { delete router.data(); };
+        connect(session, SIGNAL(cancelObserved()), &hook, SLOT(run()));
+        QVERIFY(router->cancelDownload(id)); QTRY_VERIFY(!router);
+        QCOMPARE(session->property("cancelled").toUuid(), provider); QCOMPARE(session->property("cancelCount").toInt(), 1);
+    }
+    void lifecycleFailureWinsOverQueuedDownloadCancellation()
+    {
+        ActionHarness h; QVERIFY(h.init()); auto *session = h.session(); session->setProperty("async", true);
+        QSignalSpy failed(&h.router, &MediaActionRouter::actionFailed), done(&h.router, &MediaActionRouter::actionSucceeded);
+        const auto id = h.router.download(item(), QUrl::fromLocalFile(h.dir.filePath("closing.bin")));
+        QVERIFY(h.router.cancelDownload(id)); QVERIFY(h.registry.closeInstance("task6/home"));
+        QVERIFY(!h.router.cancelDownload(id)); QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(failed[0][0].toUuid(), id); QCOMPARE(done.size(), 0);
+        QCOMPARE(failed[0][1].toMap().value("messageKey").toString(), QString("music.actionNotAvailable"));
+    }
     void favoriteRoutesToOwningInstanceAndDefersCompletion()
     {
         ActionHarness h; QVERIFY(h.init()); auto home=h.session(),office=h.session("office");

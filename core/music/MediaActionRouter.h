@@ -13,6 +13,9 @@ public:
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &media, bool favorite);
     Q_INVOKABLE QUuid setRating(const QVariantMap &media, int rating);
     Q_INVOKABLE QUuid download(const QVariantMap &media, const QUrl &destination);
+    // Host-only: accept cancellation of an owned, still-pending Download.
+    // Terminal delivery and provider cancellation remain deferred and lease-protected.
+    bool cancelDownload(const QUuid &requestId);
     Q_INVOKABLE QUuid createPlaylist(const QString &sourceInstanceId, const QString &name);
     // change: optional newName:string, tracksToAdd:list<full item>,
     // trackIndexesToRemove:list<nonnegative unique int>. At least one change.

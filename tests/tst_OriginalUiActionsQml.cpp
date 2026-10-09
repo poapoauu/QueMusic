@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QQuickItem>
 #include <QTest>
+#include <QTimer>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
@@ -185,6 +186,23 @@ public:
         }
         return false;
     }
+    Q_INVOKABLE bool cancelDownloadTask(const QString &id) {
+        if (cancelledDownloads.contains(id)) return false;
+        for (const auto &value : downloadTasks) {
+            const auto row = value.toMap();
+            if (row.value("taskId").toString() != id || row.value("state").toString() != "pending") continue;
+            cancelledDownloads << id;
+            QTimer::singleShot(0, this, [this, id] {
+                for (auto &value : downloadTasks) {
+                    auto row = value.toMap();
+                    if (row.value("taskId").toString() == id) { row["state"] = "cancelled"; value = row; }
+                }
+                emit downloadTasksChanged();
+            });
+            return true;
+        }
+        return false;
+    }
     static QVariantMap row(const QString &title, const QString &sectionId,
                            bool canPlay = true, bool canEnqueue = true,
                            bool canFavorite = true, bool canUnfavorite = true,
@@ -216,6 +234,7 @@ public:
     QVariantList customSourceOptions;
     QVariantList downloadTasks;
     QStringList dismissedDownloads;
+    QStringList cancelledDownloads;
 signals:
     void selectedSourceInstanceIdChanged();
     void sourceOptionsChanged();
@@ -613,6 +632,41 @@ private slots:
         QVERIFY(page->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
         QTRY_COMPARE(active->property("count").toInt(), 0); QTRY_COMPARE(completed->property("count").toInt(), 0);
         QCOMPARE(context.musicApi.legacyPlays, 0); QCOMPARE(context.musicApi.legacyPlaylistRequests, 0);
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+    }
+    void downloadPageCancelsOnlyPendingSourceTasks()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
+        const auto task = [](const QString &id, const QString &state) {
+            return QVariantMap{{"taskId", id}, {"state", state}, {"fileName", "saved.bin"},
+                {"title", "Track"}, {"artist", "Artist"}, {"sourceLabel", "Source"}};
+        };
+        adapter.downloadTasks = {task("running", "pending"), task("failed", "failed"), task("saved", "completed")};
+        auto page = load(engine, "pages/DownloadPage.qml", &adapter, &error); QVERIFY2(page, qPrintable(error));
+        auto *active = page->findChild<QObject *>("sourceActiveDownloadTasks"); QVERIFY(active);
+        auto *completed = page->findChild<QObject *>("sourceCompletedDownloadTasks"); QVERIFY(completed);
+        QVERIFY(QMetaObject::invokeMethod(active, "forceLayout"));
+        auto *pageItem = qobject_cast<QQuickItem *>(page.get()); QVERIFY(pageItem);
+        auto *cancel = visualChild(pageItem, "cancelSourceDownloadTask_running"); QVERIFY(cancel);
+        auto *failedCancel = visualChild(pageItem, "cancelSourceDownloadTask_failed"); QVERIFY(failedCancel);
+        QVERIFY(cancel->property("enabled").toBool()); QVERIFY(!failedCancel->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(failedCancel, "clicked")); QVERIFY(adapter.cancelledDownloads.isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(cancel, "clicked")); QVERIFY(QMetaObject::invokeMethod(cancel, "clicked"));
+        QCOMPARE(adapter.cancelledDownloads, QStringList{"running"});
+        QTRY_COMPARE(adapter.downloadTasks.first().toMap().value("state").toString(), QString("cancelled"));
+        QVERIFY(QMetaObject::invokeMethod(active, "forceLayout"));
+        cancel = visualChild(pageItem, "cancelSourceDownloadTask_running"); QVERIFY(cancel);
+        QVERIFY(!cancel->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(cancel, "clicked"));
+        QCOMPARE(adapter.cancelledDownloads, QStringList{"running"});
+        auto *dismiss = visualChild(pageItem, "dismissSourceDownloadTask_running"); QVERIFY(dismiss);
+        QVERIFY(dismiss->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(dismiss, "clicked"));
+        QCOMPARE(adapter.dismissedDownloads, QStringList{"running"}); QTRY_COMPARE(active->property("count").toInt(), 1);
+        QCOMPARE(completed->property("count").toInt(), 1);
+        QVERIFY(page->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+        QVariant result;
+        QVERIFY(QMetaObject::invokeMethod(page.get(), "cancelSourceTask", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, "running")));
+        QVERIFY(!result.toBool()); QCOMPARE(adapter.cancelledDownloads, QStringList{"running"});
+        QCOMPARE(context.musicApi.legacyPlays, 0);
         QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
     }
 };

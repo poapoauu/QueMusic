@@ -182,8 +182,8 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         connect(m_hub->actions(), &MediaActionRouter::actionSucceeded, this, [this](QUuid id, QVariantMap result) {
             finishDownload(id, result, true);
         });
-        connect(m_hub->actions(), &MediaActionRouter::actionFailed, this, [this](QUuid id, const QVariantMap &) {
-            finishDownload(id, {}, false);
+        connect(m_hub->actions(), &MediaActionRouter::actionFailed, this, [this](QUuid id, const QVariantMap &error) {
+            finishDownload(id, {}, false, error.value("messageKey").toString() == QStringLiteral("music.actionCancelled"));
         });
     }
     connect(m_hub->actions(), &QObject::destroyed, this, &OriginalUiMusicAdapter::failPendingDownloadTasks);
@@ -322,7 +322,17 @@ bool OriginalUiMusicAdapter::dismissDownloadTask(const QString &taskId)
     }
     return false;
 }
-void OriginalUiMusicAdapter::finishDownload(const QUuid &id, const QVariantMap &result, bool succeeded)
+bool OriginalUiMusicAdapter::cancelDownloadTask(const QString &taskId)
+{
+    if (!m_hub) return false;
+    for (const auto &task : m_downloadTasks) {
+        if (task.presentation.value("taskId").toString() != taskId
+            || task.presentation.value("state").toString() != "pending" || task.request.isNull()) continue;
+        return m_hub->actions()->cancelDownload(task.request);
+    }
+    return false;
+}
+void OriginalUiMusicAdapter::finishDownload(const QUuid &id, const QVariantMap &result, bool succeeded, bool cancelled)
 {
     bool changed = false;
     for (auto &task : m_downloadTasks) {
@@ -331,7 +341,8 @@ void OriginalUiMusicAdapter::finishDownload(const QUuid &id, const QVariantMap &
         succeeded = succeeded && result.value("action").toInt() == int(SourceActionV2::Download)
             && result.value("subject").toMap() == task.media
             && destination.metaType().id() == QMetaType::QUrl && destination.toUrl() == task.destination;
-        task.presentation["state"] = succeeded ? QStringLiteral("completed") : QStringLiteral("failed");
+        task.presentation["state"] = succeeded ? QStringLiteral("completed")
+            : cancelled ? QStringLiteral("cancelled") : QStringLiteral("failed");
         task.request = {}; task.media.clear(); task.destination = QUrl{};
         changed = true;
         break;

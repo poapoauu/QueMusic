@@ -376,7 +376,7 @@ Rectangle {
                 text: !window.sourceLyricsMode ? "下载" : window.lyricsAdapter.download.pending ? "下载中"
                       : !window.securePlaybackCurrent ? "没有可下载的当前歌曲"
                       : !window.lyricsAdapter.download.canDownload ? "当前来源不支持下载"
-                      : window.lyricsAdapter.download.failed ? "下载失败，请选择新文件后重试"
+                      : window.lyricsAdapter.download.failed ? "下载未完成，请选择新文件后重试"
                       : window.lyricsAdapter.download.completed ? "下载完成，点击另存" : "另存当前歌曲"
             }
             FileDialog {

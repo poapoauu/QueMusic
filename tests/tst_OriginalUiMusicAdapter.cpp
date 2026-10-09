@@ -41,7 +41,10 @@ public:
         return id;
     }
     void close() override { emit stateChanged(SourceSessionStateV2::Closing); }
-    void cancel(const QUuid &id) override { setProperty("cancelled", id); }
+    void cancel(const QUuid &id) override {
+        setProperty("cancelled", id);
+        auto ids = property("cancelledRequests").toList(); ids.append(id); setProperty("cancelledRequests", ids);
+    }
     QUuid fetchPage(const PageQueryV2 &query) override
     {
         const QUuid id = QUuid::createUuid();
@@ -322,6 +325,45 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void downloadTaskCancellationDoesNotUseTheCurrentPlaybackIdentity()
+    {
+        RoutingHarness h; QVERIFY(h.init(true)); auto *home = h.session(); auto *office = h.session("adapter/office");
+        QVERIFY(home); QVERIFY(office); home->setProperty("holdDownload", true); office->setProperty("holdDownload", true);
+        const auto a = routedItem(MediaEntityTypeV2::Track, "same-id");
+        auto b = a; b.ref.accountId = "office"; b.ref.sourceInstanceId = "adapter/office";
+        accept(h.hub->category(), resultWith({a, b}, "tracks"));
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+        const auto targetA = QUrl::fromLocalFile(h.dir.filePath("cancelled.bin"));
+        QVERIFY(!h.adapter->downloadCurrent(targetA, h.adapter->currentDownload().value("token").toString()).isNull());
+        const auto providerA = home->property("downloadRequests").toList().last().toMap().value("id").toUuid();
+        const auto taskA = h.adapter->downloadTasks().first().toMap().value("taskId").toString();
+        // A file created independently after dispatch is never deleted by Host cancellation.
+        QFile independent(targetA.toLocalFile()); QVERIFY(independent.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+        QCOMPARE(independent.write("keep"), 4LL); independent.close();
+        QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(1)).isNull()); QTRY_COMPARE(h.sink.plays, 2);
+        const auto targetB = QUrl::fromLocalFile(h.dir.filePath("B.bin"));
+        QVERIFY(!h.adapter->downloadCurrent(targetB, h.adapter->currentDownload().value("token").toString()).isNull());
+        const auto providerB = office->property("downloadRequests").toList().last().toMap().value("id").toUuid();
+        QVERIFY(!h.adapter->cancelDownloadTask("forged")); QVERIFY(h.adapter->cancelDownloadTask(taskA));
+        QVERIFY(!h.adapter->cancelDownloadTask(taskA)); QVERIFY(!h.adapter->dismissDownloadTask(taskA));
+        QTRY_COMPARE(h.adapter->downloadTasks().first().toMap().value("state").toString(), QString("cancelled"));
+        QCOMPARE(home->property("cancelledRequests").toList().count(providerA), 1);
+        QCOMPARE(office->property("cancelledRequests").toList().count(providerB), 0);
+        QVERIFY(h.adapter->currentDownload().value("pending").toBool()); QVERIFY(!h.adapter->currentDownload().value("failed").toBool());
+        emit home->actionCompleted(providerA, {SourceActionV2::Download, a.ref, {{"destination", targetA}}});
+        QCoreApplication::processEvents(); QCOMPARE(h.adapter->downloadTasks().first().toMap().value("state").toString(), QString("cancelled"));
+        QVERIFY(h.adapter->dismissDownloadTask(taskA));
+        const auto taskB = h.adapter->downloadTasks().first().toMap().value("taskId").toString();
+        QVERIFY(h.adapter->cancelDownloadTask(taskB)); QTRY_VERIFY(h.adapter->currentDownload().value("failed").toBool());
+        QVERIFY(!h.adapter->currentDownload().value("pending").toBool());
+        QCOMPARE(h.adapter->downloadTasks().first().toMap().value("state").toString(), QString("cancelled"));
+        // Cancelled destination is released for a new explicitly submitted download.
+        office->setProperty("holdDownload", false);
+        QVERIFY(!h.adapter->downloadCurrent(targetB, h.adapter->currentDownload().value("token").toString()).isNull());
+        QTRY_VERIFY(h.adapter->currentDownload().value("completed").toBool());
+        QVERIFY(!h.adapter->cancelDownloadTask(h.adapter->downloadTasks().last().toMap().value("taskId").toString()));
+        QVERIFY(independent.open(QIODevice::ReadOnly)); QCOMPARE(independent.readAll(), QByteArray("keep"));
+    }
     void downloadTasksSurvivePlaybackChangesWithoutExposingPrivateData()
     {
         RoutingHarness h; QVERIFY(h.init(true));

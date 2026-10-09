@@ -226,6 +226,16 @@ Source 下载选择的目标可以在任意用户目录，完成记录不依赖�
 
 主程序构建及 OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiPlaybackQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration、NavidromeSource 八个联合套件通过。下载页实际 QML 测试使用轻量服务夹具和真实控件，强制 ListView 布局并按视觉子项查找代理，覆盖任务分类、完成后跨页签移动、终态移除、进行中程序化点击拒绝、Adapter 移除清空和纯文本；结构测试确认实际 Loader Binding。该验收不代替真实 OS/服务器与完整视觉检查。SDK v2/Plugin UI API 未修改，Download 与 Phase 6 尚未整体完成。
 
+### Source 下载任务取消
+
+Router 增量提供 Host-only cancelDownload(requestId)，只接受本 Router 所有、已经返回且仍处于有效生命周期的进行中 Download。拒绝未知/Provider ID、其他 Router 的 ID、非下载动作、已完成/已失败/重复取消，不改变 SDK v2 虚接口。接受取消后设置 Host 通用终态并复用既有 deferred schedule：在 Provider 回调退出后，带 callable lease 调用现有 session.cancel 一次，忽略迟到终态，释放租约后发送 actionFailed；不在 QML handler 内直接调用插件。若排队期间实例关闭/销毁，原生命周期失败优先，不能误报为用户取消。
+
+Adapter cancelDownloadTask 仅用 opaque taskId 查找私有 Router 请求，不依赖当前 Source 或播放 token。正常取消展示 cancelled，仍保留在下载任务页供移除记录；当前曲目取消清除 pending，并以“下载未完成”提示允许用户重新选择新目标。取消不删除用户文件、不自动重试，不保证第三方插件已经提交的文件会回滚；临时文件清理属于插件原有 cancel 契约，Navidrome 现有清理实现保持。Source 取消按钮与旧下载器完全分离，进行中可取消但不能移除，终态可移除但不能取消，handler 复核状态与 Adapter 存在性。
+
+主程序构建及 MusicHub、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiPlaybackQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration、NavidromeSource 九个联合套件通过。新增 Router 测试覆盖身份所有权、动作类型、延后/去重、取消期间 unload Busy、迟到成功、其他实例继续完成、inline 已完成拒绝、取消回调销毁 Router 与关闭实例优先；Adapter 测试覆盖跨实例取消、当前状态隔离、取消后目标释放与新提交、独立创建文件保留；实际下载页 QML 夹具验证按钮/handler 的终态和重复保护。Navidrome 既有本机 HTTP 字节/取消清理回归通过，不等同于真实服务器或原生视觉验收。
+
+Source 下载会话展示与取消已具备，字节进度、跨启动记录恢复及安全重试仍未实现；SDK v2/Plugin UI API ABI 不变。后续按原顺序继续播放器选项、频谱与其他旧入口隔离，不把 Download 或 Phase 6 标为整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
