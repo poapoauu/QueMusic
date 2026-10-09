@@ -56,6 +56,7 @@ private:
     void ensureDefaultRenderUrl();
 
     QUrl m_imageSource;
+    quint64 m_imageGeneration = 0;
     QVector<QColor> m_dominantColors;
     QNetworkAccessManager *m_networkManager;
     QHash<QUrl, QImage> m_renderCache;
@@ -63,4 +64,3 @@ private:
 };
 
 #endif // COLOREXTRACTOR_H
-

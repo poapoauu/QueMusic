@@ -260,6 +260,7 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QVERIFY(source.contains(QStringLiteral("window.sourceLyricsMode = false")));
     QVERIFY(source.contains(QStringLiteral("readonly property string currentCover: playbackLyrics.cover")));
     QVERIFY(source.contains(QStringLiteral("picWatch.dialog(window.currentCover")));
+    QVERIFY(source.contains(QStringLiteral("if (window.sourceLyricsMode) colorExtractor.extractColorsFromUrl(window.currentCover)")));
     for (const auto &path : {QStringLiteral("/layout/PlayerMaxCenter.qml"), QStringLiteral("/components/DesktopPlayerWindow.qml")}) {
         QFile coverFile(QStringLiteral(QUEMUSIC_SOURCE_DIR) + path);
         QVERIFY(coverFile.open(QIODevice::ReadOnly | QIODevice::Text));

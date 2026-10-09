@@ -130,6 +130,16 @@ Host Adapter 新增 `currentCover`，只通过现有 MusicHub/MediaAssetReposito
 
 封面切片主程序构建及六个相关套件通过：OriginalUiMusicAdapter、OriginalUiPlaybackQml、OriginalUiStructure、MusicHub、MusicCaches、PlaybackCoordinator。回归中发现并修正空 QUrl 在 JavaScript 中仍为真值的问题；默认封面判定先转换字符串，避免空封面覆盖默认图。歌词重试测试保留资源仓库已有歌词缓存语义，不把缓存命中误判为再次调用插件。
 
+### 当前封面动态取色与背景异步隔离
+
+Source 模式的 `currentCover` 变化触发现有取色器，从 Host 缓存文件或 qrc 默认图读取；qrc 不再经过网络请求。无效本地图片清空旧取色渲染图并发出空色组，原 UI 使用已有默认主题色。保留旧平台模式的远程取色兼容，但每次取色都生成代次，旧网络成功/失败回调和颜色观察者中的重入切换不得覆盖新结果。逐像素取色前将图片统一转换为 ARGB32，支持灰度/索引等 Qt 解码格式。
+
+复核同时发现 Mesh 背景图片加载仍没有旧任务隔离：旧网络响应与后台图片后处理可能在当前封面已改变后覆盖纹理。现为每次加载生成独立代次，网络完成和后台结果进入 UI 线程时均复核；保留原图片处理、渐变布局与动画，不更改 Source SDK v2/Plugin UI API。
+
+新增 ArtworkPresentation 单元套件使用实际取色器、Mesh 实例、临时 PNG 和本机延迟 HTTP 夹具，覆盖本地/qrc 无网络、无效图片清理、灰度图片、迟到网络取色、回调中切换、迟到 Mesh 网络及排队后台任务。Mesh 白盒断言待提交纹理/最近图片，不启动 GPU 场景；真实渲染、性能、动画及音频仍待手工验收。
+
+取色/背景切片主程序构建与七个相关套件通过：ArtworkPresentation、OriginalUiPlaybackQml、OriginalUiMusicAdapter、OriginalUiStructure、MusicHub、MusicCaches、PlaybackCoordinator。进入 Source 模式时也主动刷新颜色，即使封面字符串与之前默认图相同，也不会沿用旧平台颜色。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

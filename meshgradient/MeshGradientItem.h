@@ -175,8 +175,9 @@ protected:
     void releaseResources() override;
 
 private:
+    friend class ArtworkPresentationTest;
     void loadCover();
-    void handleCoverDownloaded(const QByteArray &data, bool fromNetwork);
+    void handleCoverDownloaded(const QByteArray &data, bool fromNetwork, quint64 generation);
     void onCoverProcessed(const QImage &processed);
 
     // -- 控制点 / 网格生成 --
@@ -195,6 +196,7 @@ private:
     void syncAlpha(qint64 deltaMs);
 
     QUrl m_coverUrl;
+    quint64 m_coverGeneration = 0;
     qreal m_volume = 0.0;
     qreal m_smoothedVolume = 0.0;
     qreal m_flowSpeed = 1.0;

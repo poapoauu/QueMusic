@@ -999,6 +999,20 @@ if(BUILD_TESTING)
     set_tests_properties(quemusic_original_ui_playback_qml_test PROPERTIES
         TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    qt_add_executable(quemusic_artwork_presentation_test
+        tests/tst_ArtworkPresentation.cpp
+        cpp/ColorExtractor.cpp cpp/ColorExtractor.h
+        meshgradient/MeshGradientItem.cpp meshgradient/MeshGradientItem.h)
+    target_compile_features(quemusic_artwork_presentation_test PRIVATE cxx_std_17)
+    target_include_directories(quemusic_artwork_presentation_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(quemusic_artwork_presentation_test PRIVATE
+        Qt6::Gui Qt6::Quick Qt6::Network Qt6::Concurrent Qt6::Test)
+    qt_add_resources(quemusic_artwork_presentation_test "artwork_presentation_resources"
+        PREFIX "/QueMusic" FILES resources/app/musicpic.png)
+    add_test(NAME quemusic_artwork_presentation_test COMMAND quemusic_artwork_presentation_test)
+    set_tests_properties(quemusic_artwork_presentation_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     qt_add_executable(quemusic_sensitive_playback_logging_test
         tests/tst_SensitivePlaybackLogging.cpp
         core/logging/RuntimeLoggingPolicy.cpp

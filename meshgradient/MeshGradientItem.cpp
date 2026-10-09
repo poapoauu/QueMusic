@@ -340,6 +340,7 @@ void MeshGradientItem::setColor3(const QColor &c)
 // 封面加载
 void MeshGradientItem::loadCover()
 {
+    const auto generation = ++m_coverGeneration;
     const QUrl url = m_coverUrl;
     if (url.isEmpty()) {
         // 无封面/无歌曲：用主题色渐变兜底，保证背景不透明。
@@ -363,15 +364,16 @@ void MeshGradientItem::loadCover()
         QNetworkRequest req(url);
         req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         QNetworkReply *reply = m_net->get(req);
-        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, generation]() {
             reply->deleteLater();
+            if (generation != m_coverGeneration) return;
             if (reply->error() != QNetworkReply::NoError) {
                 m_hasCover = false;
                 m_pendingCover = false;
                 update();
                 return;
             }
-            handleCoverDownloaded(reply->readAll(), true);
+            handleCoverDownloaded(reply->readAll(), true, generation);
         });
     } else if (url.scheme() == QLatin1String("data")) {
         // data URI：ColorExtractor 已调用 processCoverImage 处理好的 32x32 渲染图，
@@ -398,14 +400,14 @@ void MeshGradientItem::loadCover()
             path = QStringLiteral(":") + url.path();
         else
             path = url.toLocalFile();
-        handleCoverDownloaded(path.toUtf8(), false);
+        handleCoverDownloaded(path.toUtf8(), false, generation);
     }
 }
 
-void MeshGradientItem::handleCoverDownloaded(const QByteArray &data, bool fromNetwork)
+void MeshGradientItem::handleCoverDownloaded(const QByteArray &data, bool fromNetwork, quint64 generation)
 {
     QPointer<MeshGradientItem> self(this);
-    QThreadPool::globalInstance()->start([self, data, fromNetwork]() {
+    QThreadPool::globalInstance()->start([self, data, fromNetwork, generation]() {
         QImage raw;
         if (fromNetwork)
             raw.loadFromData(data);
@@ -414,8 +416,8 @@ void MeshGradientItem::handleCoverDownloaded(const QByteArray &data, bool fromNe
         const QImage processed = MeshGradientItem::processCoverImage(raw);
         if (!self)
             return;
-        QMetaObject::invokeMethod(self, [self, processed]() {
-            if (self)
+        QMetaObject::invokeMethod(self, [self, processed, generation]() {
+            if (self && generation == self->m_coverGeneration)
                 self->onCoverProcessed(processed);
         }, Qt::QueuedConnection);
     });

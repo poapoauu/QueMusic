@@ -43,11 +43,7 @@ QUrl ColorExtractor::imageSource() const
 
 void ColorExtractor::setImageSource(const QUrl &source)
 {
-    if (m_imageSource != source) {
-        m_imageSource = source;
-        emit imageSourceChanged();
-        extractColorsFromUrl(source);
-    }
+    if (m_imageSource != source) extractColorsFromUrl(source);
 }
 
 QVector<QColor> ColorExtractor::dominantColors() const
@@ -62,10 +58,9 @@ QUrl ColorExtractor::renderUrl() const
 
 void ColorExtractor::extractColors()
 {
-    if (m_imageSource.isEmpty())
-        return;
-
-    QImage image(m_imageSource.toLocalFile());
+    const auto path = m_imageSource.scheme() == QStringLiteral("qrc")
+        ? QStringLiteral(":") + m_imageSource.path() : m_imageSource.toLocalFile();
+    QImage image(path);
     if (image.isNull())
         qDebug() << "无法加载图片:" << m_imageSource;
 
@@ -75,6 +70,7 @@ void ColorExtractor::extractColors()
 void ColorExtractor::onImageDownloaded(QNetworkReply *reply)
 {
     reply->deleteLater();
+    if (reply->property("coverGeneration").toULongLong() != m_imageGeneration) return;
 
     if (reply->error() != QNetworkReply::NoError) {
         qDebug() << "下载图片失败:" << reply->errorString();
@@ -92,24 +88,33 @@ void ColorExtractor::onImageDownloaded(QNetworkReply *reply)
 
 void ColorExtractor::extractColorsFromUrl(const QUrl &url)
 {
+    const bool changed = m_imageSource != url;
     m_imageSource = url;
+    const auto generation = ++m_imageGeneration;
+    if (changed) emit imageSourceChanged();
+    if (generation != m_imageGeneration) return;
 
-    if (url.isLocalFile())
+    if (url.isLocalFile() || url.scheme() == QStringLiteral("qrc") || url.isEmpty())
         extractColors();
-    else
-        m_networkManager->get(QNetworkRequest(url));
+    else {
+        auto *reply = m_networkManager->get(QNetworkRequest(url));
+        reply->setProperty("coverGeneration", QVariant::fromValue(generation));
+    }
 }
 
 // 统一出口：计算主色、发信号、缓存渲染图
 void ColorExtractor::emitExtractedColors(const QImage &image, const QUrl &cacheKey)
 {
+    const auto generation = m_imageGeneration;
     m_dominantColors = getDominantColors(image, 3);
     emit colorsExtracted(m_dominantColors);
+    if (generation != m_imageGeneration) return;
 
     QStringList colorStrings;
     for (const QColor &color : m_dominantColors)
         colorStrings.append(color.name());
     emit colorsExtractedAsString(colorStrings);
+    if (generation != m_imageGeneration) return;
 
     processAndCacheRenderImage(cacheKey, image);
 }
@@ -117,8 +122,11 @@ void ColorExtractor::emitExtractedColors(const QImage &image, const QUrl &cacheK
 // 处理封面为 32x32 渲染图并缓存，生成 data URI 供 MeshGradient 直接使用
 void ColorExtractor::processAndCacheRenderImage(const QUrl &key, const QImage &image)
 {
-    if (image.isNull())
+    if (image.isNull()) {
+        m_renderUrl.clear();
+        emit renderUrlChanged();
         return;
+    }
 
     // 命中缓存则直接复用，避免重复处理
     QImage render = m_renderCache.value(key);
@@ -159,7 +167,8 @@ QVector<QColor> ColorExtractor::getDominantColors(const QImage &image, int count
         return QVector<QColor>();
 
     // 缩小到 64x64 加速统计
-    QImage smallImage = image.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QImage smallImage = image.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+        .convertToFormat(QImage::Format_ARGB32);
 
     QHash<QString, QColor> colorMap;
     QHash<QString, int> colorCount;
@@ -245,4 +254,3 @@ QVector<QColor> ColorExtractor::getDominantColors(const QImage &image, int count
 
     return result;
 }
-

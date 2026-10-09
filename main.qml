@@ -24,9 +24,15 @@ Window {
         && playbackCoordinator.currentIndex >= 0
     readonly property bool securePlaybackCurrent: securePlaybackActive
     property bool sourceLyricsMode: false
+    onSourceLyricsModeChanged: {
+        if (window.sourceLyricsMode) colorExtractor.extractColorsFromUrl(window.currentCover);
+    }
     onSecurePlaybackCurrentChanged: if (securePlaybackCurrent) sourceLyricsMode = true
     property var lyricsAdapter: playbackLyrics
     readonly property string currentCover: playbackLyrics.cover
+    onCurrentCoverChanged: {
+        if (window.sourceLyricsMode) colorExtractor.extractColorsFromUrl(window.currentCover);
+    }
     PlaybackLyricsAdapter {
         id: playbackLyrics
         musicAdapter: window.musicAdapter

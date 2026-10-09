@@ -287,6 +287,8 @@ Home 每日推荐随后接入五类标准推荐分区聚合及共享 `sourcePagi
 
 当前播放封面随后接入 Adapter 的 `currentCover`：沿用现有 MusicHub/MediaAssetRepository，只接受本地缓存 URL，并验证当前 generation、媒体身份及请求 ID。主窗口封面/预览、全屏唱片/背景图片和桌面播放器共享同一展示地址；Source 模式无结果/停播/缺 Adapter 时显示默认图，不回退旧播放器封面或旧取色渲染图。歌词重试不会取消或重复请求健康封面。动态取色仍待收口，缓存图片内容解码/真实视觉与音频验收不属于此切片的自动化证明；收藏与其他旧入口未完成。Source SDK v2 与 Plugin UI API ABI 均不变。
 
+动态取色随后绑定当前缓存封面，支持本地与 qrc 默认图读取而不启动网络请求；旧网络取色结果和重入观察者不能覆盖新封面的颜色/渲染图。全屏 Mesh 背景为网络响应和后台图片处理增加 generation fencing，切换到 Source 封面后拒绝旧任务。取色逐像素读取先统一 ARGB32 格式，避免灰度/索引图片格式导致错误访问。新增图片展示测试覆盖这些异步边界，尚不代替真实 GPU 动画/视觉验收。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口
