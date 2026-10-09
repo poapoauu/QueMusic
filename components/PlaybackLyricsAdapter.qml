@@ -55,12 +55,19 @@ QtObject {
     }
 
     function togglePlayback() {
+        if (sourceMode ? playing : legacyPlayer && legacyPlayer.playing) pause(); else play();
+    }
+
+    function play() {
         if (sourceMode) {
-            if (!sourceActive || !controls) return;
-            if (controls.playing) controls.pause(); else controls.play();
-        } else if (legacyPlayer) {
-            if (legacyPlayer.playing) legacyPlayer.pause(); else legacyPlayer.play();
-        }
+            if (sourceActive && controls) controls.play();
+        } else if (legacyPlayer) legacyPlayer.play();
+    }
+
+    function pause() {
+        if (sourceMode) {
+            if (sourceActive && controls) controls.pause();
+        } else if (legacyPlayer) legacyPlayer.pause();
     }
 
     function seek(position) {

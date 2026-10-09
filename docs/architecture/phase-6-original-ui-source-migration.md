@@ -170,6 +170,16 @@ currentFavorite 新增不含 source/account/ref 的 opaque token；setCurrentFav
 
 收藏按钮切片主程序构建与八个联合回归套件通过：OriginalUiMusicAdapter、OriginalUiPlaybackQml、OriginalUiActionsQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration、MusicHub。
 
+### Windows SMTC 的 Source 控制与展示桥接
+
+系统播放、暂停和进度请求现复用 Host 私有播放桥接，Source 模式仅操作 typed Core controls；停播、缺控制 Adapter 或系统服务不可用时拒绝对应请求，不启动旧播放器。上一首/下一首复用原 Source 队列导航，系统按钮按当前队列启用（下一首沿用循环到首项、上一首不循环），恢复队列不会自动夺取兼容播放。
+
+Source 系统媒体信息仅从 Coordinator 当前项提取 title/artists/album，封面仅发送 Host 缓存 file URL，qrc 默认图以空封面处理；AppMediaId 使用 opaque occurrence，不发送 SourceRef、账号、插件资源 URL 或 headers。Core Loading/Playing/Paused/Stopped/Error 状态映射为系统状态，进度由统一时钟更新；停播清除旧媒体信息、封面、ID 和时间线并禁用控制。Source 模式忽略旧 mainMedia 的迟到状态、时长、位置与 source 信号；原生新缩略图读取失败时也清除上一首缩略图。
+
+主程序构建及九个联合套件通过：OriginalUiPlaybackQml、OriginalUiMusicAdapter、OriginalUiActionsQml、OriginalUiStructure、PlaybackCoordinator、QtPlaybackController、PlaybackControlsAdapterQml、LegacyQueueQml、QueueHistoryIntegration。新增测试直接提取 main.qml 的实际函数与 Connections，替换原生 SMTC 服务，并运行真实播放桥接；验证状态映射、Source 元数据白名单、不读取旧队列、输入路由、队列按钮、停播/缺 Adapter/不可用保护、默认封面清理和迟到旧信号隔离。测试引用实际 C++ 状态枚举，避免用不同数值的伪枚举证明映射。
+
+这只是跨平台 QML 边界验收：macOS 构建不编译 Windows WinRT 实现，不能据此宣称 Windows 原生行为已验收。仍需 Windows 编译及媒体浮层/物理媒体键/系统进度/缓存图片权限/服务关闭手测。Source SDK v2、Plugin UI API 和 SMTC API 均未修改；下载、频谱、播放器详情/选项及其他旧入口继续按切片迁移，Phase 6 尚未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

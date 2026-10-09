@@ -293,6 +293,8 @@ Home 每日推荐随后接入五类标准推荐分区聚合及共享 `sourcePagi
 
 当前播放收藏的 Host 契约已增量接入：Coordinator 在播放/权限事件中缓存经过 Plugin/Server/Account/Media 交集及 Provider 检查的收藏权限，非 QML 的 `currentActionItem()` 提供当前队列项动作快照。Adapter 的 `currentFavorite` 只公开 canFavorite/canUnfavorite/state/pending/failed 和不含音源身份的播放 token，`setCurrentFavorite()` 沿用 Router 复核，按请求 ID/generation/完整媒体身份隔离结果并去重重入点击。初始状态 unknown，只有插件返回 bool 才标记最后确认收藏/未收藏；不从旧收藏数据库或历史记录推断。原按钮已接入：已知状态单击切换，未知状态用原 QMenu 显式选择操作，无权限/pending/停播/缺 Adapter 禁用；菜单保存 token，切歌后关闭且旧动作拒绝。legacy 数据库只在显式兼容模式使用。SDK 仍没有统一读取收藏状态的 Provider，不能把最后确认结果视为跨重播或外部修改后的权威读状态。Source SDK v2/Plugin UI API ABI 不变；新增 Host C++ API 需与展示层同步构建。
 
+Windows SMTC 随后接入统一播放桥接：Source 输入仅控制 Core，元数据仅提取当前 title/artists/album 与本地缓存封面，AppMediaId 使用 opaque occurrence，不读旧队列或分享 SourceRef/播放资源。停播清理信息/时间线并禁用控制，缺 Adapter 或服务不可用不回退；旧 mainMedia 迟到信号不能覆盖 Source 系统状态。Core 状态、进度、队列和封面变化同步系统展示，原生封面读取失败也清除旧缩略图。主程序构建和九个联合套件通过，但 macOS 只验证 QML 服务边界，Windows WinRT 分支编译、系统浮层/物理键/进度/图片权限仍待真实 Windows 验收。Source SDK v2、Plugin UI API 与 SMTC API 不变，下载、频谱与详情/选项等剩余入口仍未完全统一。
+
 出口：视觉和核心交互回归通过；QML 中不再存在 `source == -1`、Netease/Kugou switch 或 `MusicApi` 音源 fallback；无能力动作自动隐藏/禁用。
 
 ### Phase 7：Navidrome 样板插件收口

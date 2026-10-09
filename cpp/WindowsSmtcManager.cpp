@@ -759,8 +759,8 @@ void WindowsSmtcManager::Private::updateMediaInfo(const QString &title,
     if (!cover.isEmpty()) {
         SmtcAbi::ComPtr<SmtcAbi::IRandomAccessStreamReference> thumb =
             SmtcAbi::createThumbnailFromUrl(cover);
-        if (thumb)
-            displayUpdater->put_Thumbnail(thumb.get());
+        // A failed new image must not leave the previous track's thumbnail behind.
+        displayUpdater->put_Thumbnail(thumb.get());
     } else {
         displayUpdater->put_Thumbnail(nullptr);
     }

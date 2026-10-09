@@ -7,6 +7,8 @@
 #include <QtQml/QQmlEngine>
 
 #include <memory>
+#include "../cpp/WindowsSmtcManager.h"
+#include "../core/playback/QtPlaybackController.h"
 
 class QueueModelDouble final : public QObject {
     Q_OBJECT
@@ -99,6 +101,7 @@ private slots:
     void sourceTransportNeverTouchesLegacyPlayer();
     void currentFavoriteRequiresCapabilitiesAndTheMenuPlaybackToken();
     void actualFavoriteButtonShowsChoicesAndRejectsAStaleMenu();
+    void smtcUsesSourceStateAndIgnoresLegacyEvents();
 };
 
 class LyricsAdapterDouble final : public QObject {
@@ -188,17 +191,23 @@ void OriginalUiPlaybackQmlTest::sourceTransportNeverTouchesLegacyPlayer()
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(controls.playCalls, 1);
     controls.playing = true; emit controls.playingChanged();
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(controls.pauseCalls, 1);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "play")); QCOMPARE(controls.playCalls, 2);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "pause")); QCOMPARE(controls.pauseCalls, 2);
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 640))); QCOMPARE(controls.sought, 640);
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, -1))); QCOMPARE(controls.sought, 640);
     controls.seekable = false; emit controls.seekableChanged();
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 200))); QCOMPARE(controls.sought, 640);
     QVERIFY(adapter->setProperty("sourceActive", false));
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback"));
-    QCOMPARE(controls.playCalls, 1); QCOMPARE(controls.pauseCalls, 1);
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "play"));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "pause"));
+    QCOMPARE(controls.playCalls, 2); QCOMPARE(controls.pauseCalls, 2);
     QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.pauseCalls, 0); QCOMPARE(legacy.position, 0);
     QVERIFY(adapter->setProperty("controls", QVariant::fromValue<QObject *>(nullptr)));
     QVERIFY(adapter->setProperty("sourceActive", true));
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback"));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "play"));
+    QVERIFY(QMetaObject::invokeMethod(adapter.get(), "pause"));
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 300)));
     QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.position, 0);
     QVERIFY(adapter->setProperty("sourceMode", false));
@@ -207,6 +216,166 @@ void OriginalUiPlaybackQmlTest::sourceTransportNeverTouchesLegacyPlayer()
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "togglePlayback")); QCOMPARE(legacy.pauseCalls, 1);
     QVERIFY(QMetaObject::invokeMethod(adapter.get(), "seek", Q_ARG(QVariant, 500))); QCOMPARE(legacy.position, 500);
     QCOMPARE(controls.sought, 640);
+}
+
+void OriginalUiPlaybackQmlTest::smtcUsesSourceStateAndIgnoresLegacyEvents()
+{
+    QQmlEngine engine; PlaybackControllerDouble controls; LegacyPlayerDouble legacy;
+    QQmlComponent bridgeComponent(&engine, QUrl("qrc:/QueMusic/components/PlaybackLyricsAdapter.qml"));
+    std::unique_ptr<QObject> bridge(bridgeComponent.createWithInitialProperties({
+        {"controls", QVariant::fromValue<QObject *>(&controls)},
+        {"legacyPlayer", QVariant::fromValue<QObject *>(&legacy)},
+        {"sourceMode", true}, {"sourceActive", true}, {"legacyActive", true}}));
+    QVERIFY2(bridge, qPrintable(bridgeComponent.errorString()));
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto start = source.indexOf("    function updateSmtcControls()");
+    const auto end = source.indexOf("    // 播放列表\n    LegacyQueueController", start);
+    QVERIFY(start >= 0 && end > start);
+    auto body = source.mid(start, end - start);
+    // Execute the production functions and Connections, substituting only the native service.
+    const auto nativeStart = body.indexOf("    WindowsSmtcManager {");
+    const auto nativeEnd = body.indexOf("    Connections {", nativeStart);
+    QVERIFY(nativeStart >= 0 && nativeEnd > nativeStart);
+    body.remove(nativeStart, nativeEnd - nativeStart);
+    body.replace("WindowsSmtcManager.", "smtcStates.");
+    const auto fixture = QStringLiteral(R"(import QtQuick
+import QtMultimedia
+Item {
+    id: window
+    property var lyricsAdapter
+    property var playbackAdapter
+    property var smtcStates
+    property bool sourceLyricsMode: true
+    property bool securePlaybackCurrent: true
+    property string currentCover: "file:///fixture/cache/source.png"
+    property string musicTitle: "Legacy title"
+    property string musicArtist: "Legacy artist"
+    property QtObject playbackCoordinator: QtObject {
+        property var queue: [{}, {}]
+        property int currentIndex: 1
+        property string currentOccurrence: "opaque-occurrence-A"
+        property var currentItem: ({title: "Source title", artists: ["Source artist", "Other"], album: "Source album",
+                                    ref: {accountId: "private-account"}, streamUrl: "https://private.invalid/audio"})
+    }
+    property QtObject playListModel: QtObject {
+        property int count: 2; property int playListIndex: 0; property int reads: 0
+        function get(index) { ++reads; return {path: "private-legacy-path"}; }
+    }
+    property QtObject musicControlMin: QtObject {
+        property int nextCalls: 0; property int previousCalls: 0
+        function enterMedia() { ++nextCalls; } function lastMedia() { ++previousCalls; }
+    }
+    property QtObject mainMedia: QtObject {
+        property string album: "Legacy album"; property string urlStr: "https://legacy.invalid/cover"
+        property int position: 9000; property int duration: 99000; property int playbackState: MediaPlayer.PlayingState
+        signal sourceChanged()
+    }
+    property QtObject windowsSmtc: QtObject {
+        property bool available: true
+        property var metadata: []; property var timeline: []; property var enabledControls: []
+        property int status: -1; property int calls: 0
+        signal playPressed(); signal pausePressed(); signal nextPressed(); signal previousPressed(); signal seekRequested(int pos)
+        function setControlsEnabled(play, pause, next, previous) { ++calls; enabledControls = [play, pause, next, previous]; }
+        function setPlaybackStatus(value) { ++calls; status = value; }
+        function updateMediaInfo(title, artist, album, cover, mediaId) { ++calls; metadata = [title, artist, album, cover, mediaId]; }
+        function updateTimeline(position, duration) { ++calls; timeline = [position, duration]; }
+    }
+    function lateLegacySignals() {
+        mainMedia.sourceChanged(); mainMedia.duration = 88888;
+        mainMedia.position = 77777; mainMedia.playbackState = MediaPlayer.PausedState;
+    }
+%1
+})").arg(body);
+    const QVariantMap states{{"Closed", int(WindowsSmtcManager::Closed)}, {"Changing", int(WindowsSmtcManager::Changing)},
+        {"Stopped", int(WindowsSmtcManager::Stopped)}, {"Playing", int(WindowsSmtcManager::Playing)}, {"Paused", int(WindowsSmtcManager::Paused)}};
+    QQmlComponent component(&engine); component.setData(fixture.toUtf8(), QUrl("qrc:/smtc-fixture.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({
+        {"lyricsAdapter", QVariant::fromValue(bridge.get())}, {"playbackAdapter", QVariant::fromValue<QObject *>(&controls)},
+        {"smtcStates", states}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    auto *smtc = root->property("windowsSmtc").value<QObject *>(); QVERIFY(smtc);
+    auto *queue = root->property("playListModel").value<QObject *>(); QVERIFY(queue);
+    auto *coordinator = root->property("playbackCoordinator").value<QObject *>(); QVERIFY(coordinator);
+    auto *navigation = root->property("musicControlMin").value<QObject *>(); QVERIFY(navigation);
+    const auto refresh = [&] { return QMetaObject::invokeMethod(root.get(), "syncSmtcPlayback"); };
+    QVERIFY(refresh());
+    QCOMPARE(smtc->property("metadata").toList(), QVariantList({"Source title", "Source artist, Other", "Source album",
+                                                             "file:///fixture/cache/source.png", "opaque-occurrence-A"}));
+    QCOMPARE(queue->property("reads").toInt(), 0);
+    QCOMPARE(smtc->property("enabledControls").toList(), QVariantList({true, true, true, true}));
+    QCOMPARE(smtc->property("timeline").toList(), QVariantList({100, 1000}));
+    for (const auto &[state, status] : QList<QPair<int, int>>{
+             {QtPlaybackController::Idle, WindowsSmtcManager::Closed},
+             {QtPlaybackController::Loading, WindowsSmtcManager::Changing},
+             {QtPlaybackController::Playing, WindowsSmtcManager::Playing},
+             {QtPlaybackController::Paused, WindowsSmtcManager::Paused},
+             {QtPlaybackController::Stopped, WindowsSmtcManager::Stopped},
+             {QtPlaybackController::Error, WindowsSmtcManager::Stopped}}) {
+        controls.state = state; emit controls.stateChanged();
+        QCOMPARE(smtc->property("status").toInt(), status);
+    }
+    controls.position = 640; emit controls.positionChanged();
+    controls.duration = 1200; emit controls.durationChanged();
+    QCOMPARE(smtc->property("timeline").toList(), QVariantList({640, 1200}));
+    const auto before = smtc->property("calls").toInt();
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "lateLegacySignals"));
+    QCOMPARE(smtc->property("calls").toInt(), before);
+    QVERIFY(QMetaObject::invokeMethod(smtc, "playPressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "pausePressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "seekRequested", Q_ARG(int, 500)));
+    QCOMPARE(controls.playCalls, 1); QCOMPARE(controls.pauseCalls, 1); QCOMPARE(controls.sought, 500);
+    QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.pauseCalls, 0); QCOMPARE(legacy.position, 0);
+    QVERIFY(QMetaObject::invokeMethod(smtc, "nextPressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "previousPressed"));
+    QCOMPARE(navigation->property("nextCalls").toInt(), 1); QCOMPARE(navigation->property("previousCalls").toInt(), 1);
+    QVERIFY(root->setProperty("currentCover", "qrc:/default.png"));
+    QCOMPARE(smtc->property("metadata").toList().at(3).toString(), QString());
+    QVERIFY(coordinator->setProperty("currentIndex", 0));
+    QVERIFY(coordinator->setProperty("queue", QVariantList{QVariantMap{}})); QVERIFY(refresh());
+    QCOMPARE(smtc->property("enabledControls").toList(), QVariantList({true, true, false, false}));
+    QVERIFY(root->setProperty("playbackAdapter", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(bridge->setProperty("controls", QVariant::fromValue<QObject *>(nullptr)));
+    QCOMPARE(smtc->property("enabledControls").toList(), QVariantList({false, false, false, false}));
+    QCOMPARE(smtc->property("timeline").toList(), QVariantList({0, 0}));
+    QCOMPARE(smtc->property("status").toInt(), int(WindowsSmtcManager::Closed));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "playPressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "pausePressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "seekRequested", Q_ARG(int, 900)));
+    QCOMPARE(controls.playCalls, 1); QCOMPARE(controls.pauseCalls, 1); QCOMPARE(controls.sought, 500);
+    QCOMPARE(legacy.playCalls, 0); QCOMPARE(legacy.pauseCalls, 0); QCOMPARE(queue->property("reads").toInt(), 0);
+    QVERIFY(root->setProperty("playbackAdapter", QVariant::fromValue<QObject *>(&controls)));
+    QVERIFY(bridge->setProperty("controls", QVariant::fromValue<QObject *>(&controls)));
+    QVERIFY(root->setProperty("securePlaybackCurrent", false));
+    QVERIFY(bridge->setProperty("sourceActive", false)); QVERIFY(refresh());
+    QCOMPARE(smtc->property("metadata").toList(), QVariantList({"", "", "", "", ""}));
+    QCOMPARE(smtc->property("timeline").toList(), QVariantList({0, 0}));
+    QCOMPARE(smtc->property("enabledControls").toList(), QVariantList({false, false, false, false}));
+    QCOMPARE(smtc->property("status").toInt(), int(WindowsSmtcManager::Closed));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "playPressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "pausePressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "seekRequested", Q_ARG(int, 800)));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "nextPressed"));
+    QCOMPARE(controls.playCalls, 1); QCOMPARE(controls.pauseCalls, 1); QCOMPARE(controls.sought, 500);
+    QCOMPARE(navigation->property("nextCalls").toInt(), 1);
+    QVERIFY(root->setProperty("sourceLyricsMode", false));
+    QVERIFY(bridge->setProperty("sourceMode", false));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "playPressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "pausePressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "seekRequested", Q_ARG(int, 300)));
+    QCOMPARE(legacy.playCalls, 1); QCOMPARE(legacy.pauseCalls, 1); QCOMPARE(legacy.position, 300);
+    QVERIFY(queue->property("reads").toInt() > 0);
+    QCOMPARE(smtc->property("metadata").toList().at(4).toString(), QString("private-legacy-path"));
+    QVERIFY(smtc->setProperty("available", false));
+    const auto unavailableCalls = smtc->property("calls").toInt(); QVERIFY(refresh());
+    QCOMPARE(smtc->property("calls").toInt(), unavailableCalls);
+    QVERIFY(QMetaObject::invokeMethod(smtc, "playPressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "pausePressed"));
+    QVERIFY(QMetaObject::invokeMethod(smtc, "seekRequested", Q_ARG(int, 999)));
+    QCOMPARE(legacy.playCalls, 1); QCOMPARE(legacy.pauseCalls, 1); QCOMPARE(legacy.position, 300);
+    QVERIFY(smtc->setProperty("available", true));
+    QVERIFY(smtc->property("calls").toInt() > unavailableCalls);
 }
 
 void OriginalUiPlaybackQmlTest::currentFavoriteRequiresCapabilitiesAndTheMenuPlaybackToken()
@@ -441,6 +610,9 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
         }
     }
     QVERIFY(source.contains(QStringLiteral("playbackLyrics.togglePlayback()")));
+    QVERIFY(source.contains(QStringLiteral("if (window.sourceLyricsMode) syncSmtcPlayback();")));
+    QVERIFY(source.contains(QStringLiteral("function onQueueChanged() { if (window.sourceLyricsMode) updateSmtcControls(); }")));
+    QVERIFY(source.contains(QStringLiteral("String(playbackCoordinator.currentOccurrence || \"\")")));
     QFile controlsFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml"));
     QVERIFY(controlsFile.open(QIODevice::ReadOnly | QIODevice::Text));
     const auto controlsText = QString::fromUtf8(controlsFile.readAll());

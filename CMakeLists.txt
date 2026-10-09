@@ -985,6 +985,8 @@ if(BUILD_TESTING)
     target_compile_features(quemusic_original_ui_playback_qml_test PRIVATE cxx_std_17)
     target_compile_definitions(quemusic_original_ui_playback_qml_test PRIVATE
         QUEMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(quemusic_original_ui_playback_qml_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/music ${CMAKE_CURRENT_SOURCE_DIR}/sdk/source)
     qt_add_resources(quemusic_original_ui_playback_qml_test
         "quemusic_original_ui_playback_qml_test_qml"
         PREFIX "/QueMusic"

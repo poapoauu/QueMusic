@@ -913,7 +913,9 @@ Window {
         target: playbackCoordinator
         function onCurrentChanged() {
             window.syncSecureCurrent();
+            if (window.sourceLyricsMode) syncSmtcPlayback();
         }
+        function onQueueChanged() { if (window.sourceLyricsMode) updateSmtcControls(); }
         function onPlaybackFailed(generation, messageKey) {
             if (generation === playbackCoordinator.currentGeneration)
                 mainWarn.tiped(messageKey, 2);
@@ -1049,19 +1051,44 @@ Window {
     function updateSmtcControls() {
         if (!windowsSmtc.available)
             return;
+        if (window.sourceLyricsMode) {
+            var ready = !!(window.securePlaybackCurrent && window.playbackAdapter && playbackCoordinator);
+            var sourceCount = ready ? playbackCoordinator.queue.length : 0;
+            var sourceIndex = ready ? playbackCoordinator.currentIndex : -1;
+            // Source next wraps to the first occurrence; previous does not wrap.
+            windowsSmtc.setControlsEnabled(ready, ready, ready && sourceCount > 1,
+                                           ready && sourceIndex > 0);
+            return;
+        }
         var count = playListModel.count;
         var idx = playListModel.playListIndex;
-        windowsSmtc.setControlsEnabled(true, true, idx < count - 1, idx > 0);
+        var valid = idx >= 0 && idx < count;
+        windowsSmtc.setControlsEnabled(valid, valid, valid && idx < count - 1, valid && idx > 0);
     }
 
     // 统一将当前曲目信息推给 SMTC。
-    // AppMediaId 取播放列表当前项的稳定标识 path（在线歌曲为歌曲 hash、本地文件为文件路径），供系统按曲目分组元信息；
-    // 列表未就绪/无当前项时传空串，C++ 侧会清除旧的 id。
+    // Source 的 AppMediaId 仅使用 opaque occurrence；旧 path 标识只留在显式兼容模式。
+    // 无当前项时清除旧 id、专辑与封面，不将 SourceRef 或播放资源传给系统。
     function smtcUpdateMediaInfo() {
         if (!windowsSmtc.available)
             return
+        if (window.sourceLyricsMode) {
+            if (!window.securePlaybackCurrent || !playbackCoordinator) {
+                windowsSmtc.updateMediaInfo("", "", "", "", "");
+                return;
+            }
+            var current = playbackCoordinator.currentItem || {};
+            var artists = current.artists || [];
+            var artist = typeof artists.join === "function" ? artists.join(", ") : "";
+            // Only Host-cached files are shared with the OS, never plugin resource URLs.
+            // qrc defaults cannot be read by Windows; an empty cover clears the old thumbnail.
+            var cover = window.currentCover.indexOf("file://") === 0 ? window.currentCover : "";
+            windowsSmtc.updateMediaInfo(current.title || "", artist, current.album || "", cover,
+                                       String(playbackCoordinator.currentOccurrence || ""));
+            return;
+        }
         var mediaId = ""
-        if (playListModel.count > 0 && playListModel.playListIndex >= 0) {
+        if (playListModel.playListIndex >= 0 && playListModel.playListIndex < playListModel.count) {
             var item = playListModel.get(playListModel.playListIndex)
             if (item)
                 mediaId = item.path
@@ -1070,30 +1097,83 @@ Window {
                                     mainMedia.album, mainMedia.urlStr, mediaId)
     }
 
+    function smtcUpdateTimeline() {
+        if (!windowsSmtc.available) return;
+        windowsSmtc.updateTimeline(window.lyricsAdapter.position, window.lyricsAdapter.duration);
+    }
+
+    function smtcUpdatePlaybackStatus() {
+        if (!windowsSmtc.available) return;
+        if (window.sourceLyricsMode) {
+            // PlaybackControlsAdapter.state follows QtPlaybackController::State.
+            var statuses = [WindowsSmtcManager.Closed, WindowsSmtcManager.Changing,
+                            WindowsSmtcManager.Playing, WindowsSmtcManager.Paused,
+                            WindowsSmtcManager.Stopped, WindowsSmtcManager.Stopped];
+            var state = window.securePlaybackCurrent && window.playbackAdapter ? window.playbackAdapter.state : 0;
+            windowsSmtc.setPlaybackStatus(statuses[state] === undefined ? WindowsSmtcManager.Closed : statuses[state]);
+            return;
+        }
+        switch (mainMedia.playbackState) {
+        case MediaPlayer.PlayingState: windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Playing); break;
+        case MediaPlayer.PausedState: windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Paused); break;
+        case MediaPlayer.StoppedState: windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Stopped); break;
+        default: windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Closed); break;
+        }
+    }
+
+    function syncSmtcPlayback() {
+        updateSmtcControls();
+        smtcUpdateMediaInfo();
+        smtcUpdateTimeline();
+        smtcUpdatePlaybackStatus();
+    }
+
     // Windows SMTC
     WindowsSmtcManager {
         id: windowsSmtc
 
         Component.onCompleted: {
             windowsSmtc.initialize(window);
-            updateSmtcControls()
+            syncSmtcPlayback()
         }
     }
 
     Connections {
         target: windowsSmtc
 
-        function onPlayPressed() { mainMedia.play() }
-        function onPausePressed() { mainMedia.pause() }
-        function onNextPressed() { musicControlMin.enterMedia() }
-        function onPreviousPressed() { musicControlMin.lastMedia() }
-        function onSeekRequested(pos) { mainMedia.position = pos }
+        function onAvailableChanged() { syncSmtcPlayback(); }
+        function onPlayPressed() { if (windowsSmtc.available) window.lyricsAdapter.play(); }
+        function onPausePressed() { if (windowsSmtc.available) window.lyricsAdapter.pause(); }
+        function onNextPressed() {
+            if (!windowsSmtc.available) return;
+            if (window.sourceLyricsMode && (!window.securePlaybackCurrent || !window.playbackAdapter)) return;
+            musicControlMin.enterMedia();
+        }
+        function onPreviousPressed() {
+            if (!windowsSmtc.available) return;
+            if (window.sourceLyricsMode && (!window.securePlaybackCurrent || !window.playbackAdapter)) return;
+            musicControlMin.lastMedia();
+        }
+        function onSeekRequested(pos) { if (windowsSmtc.available) window.lyricsAdapter.seek(pos); }
+    }
+
+    Connections {
+        target: window.lyricsAdapter
+        function onPositionChanged() { if (window.sourceLyricsMode) smtcUpdateTimeline(); }
+        function onDurationChanged() { if (window.sourceLyricsMode) smtcUpdateTimeline(); }
+        function onActiveChanged() { if (window.sourceLyricsMode) syncSmtcPlayback(); }
+    }
+
+    Connections {
+        target: window.playbackAdapter
+        function onStateChanged() { if (window.sourceLyricsMode) smtcUpdatePlaybackStatus(); }
     }
 
     Connections {
         target: mainMedia
 
         function onSourceChanged() {
+            if (window.sourceLyricsMode) return;
             // 切歌/新曲目开始播放的瞬间：主动推送 position=0 并刷新时间线；
             // duration 尚未就绪（<=0）时由 C++ 侧走全零重置分支清空上一首的残留进度。
             if (windowsSmtc.available)
@@ -1101,34 +1181,19 @@ Window {
             updateSmtcControls()
         }
         function onDurationChanged() {
+            if (window.sourceLyricsMode) return;
             // 新歌时长加载完成：以 position=0 主动推送一条完整时间线，
             // 随后 onPositionChanged 会用实时位置持续刷新。
             if (windowsSmtc.available && mainMedia.duration > 0)
                 windowsSmtc.updateTimeline(0, mainMedia.duration)
         }
         function onPlaybackStateChanged() {
+            if (window.sourceLyricsMode) return;
             updateSmtcControls()
-            if (!windowsSmtc.available)
-                return
-            switch (mainMedia.playbackState) {
-            case MediaPlayer.PlayingState:
-                windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Playing)
-                break
-            case MediaPlayer.PausedState:
-                windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Paused)
-                break
-            case MediaPlayer.StoppedState:
-                windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Stopped)
-                break
-            case MediaPlayer.NoMediaState:
-                windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Closed)
-                break
-            default:
-                windowsSmtc.setPlaybackStatus(WindowsSmtcManager.Closed)
-                break
-            }
+            smtcUpdatePlaybackStatus()
         }
         function onPositionChanged() {
+            if (window.sourceLyricsMode) return;
             if (windowsSmtc.available)
                 windowsSmtc.updateTimeline(mainMedia.position, mainMedia.duration)
         }
@@ -1136,6 +1201,10 @@ Window {
 
     Connections {
         target: window
+
+        function onSourceLyricsModeChanged() { syncSmtcPlayback(); }
+        function onCurrentCoverChanged() { smtcUpdateMediaInfo(); }
+        function onPlaybackAdapterChanged() { if (window.sourceLyricsMode) syncSmtcPlayback(); }
 
         function onMusicTitleChanged() {
             if (windowsSmtc.available)
