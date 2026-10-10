@@ -600,6 +600,7 @@ Window {
             onRequestPluginSettings: (packageId, instanceId) =>
                 window.openPluginSettings(packageId, instanceId)
             playbackAdapter: window.playbackAdapter
+            historyAdapter: queueHistoryStore
             x: sidebar.width
             y: 0
             width: parent.width - x

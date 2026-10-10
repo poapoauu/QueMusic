@@ -26,6 +26,21 @@ private:
     }
 
 private slots:
+    void historyProjectionIsInjectedThroughTheOriginalHostShell()
+    {
+        const auto main = readSource("main.qml");
+        const auto shell = readSource("layout/MainContent.qml");
+        const auto page = readSource("pages/FavouritePage.qml");
+        QVERIFY(main.contains("historyAdapter: queueHistoryStore"));
+        QVERIFY(shell.contains("property var historyAdapter: null"));
+        const auto favorite = shell.mid(shell.indexOf("sourceComponent: FavouritePage"), 350);
+        QVERIFY(favorite.contains("historyAdapter: mainContent.historyAdapter"));
+        QVERIFY(page.contains("objectName: \"favoriteHistoryList\""));
+        QVERIFY(page.contains("historyAdapter.entriesForSource(scope || \"\")"));
+        QVERIFY(page.contains("historyAdapter.playEntry(row.key)"));
+        QVERIFY(!page.contains("MusicApi"));
+        QVERIFY(!page.contains("playListModel"));
+    }
     void settingsShellHasNoRetiredConcreteSourceAccountRoute()
     {
         const auto main = readSource(QStringLiteral("main.qml"));

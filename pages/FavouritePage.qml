@@ -8,6 +8,28 @@ Item {
     id: favouritePage
     property var musicAdapter: null
     property var playbackAdapter: null
+    property var historyAdapter: null
+    readonly property var historyRows: {
+        if (!historyAdapter || typeof historyAdapter.entriesForSource !== "function") return []
+        // Reading the presentation property registers its change notification.
+        const snapshot = historyAdapter.entries
+        const scope = musicAdapter ? musicAdapter.selectedSourceInstanceId : ""
+        return historyAdapter.entriesForSource(scope || "").map(function(row) {
+            const display = Object.assign({}, row)
+            display.artist = row.artist + " · " + Qt.formatDateTime(row.playedAt, "yyyy-MM-dd hh:mm")
+                + (row.sourceLabel ? " · " + row.sourceLabel : "")
+                + (row.replayable ? "" : " · 无法重播")
+            return display
+        })
+    }
+
+    function replayHistory(index) {
+        if (!visible || !history.visible || !historyAdapter
+                || typeof historyAdapter.playEntry !== "function"
+                || !Number.isInteger(index) || index < 0 || index >= historyRows.length) return false
+        const row = historyRows[index]
+        return row.replayable === true && !!historyAdapter.playEntry(row.key)
+    }
     property int setMode: 0
     property list<int> chooseIndex: []
     property bool changingFavoriteContext: false
@@ -293,14 +315,39 @@ Item {
                 font.pixelSize: 14
             }
         }
-        Item {
+        QListView {
             id: history
+            objectName: "favoriteHistoryList"
             visible: false
-            width: favouriteChildPage.width
+            width: favouriteChildPage.width + 16
             height: favouriteChildPage.height
+            model: favouritePage.historyRows
+            clip: true
+            topMargin: 72
+            isList: true
+            showListCount: false
+            headerModel: ["标题", "播放记录", "", "操作"]
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            toolText0ForRow: function(index) {
+                const row = favouritePage.historyRows[index]
+                return row && row.replayable ? "\uf04b" : ""
+            }
+            hasMore: false
+            loadingMore: false
+            useLegacyLoadingState: false
+            isEnd: count > 0
+            onClicked: (index) => favouritePage.replayHistory(index)
+            onToolClicked: (index, tool) => {
+                if (tool === 0) favouritePage.replayHistory(index)
+            }
             Text {
+                objectName: "favoriteHistoryStatus"
                 anchors.centerIn: parent
-                text: "历史记录"
+                visible: history.count === 0
+                text: !historyAdapter ? "历史记录不可用" : "当前范围暂无播放记录"
+                textFormat: Text.PlainText
                 color: Style.themes.textColor
                 font.pixelSize: 14
             }

@@ -15,6 +15,7 @@ class QueueHistoryStore final : public QObject {
     Q_PROPERTY(QString warningKey READ warningKey NOTIFY warningChanged)
     Q_PROPERTY(QString backupPath READ backupPath NOTIFY warningChanged)
     Q_PROPERTY(QVariantMap latest READ latest NOTIFY historyChanged)
+    Q_PROPERTY(QVariantList entries READ entries NOTIFY historyChanged)
 public:
     struct Hooks {
         std::function<bool(const QString &, const QByteArray &)> write;
@@ -26,6 +27,10 @@ public:
     bool loadAndAttach();
     QList<RecentPlay> history() const;
     QVariantMap latest() const;
+    // Host-private presentation only; keys never contain media/account identity.
+    QVariantList entries() const;
+    Q_INVOKABLE QVariantList entriesForSource(const QString &sourceInstanceId) const;
+    Q_INVOKABLE bool playEntry(const QString &key);
     Q_INVOKABLE bool playLatest();
     LegacyImportResult importLegacyFile(const QString &path);
     Q_INVOKABLE bool retrySave();
@@ -36,6 +41,7 @@ signals:
     void historyChanged();
 private:
     int latestQueueIndex() const;
+    int queueIndex(const RecentPlay &play) const;
     void persist();
     void recordStart(const QUuid &generation);
     void warn(const QString &key);
@@ -45,6 +51,7 @@ private:
     QString m_filePath;
     Hooks m_hooks;
     QList<RecentPlay> m_history;
+    QStringList m_historyKeys;
     QString m_warningKey;
     QString m_backupPath;
     QUuid m_lastRecordedGeneration;

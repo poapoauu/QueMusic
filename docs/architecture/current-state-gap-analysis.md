@@ -613,6 +613,16 @@ Home 私人漫游/雷达已复用独立发现模型与安全动作，保留原�
 
 全目标增量构建成功，最新测试目标重建后全部 73 项 CTest 通过（122.53 秒）。下一项历史 UI：实际 QueueHistoryStore.history() 为 C++ typed 数据，QML 仅有 latest / playLatest，尚无完整安全行模型；新增列表/私有动作身份时复用可信 Coordinator 队列 occurrence，脱离队列的记录不得猜造资源或权限。Source SDK v2 / Source 插件 ABI / Plugin UI API 保持不变。
 
+### 后续增量：原收藏历史占位已迁移为安全列表
+
+QueueHistoryStore 新增 Host 私有安全行与按 Source 范围筛选，沿用 typed history / schemaVersion 1；QML 不读取完整媒体身份或动作 DTO。main → MainContent → 原收藏 tab 显式注入；复用 QListView / Theme，显示时间和不可重播状态，只传随机记录 key。隐藏/空/非法索引/Adapter 移除/拒绝均不回流 Legacy。
+
+原最近播放与完整历史重播统一要求可信队列 occurrence 加完整五元组匹配，不从同名歌曲/另一账号/移出队列的快照重建权限；执行仍通过 Coordinator。记录 key 不落盘，新增记录保持已有 key，上限淘汰/重启撤销旧 key，Coordinator 销毁保留展示但禁止重播。测试显式打开夹具 Source 会话，恢复队列不自动播放的约束保留。
+
+关闭了历史占位差距，不宣称实时有效能力展示、脱离队列重播、Phase 6 或最终平台插件化完成。下一步审计播放切换同步回调中的队列身份和索引，再推进普通页面能力变化后的旧行/游标失效；SDK v2 / Source 插件 ABI / Plugin UI API / 历史磁盘 schema 不变。
+
+全目标增量构建成功；修正显式打开会话的历史夹具后，全部 73 项 CTest 复跑通过（75.72 秒），包含生产 QML 与 macOS 打包/移动回归；不是从零构建、真实服务、物理音频、手工视觉或跨平台 ABI 验收。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

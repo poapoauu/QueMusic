@@ -1,6 +1,7 @@
 #include <QAbstractListModel>
 #include <QCoreApplication>
 #include <QDir>
+#include <QDateTime>
 #include <QQuickItem>
 #include <QTest>
 #include <QTimer>
@@ -287,6 +288,30 @@ public:
     FakeMusicApi musicApi; FakeWindow window; FakeMainContent mainContent; FakeListModel legacy;
 };
 
+class FakeHistoryAdapter final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList entries MEMBER rows NOTIFY historyChanged)
+public:
+    QVariantList rows{
+        QVariantMap{{"key", "opaque-home"}, {"title", "<b>History</b>"}, {"artist", "Artist"},
+                    {"album", "Album"}, {"duration", 10}, {"sourceLabel", "Home"},
+                    {"playedAt", QDateTime::currentDateTimeUtc()}, {"replayable", true}},
+        QVariantMap{{"key", "opaque-other"}, {"title", "History"}, {"artist", "Artist"},
+                    {"album", "Album"}, {"duration", 10}, {"sourceLabel", ""},
+                    {"playedAt", QDateTime::currentDateTimeUtc()}, {"replayable", false}}};
+    QStringList played;
+    Q_INVOKABLE QVariantList entriesForSource(const QString &scope) const {
+        if (scope.isEmpty()) return rows;
+        if (scope == "adapter/home" && !rows.isEmpty()) return {rows.first()};
+        if (scope == "adapter/other" && rows.size() > 1) return {rows.at(1)};
+        return {};
+    }
+    Q_INVOKABLE bool playEntry(const QString &key) { played << key; return accepts; }
+    bool accepts = true;
+signals:
+    void historyChanged();
+};
+
 class QmlDiagnosticCapture final {
 public:
     QmlDiagnosticCapture()
@@ -356,6 +381,50 @@ private slots:
         QCOMPARE(context.musicApi.legacyPlays, 0);
         QCOMPARE(context.musicApi.legacyPlaylistRequests, 0);
         QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+    }
+
+    void historyUsesSafeProjectionScopeAndOpaqueReplayWithoutLegacyFallback()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; FakeHistoryAdapter history;
+        QmlDiagnosticCapture diagnostics; QString error;
+        auto page=load(engine,"pages/FavouritePage.qml",&adapter,&error); QVERIFY2(page,qPrintable(error));
+        auto *view=page->findChild<QObject *>("favoriteHistoryList"); QVERIFY(view);
+        auto *status=page->findChild<QObject *>("favoriteHistoryStatus"); QVERIFY(status);
+        QCOMPARE(view->property("count").toInt(),0);
+        QCOMPARE(status->property("text").toString(),QString("历史记录不可用"));
+        QVERIFY(page->setProperty("historyAdapter",QVariant::fromValue<QObject *>(&history)));
+        QCOMPARE(view->property("count").toInt(),2);
+        QVERIFY(!view->property("hasMore").toBool());
+        QVERIFY(!view->property("useLegacyLoadingState").toBool());
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0))); // hidden tab
+        QVERIFY(history.played.isEmpty());
+        auto *tabs=page->findChild<QObject *>("favoriteTabs"); QVERIFY(tabs);
+        QVERIFY(QMetaObject::invokeMethod(tabs,"tabChange",Q_ARG(int,3)));
+        QVERIFY(QMetaObject::invokeMethod(view,"forceLayout"));
+        QTRY_VERIFY(visualChild(qobject_cast<QQuickItem *>(view),"sourceRowTitle"));
+        auto *title=visualChild(qobject_cast<QQuickItem *>(view),"sourceRowTitle");
+        QCOMPARE(title->property("text").toString(),QString("<b>History</b>"));
+        QCOMPARE(title->property("textFormat").toInt(),0);
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0)));
+        QCOMPARE(history.played,QStringList{"opaque-home"});
+        for (int index : {-1,1,2,99}) QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,index)));
+        QVERIFY(QMetaObject::invokeMethod(view,"toolClicked",Q_ARG(int,0),Q_ARG(int,1)));
+        QCOMPARE(history.played.size(),1);
+        history.accepts=false;
+        QVERIFY(QMetaObject::invokeMethod(view,"toolClicked",Q_ARG(int,0),Q_ARG(int,0)));
+        QCOMPARE(history.played.size(),2); // rejection never falls through to legacy
+        adapter.setSelectedSourceInstanceId("adapter/other");
+        QCOMPARE(view->property("count").toInt(),1);
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0))); QCOMPARE(history.played.size(),2);
+        adapter.setSelectedSourceInstanceId("missing"); QCOMPARE(view->property("count").toInt(),0);
+        QCOMPARE(status->property("text").toString(),QString("当前范围暂无播放记录"));
+        adapter.setSelectedSourceInstanceId({}); QCOMPARE(view->property("count").toInt(),2);
+        history.rows.clear(); emit history.historyChanged(); QCOMPARE(view->property("count").toInt(),0);
+        QVERIFY(page->setProperty("historyAdapter",QVariant::fromValue<QObject *>(nullptr)));
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0))); QCOMPARE(history.played.size(),2);
+        QCOMPARE(context.musicApi.legacyPlays,0); QCOMPARE(context.legacy.legacyFavoriteCalls,0);
+        QVERIFY(adapter.played.isEmpty()); QVERIFY(adapter.enqueued.isEmpty());
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(),qPrintable(diagnostics.runtimeErrors()));
     }
 
     void favoritesUseAdapterModelsAndActions()

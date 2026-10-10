@@ -13,6 +13,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <memory>
 
 class StoreSink final : public PlaybackSink {
 public:
@@ -64,6 +65,106 @@ static bool writeBytes(const QString &path, const QByteArray &bytes) {
 class QueueHistoryStoreTest : public QObject {
     Q_OBJECT
 private slots:
+    void safeHistoryKeysReplayOnlyMatchingTrustedOccurrences() {
+        Harness h; QVERIFY(h.init());
+        auto *session = h.registry.sessionFor("task12c/home"); QVERIFY(session);
+        QTRY_COMPARE(session->state(), SourceSessionStateV2::Ready);
+        auto before = occurrence("local", "local/one", "before");
+        auto home = occurrence("task12c", "task12c/home", "42"); home.ref.accountId = "home";
+        auto other = home; other.occurrenceId = QUuid::createUuid();
+        other.ref.sourceInstanceId = "task12c/other"; other.ref.accountId = "other";
+        auto gone = home; gone.occurrenceId = QUuid::createUuid();
+        QueueHistorySnapshot snapshot; snapshot.queue = {before, home, other};
+        for (const auto &item : {home, other, gone}) {
+            RecentPlay play{item.occurrenceId, item.ref, "<b>Track</b>", {"Artist"}, "Album",
+                            10000, QDateTime::currentDateTimeUtc()};
+            snapshot.history.append(play);
+        }
+        const auto bytes = QueueHistoryCodec::encode(snapshot); QVERIFY(bytes);
+        QVERIFY(writeBytes(h.path(), *bytes));
+        QueueHistoryStore store(&h.coordinator, h.path()); QVERIFY(store.loadAndAttach());
+        QTRY_VERIFY(store.entries().first().toMap().value("replayable").toBool());
+        const auto rows = store.entries(); QCOMPARE(rows.size(), 3);
+        const QString key = rows.first().toMap().value("key").toString(); QVERIFY(!key.isEmpty());
+        for (const auto &value : rows) {
+            const auto row = value.toMap();
+            QCOMPARE(row.size(), 8);
+            for (const auto &field : {"ref", "accountId", "sourceInstanceId", "occurrenceId", "url", "headers", "path", "availableActions"})
+                QVERIFY(!row.contains(field));
+            QCOMPARE(row.value("title").toString(), QString("<b>Track</b>"));
+        }
+        QVERIFY(rows.first().toMap().value("replayable").toBool());
+        QVERIFY(!rows.at(1).toMap().value("replayable").toBool());
+        QVERIFY(!rows.at(2).toMap().value("replayable").toBool());
+        QCOMPARE(store.entriesForSource("task12c/home").size(), 2);
+        QCOMPARE(store.entriesForSource("task12c/other").size(), 1);
+        QVERIFY(store.entriesForSource("missing").isEmpty());
+        QVERIFY(!store.playEntry("42")); QVERIFY(!store.playEntry(home.occurrenceId.toString()));
+        QVERIFY(!store.playEntry(rows.at(1).toMap().value("key").toString()));
+        QVERIFY(!store.playEntry(rows.at(2).toMap().value("key").toString()));
+        QVERIFY(h.coordinator.removeOccurrence(before.occurrenceId)); // key is not a cached queue index
+        QVERIFY(store.playEntry(key)); QTRY_COMPARE(h.sink.plays, 1);
+        QCOMPARE(h.coordinator.currentOccurrence(), home.occurrenceId);
+        QTRY_COMPARE(store.history().size(), 4);
+        QVERIFY(store.playEntry(key)); QTRY_COMPARE(h.sink.plays, 2); // key survives new records
+        QCOMPARE(h.coordinator.currentOccurrence(), home.occurrenceId);
+        QVERIFY(h.coordinator.stop());
+        QVERIFY(h.registry.disableInstance("task12c/home"));
+        QVERIFY(!store.playEntry(key));
+        QVERIFY(h.registry.enableInstance("task12c/home"));
+        session = h.registry.sessionFor("task12c/home"); QVERIFY(session);
+        QTRY_COMPARE(session->state(), SourceSessionStateV2::Ready);
+        QTRY_VERIFY(store.entries().first().toMap().value("replayable").toBool());
+        QVERIFY(h.accounts.saveResolvedV2({"task12c", "other", "Other", {}, {}}));
+        auto *otherSession = h.registry.sessionFor("task12c/other"); QVERIFY(otherSession);
+        QTRY_COMPARE(otherSession->state(), SourceSessionStateV2::Ready);
+        auto rebound = home; rebound.ref = other.ref;
+        QVERIFY(h.coordinator.restoreQueue({rebound}));
+        QTRY_VERIFY(!h.coordinator.queue().first().toMap().value("unavailable").toBool());
+        QVERIFY(!store.playEntry(key)); QVERIFY(!store.playLatest());
+        QCOMPARE(h.sink.plays, 2);
+    }
+    void historyKeysAreEphemeralAndCoordinatorLossIsNotReplayable() {
+        Harness h;
+        auto item = occurrence("local", "local/one", "42");
+        QueueHistorySnapshot snapshot; snapshot.queue = {item};
+        snapshot.history = {RecentPlay{item.occurrenceId, item.ref, "Track", {"Artist"}, "Album",
+                                      10000, QDateTime::currentDateTimeUtc()}};
+        auto bytes = QueueHistoryCodec::encode(snapshot); QVERIFY(bytes); QVERIFY(writeBytes(h.path(), *bytes));
+        auto coordinator = std::make_unique<PlaybackCoordinator>(&h.registry, &h.sink);
+        QueueHistoryStore store(coordinator.get(), h.path()); QVERIFY(store.loadAndAttach());
+        const QString oldKey = store.entries().first().toMap().value("key").toString();
+        StoreSink sink2; PlaybackCoordinator restarted(&h.registry, &sink2);
+        QueueHistoryStore restored(&restarted, h.path()); QVERIFY(restored.loadAndAttach());
+        QVERIFY(restored.entries().first().toMap().value("key").toString() != oldKey);
+        QVERIFY(!restored.playEntry(oldKey));
+        QSignalSpy changed(&store, &QueueHistoryStore::historyChanged);
+        coordinator.reset(); QVERIFY(!changed.isEmpty());
+        QCOMPARE(store.entries().size(), 1);
+        QVERIFY(!store.entries().first().toMap().value("replayable").toBool());
+        QVERIFY(!store.playEntry(oldKey)); QVERIFY(!store.playLatest());
+    }
+    void historyLimitRevokesOnlyEvictedKeys() {
+        Harness h; QVERIFY(h.init());
+        auto *session = h.registry.sessionFor("task12c/home"); QVERIFY(session);
+        QTRY_COMPARE(session->state(), SourceSessionStateV2::Ready);
+        auto item = occurrence("task12c", "task12c/home", "42"); item.ref.accountId = "home";
+        QueueHistorySnapshot snapshot; snapshot.queue = {item};
+        for (int i = 0; i < 200; ++i)
+            snapshot.history.append({item.occurrenceId, item.ref, "Track", {"Artist"}, "Album",
+                                     10000, QDateTime::currentDateTimeUtc().addSecs(-i)});
+        auto bytes = QueueHistoryCodec::encode(snapshot); QVERIFY(bytes); QVERIFY(writeBytes(h.path(), *bytes));
+        QueueHistoryStore store(&h.coordinator, h.path()); QVERIFY(store.loadAndAttach());
+        QTRY_VERIFY(store.entries().first().toMap().value("replayable").toBool());
+        const auto rows = store.entries();
+        const auto retained = rows.first().toMap().value("key").toString();
+        const auto evicted = rows.last().toMap().value("key").toString();
+        QVERIFY(store.playEntry(retained)); QTRY_COMPARE(h.sink.plays, 1);
+        QTRY_VERIFY(store.entries().first().toMap().value("key").toString() != retained);
+        QCOMPARE(store.entries().size(), 200);
+        QVERIFY(!store.playEntry(evicted)); QVERIFY(store.playEntry(retained));
+        QTRY_COMPARE(h.sink.plays, 2);
+    }
     void persistsMixedQueueAcrossRestart() {
         Harness h;
         auto local = occurrence("local", "local/one", "opaque-local");

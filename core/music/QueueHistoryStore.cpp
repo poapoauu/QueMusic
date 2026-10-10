@@ -12,6 +12,18 @@
 namespace {
 constexpr qint64 maxBytes = 16 * 1024 * 1024;
 
+int matchingQueueIndex(const RecentPlay &play, const QList<QueueOccurrence> &trusted,
+                       const QVariantList &queue, bool requireAvailable = true)
+{
+    for (int index = 0; index < trusted.size() && index < queue.size(); ++index) {
+        if (trusted.at(index).occurrenceId == play.occurrenceId
+            && trusted.at(index).ref == play.ref
+            && (!requireAvailable
+                || !queue.at(index).toMap().value(QStringLiteral("unavailable")).toBool())) return index;
+    }
+    return -1;
+}
+
 bool atomicWrite(const QString &path, const QByteArray &bytes)
 {
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) return false;
@@ -47,6 +59,10 @@ QueueHistoryStore::QueueHistoryStore(PlaybackCoordinator *coordinator, QString f
 {
     if (!m_hooks.write) m_hooks.write = atomicWrite;
     if (!m_hooks.backup) m_hooks.backup = protectedCopy;
+    if (m_coordinator) connect(m_coordinator, &QObject::destroyed, this, [this] {
+        m_coordinator = nullptr;
+        emit historyChanged();
+    });
 }
 
 QString QueueHistoryStore::warningKey() const { return m_warningKey; }
@@ -55,15 +71,49 @@ QList<RecentPlay> QueueHistoryStore::history() const { return m_history; }
 
 int QueueHistoryStore::latestQueueIndex() const
 {
-    if (!m_coordinator || m_history.isEmpty()) return -1;
-    const auto queue = m_coordinator->queue();
-    const QUuid occurrence = m_history.first().occurrenceId;
-    for (int index = 0; index < queue.size(); ++index) {
-        const QVariantMap row = queue.at(index).toMap();
-        if (row.value(QStringLiteral("occurrenceId")).toUuid() == occurrence
-            && !row.value(QStringLiteral("unavailable")).toBool()) return index;
+    return m_history.isEmpty() ? -1 : queueIndex(m_history.first());
+}
+
+int QueueHistoryStore::queueIndex(const RecentPlay &play) const
+{
+    if (!m_coordinator) return -1;
+    // An occurrence UUID alone is not authority: a restored queue may reuse it
+    // with a different account/ref. Require the complete private identity too.
+    return matchingQueueIndex(play, m_coordinator->exportQueue(), m_coordinator->queue());
+}
+
+QVariantList QueueHistoryStore::entries() const { return entriesForSource({}); }
+
+QVariantList QueueHistoryStore::entriesForSource(const QString &sourceInstanceId) const
+{
+    QVariantList rows;
+    const auto queue = m_coordinator ? m_coordinator->queue() : QVariantList{};
+    const auto trusted = m_coordinator ? m_coordinator->exportQueue() : QList<QueueOccurrence>{};
+    for (int i = 0; i < m_history.size() && i < m_historyKeys.size(); ++i) {
+        const auto &play = m_history.at(i);
+        if (!sourceInstanceId.isEmpty() && play.ref.sourceInstanceId != sourceInstanceId) continue;
+        const int index = matchingQueueIndex(play, trusted, queue, false);
+        rows.append(QVariantMap{
+            {QStringLiteral("key"), m_historyKeys.at(i)},
+            {QStringLiteral("title"), play.title},
+            {QStringLiteral("artist"), play.artists.join(QStringLiteral(", "))},
+            {QStringLiteral("album"), play.album},
+            {QStringLiteral("duration"), qMax<qint64>(0, play.durationMs / 1000)},
+            {QStringLiteral("playedAt"), play.playedAt},
+            {QStringLiteral("sourceLabel"), index >= 0 && index < queue.size()
+                ? queue.at(index).toMap().value(QStringLiteral("sourceLabel")) : QVariant{}},
+            {QStringLiteral("replayable"), index >= 0
+                && !queue.at(index).toMap().value(QStringLiteral("unavailable")).toBool()}});
     }
-    return -1;
+    return rows;
+}
+
+bool QueueHistoryStore::playEntry(const QString &key)
+{
+    const int record = m_historyKeys.indexOf(key);
+    if (record < 0 || record >= m_history.size()) return false;
+    const int index = queueIndex(m_history.at(record));
+    return index >= 0 && m_coordinator && !m_coordinator->playQueueEntry(index).isNull();
 }
 
 QVariantMap QueueHistoryStore::latest() const
@@ -128,6 +178,9 @@ bool QueueHistoryStore::loadAndAttach()
                 return false;
             }
             m_history = result.snapshot.history;
+            m_historyKeys.clear();
+            for (int i = 0; i < m_history.size(); ++i)
+                m_historyKeys.append(QUuid::createUuid().toString(QUuid::WithoutBraces));
             m_legacyImportVersion = result.snapshot.legacyImportVersion;
         }
     }
@@ -182,7 +235,9 @@ void QueueHistoryStore::recordStart(const QUuid &generation)
         play.durationMs = item.durationMs;
         play.playedAt = QDateTime::currentDateTimeUtc();
         m_history.prepend(std::move(play));
+        m_historyKeys.prepend(QUuid::createUuid().toString(QUuid::WithoutBraces));
         if (m_history.size() > 200) m_history.resize(200);
+        if (m_historyKeys.size() > 200) m_historyKeys.resize(200);
         persist();
         emit historyChanged();
         return;

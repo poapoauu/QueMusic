@@ -9,6 +9,7 @@ Rectangle {
     id: mainContent
     property var musicAdapter: null
     property var playbackAdapter: null
+    property var historyAdapter: null
     signal requestPluginSettings(string packageId, string instanceId)
     color: Style.themes.secondaryColor //Style.themes.blurOverlayColor
     readonly property int pageHeight: height - 60
@@ -128,6 +129,7 @@ Rectangle {
         sourceComponent: FavouritePage {
             musicAdapter: mainContent.musicAdapter
             playbackAdapter: mainContent.playbackAdapter
+            historyAdapter: mainContent.historyAdapter
         }
         onLoaded: { visible = true; mainContent.finishedLoaderPage(3) }
     }
