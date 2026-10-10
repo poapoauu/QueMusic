@@ -456,6 +456,34 @@ bool MusicHub::sourcePluginLoaded(const QString &packageId) const
     return d->sources && d->sources->pluginManager()
         && d->sources->pluginManager()->plugin(packageId).state == PluginState::Loaded;
 }
+ActionAvailabilityV2 MusicHub::presentationAction(const QVariantMap &item, SourceActionV2 action) const
+{
+    const ActionAvailabilityV2 invalid{AvailabilityV2::Unavailable, QStringLiteral("music.actionInvalidItem"), {}};
+    MediaRefV2 ref;
+    if (int(action) < 0 || int(action) > int(SourceActionV2::DeleteBookmark)
+        || item.value("ref").metaType().id() != QMetaType::QVariantMap
+        || item.value("availableActions").metaType().id() != QMetaType::QVariantMap
+        || !parseRef(item.value("ref").toMap(), &ref)) return invalid;
+    ActionAvailabilityV2 media;
+    const auto actions = item.value("availableActions").toMap();
+    const auto key = QString::number(int(action));
+    // Execution validates the whole action map, not only the requested member.
+    // Do not advertise Play when another malformed entry would reject enqueue.
+    for (auto it = actions.cbegin(); it != actions.cend(); ++it) {
+        bool ok = false;
+        const int number = it.key().toInt(&ok);
+        if (!ok || number < 0 || number > int(SourceActionV2::DeleteBookmark)
+            || QString::number(number) != it.key() || it->metaType().id() != QMetaType::QVariantMap) return invalid;
+        const auto map = it->toMap();
+        if (!integer(map.value("state"), int(AvailabilityV2::Forbidden))
+            || map.value("constraints").metaType().id() != QMetaType::QVariantMap
+            || (map.contains("reasonKey") && map.value("reasonKey").metaType().id() != QMetaType::QString)) return invalid;
+        if (it.key() == key)
+            media = {AvailabilityV2(map.value("state").toInt()), map.value("reasonKey").toString(), map.value("constraints").toMap()};
+    }
+    return d->sources ? d->sources->presentationAction(ref, action, media)
+        : intersectActionAvailabilityV2({{AvailabilityV2::Unavailable, QStringLiteral("music.actionUnavailable"), {}}, media});
+}
 QVariantList MusicHub::sourceOptions() const { return d->options; }
 QString MusicHub::selectedSourceInstanceId() const { return d->selected(); }
 void MusicHub::setSelectedSourceInstanceId(const QString &id) { if (d->scope) d->scope->setSelectedSourceInstanceId(id); }

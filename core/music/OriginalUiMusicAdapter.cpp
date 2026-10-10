@@ -698,9 +698,16 @@ bool OriginalUiMusicAdapter::pluginAvailable(const QString &packageId) const
 QVariantMap OriginalUiMusicAdapter::capabilitiesForItem(const QVariantMap &item) const
 {
     const auto browse = browseCapability(item);
-    const auto play = actionCapability(item, SourceActionV2::Play);
-    const auto favorite = actionCapability(item, SourceActionV2::Favorite);
-    const auto unfavorite = actionCapability(item, SourceActionV2::Unfavorite);
+    const auto effective = [this, &item](SourceActionV2 action) -> QVariantMap {
+        if (!m_hub) return unavailable();
+        const auto capability = m_hub->presentationAction(item, action);
+        return capability.state == AvailabilityV2::Available
+            ? QVariantMap{{QStringLiteral("enabled"), true}, {QStringLiteral("reasonKey"), QString{}}}
+            : unavailable(safeReasonKey(capability.reasonKey));
+    };
+    const auto play = effective(SourceActionV2::Play);
+    const auto favorite = effective(SourceActionV2::Favorite);
+    const auto unfavorite = effective(SourceActionV2::Unfavorite);
     return {{QStringLiteral("canBrowse"), browse.value(QStringLiteral("enabled"))},
             {QStringLiteral("browseReasonKey"), browse.value(QStringLiteral("reasonKey"))},
             {QStringLiteral("canPlay"), play.value(QStringLiteral("enabled"))},

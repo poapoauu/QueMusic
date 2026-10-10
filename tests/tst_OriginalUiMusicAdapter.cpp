@@ -20,19 +20,20 @@ public:
         return {QStringLiteral("adapter"), m_configuration.sourceInstanceId,
                 m_configuration.accountId, m_configuration.displayName};
     }
-    SourceSessionStateV2 state() const override { return SourceSessionStateV2::Ready; }
+    SourceSessionStateV2 state() const override { emit const_cast<OriginalUiAdapterSession *>(this)->stateRead(); return SourceSessionStateV2::Ready; }
     CapabilitySetV2 capabilities() const override
     {
         CapabilitySetV2 result;
         for (const auto action : {SourceActionV2::Play, SourceActionV2::Favorite,
                                   SourceActionV2::Unfavorite, SourceActionV2::Download}) {
-            result.serverActions.insert(action, {AvailabilityV2::Available, {}, {}});
-            result.accountActions.insert(action, {AvailabilityV2::Available, {}, {}});
+            if (!property("missingServer").toBool()) result.serverActions.insert(action, {AvailabilityV2::Available, {}, property("serverConstraints").toMap()});
+            if (!property("missingAccount").toBool()) result.accountActions.insert(action, {AvailabilityV2::Available, {}, {}});
         }
         if (property("denyFavorite").toBool()) result.accountActions[SourceActionV2::Favorite] = {AvailabilityV2::Forbidden};
         if (property("denyUnfavorite").toBool()) result.accountActions[SourceActionV2::Unfavorite] = {AvailabilityV2::Forbidden};
         if (property("denyDownload").toBool()) result.accountActions[SourceActionV2::Download] = {AvailabilityV2::Forbidden};
         if (property("unsupportedDownload").toBool()) result.serverActions[SourceActionV2::Download] = {AvailabilityV2::Unsupported};
+        emit const_cast<OriginalUiAdapterSession *>(this)->capabilitiesRead();
         return result;
     }
     QUuid open() override
@@ -115,6 +116,7 @@ public:
             PageSectionV2 section;
             section.kind = query.section;
             section.sectionId = QStringLiteral("fixture-search");
+            if (property("allActions").toBool()) section.sectionId = QStringLiteral("fixture-") + QString::number(int(query.section));
             section.hasMore = query.cursor.isEmpty();
             section.nextCursor = section.hasMore ? QStringLiteral("fixture-next") : QString{};
             MediaItemV2 item;
@@ -123,6 +125,10 @@ public:
                         QStringLiteral("fixture-track")};
             item.title = QStringLiteral("Fixture track");
             item.availableActions.insert(SourceActionV2::Play, {AvailabilityV2::Available, {}, {}});
+            if (property("allActions").toBool()) {
+                for (const auto action:{SourceActionV2::Play,SourceActionV2::Favorite,SourceActionV2::Unfavorite})
+                    item.availableActions.insert(action, {AvailabilityV2::Available, {}, property("mediaConstraints").toMap()});
+            }
             section.items = {item};
             result.sections = {section};
         }
@@ -192,6 +198,9 @@ public:
         return id;
     }
 
+signals:
+    void capabilitiesRead();
+    void stateRead();
 private:
     SourceConfigurationV2 m_configuration;
 };
@@ -210,7 +219,8 @@ public:
                                   QStringLiteral("2.0.0"), 2, {}};
         for (const auto action : {SourceActionV2::Play, SourceActionV2::Favorite,
                                   SourceActionV2::Unfavorite, SourceActionV2::Download})
-            result.declaredActions.insert(action, {AvailabilityV2::Available, {}, {}});
+            if (!property("missingDeclared").toBool()) result.declaredActions.insert(action, {AvailabilityV2::Available, {}, {}});
+        emit const_cast<OriginalUiAdapterPlugin *>(this)->descriptorRead();
         return result;
     }
     IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &configuration,
@@ -218,6 +228,8 @@ public:
     {
         return new OriginalUiAdapterSession(configuration, parent);
     }
+signals:
+    void descriptorRead();
 };
 
 #else
@@ -371,6 +383,105 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void ordinaryPresentationIntersectsAllLayersAndReadsOnlyHostSnapshots() {
+        RoutingHarness h; QVERIFY(h.init(true)); h.hub->setSelectedSourceInstanceId("adapter/home");
+        auto *home=h.session(), *office=h.session("adapter/office"); QVERIFY(home&&office);
+        home->setProperty("continuable",true); home->setProperty("allActions",true);
+        h.adapter->activatePage(0); QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+        QTRY_COMPARE(h.adapter->recommendSongs()->rowCount(),5);
+        const auto fresh=[&] { return h.adapter->recommendSongs()->get(0); };
+        const auto granted=[&] {
+            const auto caps=h.adapter->capabilities(fresh());
+            return caps.value("canPlay").toBool() && caps.value("canEnqueue").toBool()
+                && caps.value("canFavorite").toBool() && caps.value("canUnfavorite").toBool();
+        };
+        QVERIFY(granted());
+        const auto original=fresh();
+        office->setProperty("missingAccount",true); emit office->capabilitiesChanged({});
+        QCOMPARE(fresh().value("_adapterKey"),original.value("_adapterKey")); QVERIFY(granted());
+        QSignalSpy capabilityReads(home,SIGNAL(capabilitiesRead())),stateReads(home,SIGNAL(stateRead()));
+        QSignalSpy descriptorReads(h.plugins.pluginInstance("org.quemusic.source.original-ui-adapter"),SIGNAL(descriptorRead()));
+        for(int i=0;i<10;++i) { h.adapter->capabilities(fresh()); h.adapter->capabilities(QVariantList{fresh(),fresh()}); }
+        QCOMPARE(capabilityReads.size(),0); QCOMPARE(stateReads.size(),0); QCOMPARE(descriptorReads.size(),0);
+        for(const auto *property:{"denyFavorite","denyUnfavorite","missingServer","missingAccount"}) {
+            const auto old=fresh();
+            home->setProperty(property,true); emit home->capabilitiesChanged({});
+            QCOMPARE(h.adapter->recommendSongs()->rowCount(),0);
+            QVERIFY(h.adapter->play(old).isNull()); QVERIFY(h.adapter->enqueue(old).isNull());
+            QVERIFY(h.adapter->setFavorite(old,true).isNull());
+            QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+            QTRY_COMPARE(h.adapter->recommendSongs()->rowCount(),5);
+            const auto caps=h.adapter->capabilities(fresh());
+            const bool play=QString(property).startsWith("deny");
+            QCOMPARE(caps.value("canPlay").toBool(),play); QCOMPARE(caps.value("canEnqueue").toBool(),play);
+            QCOMPARE(caps.value("canFavorite").toBool(),QString(property)=="denyUnfavorite");
+            QCOMPARE(caps.value("canUnfavorite").toBool(),QString(property)=="denyFavorite");
+            if(!caps.value("canFavorite").toBool())QVERIFY(h.adapter->setFavorite(fresh(),true).isNull());
+            if(!caps.value("canUnfavorite").toBool())QVERIFY(h.adapter->setFavorite(fresh(),false).isNull());
+            QVERIFY(!fresh().contains("availableActions")); QVERIFY(!fresh().contains("constraints"));
+            home->setProperty(property,false); emit home->capabilitiesChanged({});
+            QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+            QTRY_COMPARE(h.adapter->recommendSongs()->rowCount(),5); QVERIFY(granted());
+            QVERIFY(fresh().value("_adapterKey")!=old.value("_adapterKey"));
+        }
+        auto *root=h.plugins.pluginInstance("org.quemusic.source.original-ui-adapter");
+        root->setProperty("missingDeclared",true); emit home->capabilitiesChanged({});
+        QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+        QVERIFY(!granted()); QVERIFY(!h.adapter->capabilities(fresh()).value("canPlay").toBool());
+        root->setProperty("missingDeclared",false); emit home->capabilitiesChanged({});
+        QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready); QVERIFY(granted());
+        for(const auto *layer:{"serverConstraints","mediaConstraints"}) {
+            for(const QVariantMap &constraints:{QVariantMap{{"unknown",true}},QVariantMap{{"maxBitrate",128}}}) {
+                home->setProperty(layer,constraints); emit home->capabilitiesChanged({});
+                QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+                const auto caps=h.adapter->capabilities(fresh());
+                QVERIFY(!caps.value("canPlay").toBool()); QVERIFY(!caps.value("canFavorite").toBool());
+                QVERIFY(h.adapter->play(fresh()).isNull()); QVERIFY(h.adapter->enqueue(fresh()).isNull());
+            }
+            home->setProperty(layer,QVariantMap{}); emit home->capabilitiesChanged({});
+            QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready); QVERIFY(granted());
+        }
+        QCOMPARE(h.sink.plays,0); QVERIFY(h.playback->queue().isEmpty());
+        QVERIFY(home->property("favoriteRequests").toList().isEmpty());
+    }
+    void mediaOnlyRightsCannotOpenOrGrantAnUnknownSourceSnapshot() {
+        RoutingHarness h; QVERIFY(h.init());
+        auto track=routedItem(MediaEntityTypeV2::Track,"not-opened");
+        for(const auto action:{SourceActionV2::Play,SourceActionV2::Favorite,SourceActionV2::Unfavorite})
+            track.availableActions.insert(action,{AvailabilityV2::Available});
+        accept(h.hub->recommendation(),resultWith({track},"media-only"));
+        const auto row=h.adapter->recommendSongs()->get(0);
+        const auto caps=h.adapter->capabilities(row);
+        QVERIFY(!caps.value("canPlay").toBool()); QVERIFY(!caps.value("canFavorite").toBool());
+        QVERIFY(!caps.value("canUnfavorite").toBool()); QVERIFY(!caps.value("canEnqueue").toBool());
+        QCOMPARE(h.plugins.plugin("org.quemusic.source.original-ui-adapter").activeLeases,0);
+        QVERIFY(h.adapter->play(row).isNull()); QVERIFY(h.adapter->enqueue(row).isNull());
+        QCOMPARE(h.plugins.plugin("org.quemusic.source.original-ui-adapter").activeLeases,0);
+        QCOMPARE(h.hub->metaObject()->indexOfMethod("presentationAction(QVariantMap,SourceActionV2)"),-1);
+    }
+    void snapshotProjectionRejectsMalformedAndForeignFullItems() {
+        RoutingHarness h; QVERIFY(h.init()); QVERIFY(h.session());
+        const auto ref=routedItem(MediaEntityTypeV2::Track,"validated").ref;
+        const QVariantMap value{{"state",int(AvailabilityV2::Available)},{"reasonKey",QString{}},{"constraints",QVariantMap{}}};
+        const auto key=QString::number(int(SourceActionV2::Play));
+        const QVariantMap valid{{"ref",mediaRefV2ToVariantMap(ref)},{"availableActions",QVariantMap{{key,value}}}};
+        QCOMPARE(h.hub->presentationAction(valid,SourceActionV2::Play).state,AvailabilityV2::Available);
+        for(const QVariant &state:{QVariant(true),QVariant("1"),QVariant(1.5),QVariant(99)}) {
+            auto malformed=valid; auto action=value; action["state"]=state;
+            malformed["availableActions"]=QVariantMap{{key,action}};
+            QCOMPARE(h.hub->presentationAction(malformed,SourceActionV2::Play).state,AvailabilityV2::Unavailable);
+        }
+        auto foreign=valid; auto identity=mediaRefV2ToVariantMap(ref); identity["accountId"]="foreign"; foreign["ref"]=identity;
+        QVERIFY(h.hub->presentationAction(foreign,SourceActionV2::Play).state!=AvailabilityV2::Available);
+        auto missing=valid; missing["availableActions"]=QVariantMap{};
+        QCOMPARE(h.hub->presentationAction(missing,SourceActionV2::Play).state,AvailabilityV2::Unsupported);
+        for(const QString &other:{QString("99"),QString("01"),QString::number(int(SourceActionV2::Download))}) {
+            auto malformed=valid; auto actions=valid.value("availableActions").toMap(); auto invalid=value;
+            if(other==QString::number(int(SourceActionV2::Download)))invalid["state"]=true;
+            actions.insert(other,invalid); malformed["availableActions"]=actions;
+            QCOMPARE(h.hub->presentationAction(malformed,SourceActionV2::Play).state,AvailabilityV2::Unavailable);
+        }
+    }
     void capabilityInvalidationRevokesOrdinaryPresentationKeys() {
         RoutingHarness h; QVERIFY(h.init(true));
         h.hub->setSelectedSourceInstanceId("adapter/home");
@@ -722,7 +833,7 @@ private slots:
     void downloadSnapshotDoesNotInventMediaRightsOrDropConstraints()
     {
         for (bool constrained : {false, true}) {
-            RoutingHarness h; QVERIFY(h.init());
+            RoutingHarness h; QVERIFY(h.init()); QVERIFY(h.session());
             auto track = routedItem(MediaEntityTypeV2::Track, "download-media-rights");
             if (constrained) track.availableActions[SourceActionV2::Download].constraints.insert("maxBitrate", 128000);
             else track.availableActions.remove(SourceActionV2::Download);
@@ -737,7 +848,7 @@ private slots:
     void downloadObserversCannotStopOrCreateATargetBeforeDispatch()
     {
         for (bool stop : {true, false}) {
-            RoutingHarness h; QVERIFY(h.init());
+            RoutingHarness h; QVERIFY(h.init()); QVERIFY(h.session());
             accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "download-observer")}, "tracks"));
             QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
             const auto target = QUrl::fromLocalFile(h.dir.filePath("observer.bin"));
@@ -849,7 +960,7 @@ private slots:
     }
     void currentFavoriteStopsBeforeDispatchWhenPresentationObserverStopsPlayback()
     {
-        RoutingHarness h; QVERIFY(h.init());
+        RoutingHarness h; QVERIFY(h.init()); QVERIFY(h.session());
         accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "favorite-stop")}, "tracks"));
         QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
         connect(h.adapter.get(), &OriginalUiMusicAdapter::currentFavoriteChanged, h.adapter.get(), [&] {
@@ -860,7 +971,7 @@ private slots:
     }
     void restoredQueueDoesNotInventFavoriteRights()
     {
-        RoutingHarness h; QVERIFY(h.init());
+        RoutingHarness h; QVERIFY(h.init()); QVERIFY(h.session());
         accept(h.hub->category(), resultWith({routedItem(MediaEntityTypeV2::Track, "favorite-restore")}, "tracks"));
         QVERIFY(!h.adapter->play(h.adapter->categoryItems()->get(0)).isNull()); QTRY_COMPARE(h.sink.plays, 1);
         const auto history = h.playback->exportQueue(); QVERIFY(h.playback->stop());
@@ -1439,6 +1550,7 @@ private slots:
     {
         RoutingHarness harness;
         QVERIFY(harness.init());
+        QVERIFY(harness.session());
         MediaItemV2 item = routedItem(MediaEntityTypeV2::Track, QStringLiteral("capability-track"));
         item.availableActions = {
             {SourceActionV2::Play, {AvailabilityV2::Available, {}, {}}},
@@ -1469,6 +1581,7 @@ private slots:
     {
         RoutingHarness harness;
         QVERIFY(harness.init());
+        QVERIFY(harness.session());
         MediaItemV2 first = routedItem(MediaEntityTypeV2::Track, QStringLiteral("first"));
         first.availableActions = {{SourceActionV2::Play, {AvailabilityV2::Available, {}, {}}},
                                   {SourceActionV2::Favorite, {AvailabilityV2::Available, {}, {}}}};
@@ -1792,6 +1905,7 @@ private slots:
     {
         RoutingHarness harness;
         QVERIFY(harness.init());
+        QVERIFY(harness.session());
         accept(harness.hub->recommendation(), resultWith({routedItem(
             MediaEntityTypeV2::Track, QStringLiteral("track-favorite"))}, QStringLiteral("recommend")));
         const QVariantMap row = harness.adapter->recommendSongs()->get(0);
@@ -1814,6 +1928,7 @@ private slots:
     {
         RoutingHarness harness;
         QVERIFY(harness.init());
+        QVERIFY(harness.session());
         accept(harness.hub->recommendation(), resultWith({routedItem(
             MediaEntityTypeV2::Track, QStringLiteral("track-play"))}, QStringLiteral("recommend")));
         const QVariantMap row = harness.adapter->recommendSongs()->get(0);
@@ -1838,6 +1953,7 @@ private slots:
     {
         RoutingHarness harness;
         QVERIFY(harness.init());
+        QVERIFY(harness.session());
         accept(harness.hub->recommendation(), resultWith({routedItem(
             MediaEntityTypeV2::Track, QStringLiteral("track-enqueue"))}, QStringLiteral("recommend")));
         const QVariantMap row = harness.adapter->recommendSongs()->get(0);
@@ -1892,6 +2008,7 @@ private slots:
     {
         RoutingHarness harness;
         QVERIFY(harness.init());
+        QVERIFY(harness.session());
         accept(harness.hub->recommendation(), resultWith({
             routedItem(MediaEntityTypeV2::Track, QStringLiteral("old-track")),
             routedItem(MediaEntityTypeV2::Playlist, QStringLiteral("old-playlist"))},

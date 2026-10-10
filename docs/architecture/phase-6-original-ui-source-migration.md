@@ -438,12 +438,22 @@ ctest --test-dir build-phase3 --output-on-failure
 - 本切片完成队列／历史展示权利，普通页面 Adapter 的动作投影接入同一快照仍是下一项。SDK v2 / Source 插件 ABI / Plugin UI API / 磁盘格式与原 UI 布局不变；Host 私有 C++ API 需同步重编译。
 - 全目标增量构建成功；递归保护修复后，4 项 Registry／Coordinator／Store／Router 专项回归通过，随后全部 73 项 CTest 通过（66.20 秒）。不是从零构建、真实服务／音频／原生视觉或跨平台 ABI 验收。
 
+### 普通页面：有效动作接入同一 Host 快照
+
+- MusicHub 新增非 QML invokable 的 Host 动作投影，只接受严格完整身份与类型正确的媒体 availability；按 Plugin / Server / Account 快照和 Media 层求交集。缺失、畸形、跨账号或尚无 Ready 快照时不授予动作，也不为展示创建会话。
+- OriginalUiMusicAdapter 的页面、私人发现和目录行共用该投影，播放／入队／收藏／取消收藏及混合选择不再只信媒体权限。输出仍只有既有 canX / reasonKey，完整项、约束、账号和执行请求留在 C++；原不透明 key、范围失效、分页及 UI 布局不变。当前播放收藏／下载继续使用 Coordinator 的实时有效动作快照。
+- Browse 并非 v2 SourceAction，仍由既有实体／完整身份／页面查询能力链处理，不发明新的 SDK 枚举或把 Play 权限等同于浏览权限。动作执行仍经过 Coordinator / Router 的实时四层授权；权限变化依旧清旧行／key，再按有效范围获取新页面。
+- 新真实 Hub → Adapter 测试覆盖声明缺失、Server / Account 缺失、收藏／取消收藏独立撤销与恢复、Server / Media 层未知及 bitrate 约束、无关实例 key 保留、旧 key 拒绝、getter 零插件虚调用和拒绝时零播放／入队／收藏请求。另验收未知会话的媒体权限不能创建音源、Host 投影 API 不暴露给 QML，以及畸形 state / 外来账号拒绝。
+- 若干既有正向测试此前手工注入可播放项、但未打开夹具会话；现显式打开测试会话，保留原播放／收藏／下载断言。未在生产 getter 中偷偷创建 Source 会话，也未为测试增加媒体权限回退。
+- SDK v2 / Source 插件 ABI / Plugin UI API / 磁盘 schema 不变，Host 私有 API 同步重编译。下一项转入 File / Download / Queue / Player 与桌面歌词的剩余直接音源分支及路径队列写入审计；Phase 6、真实平台插件与最终 Legacy 删除尚未完成。
+- 全目标增量构建成功；新增及既有 Adapter 专项通过，随后全部 73 项 CTest 通过（67.38 秒），包含 Local / Navidrome、目录、播放、原 UI、安装后外部契约与 macOS 打包／移动回归。自动测试不替代真实平台服务、物理播放、原生视觉或跨平台 ABI 验收。
+
 ## 后续顺序与验收
 
-最新自动验证以本文件最后的阶段记录为准；Host 快照与队列／历史权利展示完成全目标增量构建及全部 73 项 CTest。仍未执行真实服务器音频或手工视觉验收。
+最新自动验证以本文件最后的阶段记录为准；Host 快照、队列／历史权利与普通页面动作投影完成全目标增量构建及全部 73 项 CTest。仍未执行真实服务器音频或手工视觉验收。
 
 1. Home 原卡片已完成 Source 数据与动作接入，私人服务由后续真实平台插件实现扩展后验收；不能以 Host 替身代替实际算法。未来若要从已移出队列的历史记录重新播放，应增加可信插件媒体项查找能力，不能猜造动作。
-2. 收藏/Playlist/Category：关注歌手、安全历史列表、收藏嵌套详情、通用分区批次上下文、队列停播回调 occurrence 保护、普通页/目录能力通知失效及队列／历史四层实时权利展示已补齐；继续将普通页面 Adapter 的动作投影接入 Host 快照。历史只重放 Coordinator 中可信且可用的完整身份，不从脱离队列的快照猜造媒体项。继续审计其余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。
+2. 收藏/Playlist/Category：关注歌手、安全历史列表、收藏嵌套详情、通用分区批次上下文、队列停播回调 occurrence 保护、普通页/目录能力通知失效、队列／历史实时权利及 Adapter 动作四层投影已补齐。历史只重放 Coordinator 中可信且可用的完整身份，不从脱离队列的快照猜造媒体项。后续跟随整体审计检查剩余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。
 3. File/Download、Queue、Player 和桌面歌词：清理剩余直接音源分支，确保实际播放只由 Coordinator 发起；保留原控件和布局。验证来源标签、切歌、停播、恢复和卸载后的展示状态。
 4. 全量扫描及 UI smoke：页面新增一个 Source Plugin 不需要改 source switch/case；无权限动作不显示或不可触发；完整构建、CTest 和 macOS 手工视觉/音频检查通过。
 

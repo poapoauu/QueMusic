@@ -43,6 +43,9 @@ public:
     MediaActionRouter *actions() const;
     DirectoryLibraryController *directoryLibrary() const;
     bool sourcePluginLoaded(const QString &packageId) const;
+    // Host-only snapshot projection, not callable from QML. No plugin virtual
+    // reads or session creation; Router/Coordinator still authorize execution.
+    ActionAvailabilityV2 presentationAction(const QVariantMap &item, SourceActionV2 action) const;
     QVariantList sourceOptions() const;
     QString selectedSourceInstanceId() const;
     void setSelectedSourceInstanceId(const QString &id);
