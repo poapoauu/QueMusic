@@ -134,6 +134,65 @@ static int rowFor(MusicPageModel *model, PageSectionKindV2 kind)
 class MusicHubTest final : public QObject {
     Q_OBJECT
 private slots:
+    void capabilitiesInvalidateAllOrdinaryPagesOnlyInTheirScope() {
+        HubHarness h; QVERIFY(h.init());
+        auto *home=h.session("home"); auto *office=h.session("office");
+        h.hub->setSelectedSourceInstanceId("task7/home");
+        h.hub->activatePage(0); h.hub->activatePage(1); h.hub->activatePage(2); h.hub->search("query");
+        const QList<MusicPageModel *> models{h.hub->recommendation(),h.hub->category(),h.hub->favorites(),h.hub->searchResults()};
+        for (auto *model:models) QTRY_COMPARE(model->state(),PageLoadStateV2::Ready);
+        const auto before=h.requests().size();
+        emit office->capabilitiesChanged({}); QCoreApplication::processEvents();
+        QCOMPARE(h.requests().size(),before);
+        for (auto *model:models) QVERIFY(model->rowCount()>0);
+        home->setProperty("hold",true);
+        emit home->capabilitiesChanged({});
+        for (auto *model:models) QCOMPARE(model->rowCount(),0);
+        QTRY_COMPARE(h.requests().size(),before+15); // 5 recommendation, 5 category, 4 favorites, 1 search
+        const auto pending=h.requests().mid(before);
+        for (auto *model:models) QCOMPARE(model->state(),PageLoadStateV2::Loading);
+        emit home->capabilitiesChanged({});
+        for (auto *model:models) QCOMPARE(model->rowCount(),0);
+        for (const auto &request:pending) emit home->pageReady(request.toMap().value("id").toUuid(),{});
+        QCoreApplication::processEvents();
+        for (auto *model:models) QCOMPARE(model->rowCount(),0);
+        home->setProperty("hold",false); emit home->capabilitiesChanged({});
+        for (auto *model:models) QTRY_COMPARE(model->state(),PageLoadStateV2::Ready);
+    }
+    void capabilityRefreshDoesNotReactivateCancelledPage() {
+        HubHarness h; QVERIFY(h.init());
+        h.hub->setSelectedSourceInstanceId("task7/home");
+        h.hub->activatePage(0); QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+        const auto before=h.requests().size();
+        bool cancelled=false;
+        connect(h.hub->recommendation(),&QAbstractItemModel::modelReset,h.hub.get(),[&] {
+            if (!cancelled) { cancelled=true; h.hub->cancel(0); }
+        });
+        emit h.session()->capabilitiesChanged({}); QCoreApplication::processEvents();
+        QVERIFY(cancelled); QCOMPARE(h.requests().size(),before);
+        QCOMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Idle);
+    }
+    void capabilityBatchStopsAfterScopeRoundTrip() {
+        HubHarness h; QVERIFY(h.init());
+        h.hub->setSelectedSourceInstanceId("task7/home");
+        h.hub->activatePage(0); QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+        QSignalSpy favoriteResets(h.hub->favorites(),&QAbstractItemModel::modelReset);
+        bool switched=false;
+        connect(h.hub->recommendation(),&QAbstractItemModel::modelReset,h.hub.get(),[&] {
+            if (!switched) {
+                switched=true;
+                h.hub->setSelectedSourceInstanceId("task7/office");
+                h.hub->setSelectedSourceInstanceId("task7/home");
+            }
+        });
+        emit h.session()->capabilitiesChanged({}); QVERIFY(switched);
+        // Only the two real scope changes reset later pages. The old capability
+        // batch must not resume merely because the final string equals home.
+        QCOMPARE(favoriteResets.size(),2);
+        QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+        QCOMPARE(h.hub->selectedSourceInstanceId(),QString("task7/home"));
+        QCOMPARE(h.hub->favorites()->state(),PageLoadStateV2::Idle);
+    }
     void directoryBrowseUsesGenericEntityFilter()
     {
         HubHarness h; QVERIFY(h.init());

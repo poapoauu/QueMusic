@@ -171,6 +171,43 @@ static PageSectionV2 favoriteSection(QString source, PageSectionKindV2 kind, QSt
 class PageRepositoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void capabilityChangesInvalidateOrdinaryRequestsAndMatchingCaches() {
+        PageHarness h; QVERIFY(h.init());
+        auto *home=h.session("home"); auto *office=h.session("office");
+        musicCacheIoPool()->waitForDone();
+        PageQueryV2 homeQuery; homeQuery.scope.sourceInstanceId="task5/home";
+        PageQueryV2 officeQuery; officeQuery.scope.sourceInstanceId="task5/office";
+        PageCacheKeyV2 homeKey{homeQuery,{"task5/home"}}, officeKey{officeQuery,{"task5/office"}};
+        PageCacheKeyV2 aggregateKey{{},{"task5/home","task5/office"}};
+        const auto now=QDateTime::currentDateTimeUtc();
+        QVERIFY(h.cache->store(homeKey,sample("home"),now));
+        QVERIFY(h.cache->store(officeKey,sample("office"),now));
+        QVERIFY(h.cache->store(aggregateKey,sample("home"),now));
+        homeQuery.filters={{"testMarker",true}}; officeQuery.filters=homeQuery.filters;
+        PageQueryV2 aggregateQuery; aggregateQuery.filters=homeQuery.filters;
+        QSignalSpy failed(&h.repo,&PageRepository::pageFailed),ready(&h.repo,&PageRepository::pageReady);
+        const auto homeId=h.repo.requestPage(homeQuery,1);
+        const auto officeId=h.repo.requestPage(officeQuery,2);
+        QTRY_COMPARE(home->property("calls").toInt(),1);
+        QTRY_COMPARE(office->property("calls").toInt(),1);
+        const auto oldHome=home->property("lastRequest").toUuid();
+        const auto oldOffice=office->property("lastRequest").toUuid();
+        const auto aggregateId=h.repo.requestPage(aggregateQuery,3);
+        QTRY_COMPARE(home->property("calls").toInt(),2);
+        QTRY_COMPARE(office->property("calls").toInt(),2);
+        emit home->capabilitiesChanged({});
+        QCOMPARE(failed.size(),2);
+        QSet<QUuid> failures; for (const auto &result:failed) failures.insert(result[0].toUuid());
+        QCOMPARE(failures,QSet<QUuid>({homeId,aggregateId}));
+        musicCacheIoPool()->waitForDone();
+        QVERIFY(!h.cache->lookup(homeKey,now,std::chrono::minutes(5)));
+        QVERIFY(!h.cache->lookup(aggregateKey,now,std::chrono::minutes(5)));
+        QVERIFY(h.cache->lookup(officeKey,now,std::chrono::minutes(5)));
+        emit home->pageReady(oldHome,sample("home"));
+        emit office->pageReady(oldOffice,sample("office"));
+        QTRY_COMPARE(ready.size(),1); QCOMPARE(ready.first()[0].toUuid(),officeId);
+        QCOMPARE(failed.size(),2);
+    }
     void personalDiscoveryNeverCallsOldPageProviders()
     {
         PageHarness h; QVERIFY(h.init());

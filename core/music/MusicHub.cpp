@@ -163,11 +163,13 @@ struct MusicHub::Impl {
                 [this](const QString &source) {
                     const QPointer<MusicHub> guard(q);
                     const auto initialScope = selected();
-                    for (int i = 4; i < int(pages.size()); ++i) {
-                        if (!selected().isEmpty() && selected() != source) continue;
+                    const auto initialContext = contextRevision;
+                    for (int i = 0; i < int(pages.size()); ++i) {
+                        const auto query = baseQuery(i);
+                        if (!query.scope.isAggregate() && query.scope.sourceInstanceId != source) continue;
                         const bool active = pages[i].activated;
-                        const auto revision = invalidate(i, true); // discard old private rows immediately
-                        if (!guard || selected() != initialScope) return;
+                        const auto revision = invalidate(i, true); // discard old rows/actions immediately
+                        if (!guard || selected() != initialScope || contextRevision != initialContext) return;
                         if (active) QTimer::singleShot(0, q, [this, i, revision] {
                             if (pages[i].activated && pages[i].revision == revision) refresh(i);
                         });

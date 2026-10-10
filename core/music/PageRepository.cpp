@@ -59,14 +59,29 @@ PageRepository::PageRepository(SourceRegistry *sources,AggregateComposer *compos
     connect(sources,&SourceRegistry::instanceCapabilitiesChanged,this,[this](const QString &source) {
         // A buffered continuation must not bypass the next per-account check.
         if (m_composer) m_composer->invalidateSource(source);
+        // Ordinary cached rows contain media action availability too. Queue
+        // invalidation before the next FIFO lookup; do not redisplay old rights.
+        (void)QtConcurrent::run(musicCacheIoPool(),[cache=m_cache,source] { cache->invalidateSource(source); });
         const QPointer<PageRepository> guard(this);
         for (const auto &id:m_groups.keys()) {
             const auto group=m_groups.value(id);
-            if (!group || !discoveryKindV1(group->key.query)) continue;
+            if (!group) continue;
             const auto scope=group->key.query.scope;
             if (group->key.sourceInstanceIds.contains(source)
-                || (!group->fannedOut && (scope.isAggregate() || scope.sourceInstanceId==source)))
-                fail(id,error(SourceErrorKindV2::Unavailable));
+                || (!group->fannedOut && (scope.isAggregate() || scope.sourceInstanceId==source))) {
+                group->cacheInvalidated=true;
+                const auto request=group->requests.value(source);
+                if (!discoveryKindV1(group->key.query) && request && !request->session
+                    && (request->dispatched || !request->connections.isEmpty())) {
+                    // Retirement also emits capability invalidation. Preserve
+                    // healthy aggregate members, but discard this member's
+                    // already-completed rows before delivering partial success.
+                    disconnectAll(request->connections);
+                    request->done=false;
+                    request->result.page={};
+                    receive(id,source,{},error(SourceErrorKindV2::Unavailable));
+                } else fail(id,error(SourceErrorKindV2::Unavailable));
+            }
             if (!guard) return;
         }
     });

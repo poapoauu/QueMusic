@@ -1,5 +1,6 @@
 #include "DirectoryLibraryController.h"
 #include "PageRepository.h"
+#include <QTimer>
 
 namespace {
 SourceErrorV2 unavailable()
@@ -39,6 +40,24 @@ DirectoryLibraryController::DirectoryLibraryController(SourceRegistry *sources,
                     if (m_stack.isEmpty()) { refresh(); return; }
                     if (m_stack.last().value("ref").toMap().value("sourceInstanceId") == source)
                         refresh();
+                });
+        connect(m_sources, &SourceRegistry::instanceCapabilitiesChanged, this,
+                [this](const QString &source) {
+                    if (!m_activated || (!m_stack.isEmpty()
+                        && m_stack.last().value("ref").toMap().value("sourceInstanceId") != source)) return;
+                    const auto oldGeneration = m_generation;
+                    const auto revision = ++m_generation;
+                    m_origins.clear();
+                    const auto ids = m_pending.keys();
+                    m_pending.clear();
+                    const QPointer<DirectoryLibraryController> guard(this);
+                    const auto repository = m_repository;
+                    m_model->resetGeneration(oldGeneration);
+                    for (const auto &id : ids) if (repository) repository->cancel(id);
+                    if (!guard || m_generation != revision) return;
+                    QTimer::singleShot(0, this, [this, revision] {
+                        if (m_activated && m_generation == revision) refresh();
+                    });
                 });
         if (auto *plugins = m_sources->pluginManager()) {
             for (const auto &value : plugins->plugins()) {

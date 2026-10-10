@@ -19,6 +19,40 @@ public:
 class DirectoryLibraryControllerTest final : public QObject {
     Q_OBJECT
 private slots:
+    void capabilityChangesClearDirectoryRowsAndRespectNestedOwner() {
+        QTemporaryDir files; QVERIFY(files.isValid());
+        QSettings settings(files.filePath("settings.ini"),QSettings::IniFormat);
+        settings.setValue("MusicHub/cacheDirectory",files.filePath("cache"));
+        DirectorySecrets secrets; SourceAccountStore accounts(&settings,&secrets);
+        PluginManager plugins; plugins.addSearchPath(QUEMUSIC_TASK7_PACKAGES);
+        QCOMPARE(plugins.discover(),1); QVERIFY(plugins.load("org.quemusic.source.task7"));
+        QVERIFY(accounts.saveResolvedV2({"task7","home","Home",{}, {}}));
+        QVERIFY(accounts.saveResolvedV2({"task7","office","Office",{}, {}}));
+        SourceRegistry registry(&plugins,&accounts); SourceScopeStore scope(&settings);
+        MusicHub hub(&registry,&scope,&settings); auto *directories=hub.directoryLibrary();
+        auto *home=registry.sessionFor("task7/home"); auto *office=registry.sessionFor("task7/office");
+        QVERIFY(home&&office); directories->activate();
+        auto *model=directories->model(); QTRY_COMPARE(model->state(),PageLoadStateV2::Ready);
+        QVariantMap root;
+        for (int i=0;i<model->rowCount();++i) {
+            auto item=model->itemAt(i,0);
+            if(item.value("ref").toMap().value("sourceInstanceId")=="task7/home") root=item;
+        }
+        QVERIFY(!root.isEmpty()); QVERIFY(directories->browse(root));
+        QTRY_COMPARE(model->state(),PageLoadStateV2::Ready);
+        const auto before=home->property("requests").toList().size();
+        emit office->capabilitiesChanged({}); QCoreApplication::processEvents();
+        QCOMPARE(home->property("requests").toList().size(),before); QVERIFY(model->rowCount()>0);
+        home->setProperty("hold",true); emit home->capabilitiesChanged({});
+        QCOMPARE(model->rowCount(),0);
+        QTRY_COMPARE(home->property("requests").toList().size(),before+1);
+        const auto stale=home->property("requests").toList().last().toMap().value("id").toUuid();
+        emit home->capabilitiesChanged({}); QCOMPARE(model->rowCount(),0);
+        emit home->pageReady(stale,{}); QCoreApplication::processEvents(); QCOMPARE(model->rowCount(),0);
+        home->setProperty("hold",false); emit home->capabilitiesChanged({});
+        QTRY_COMPARE(model->state(),PageLoadStateV2::Ready);
+        QVERIFY(directories->canNavigateBack());
+    }
     void callableLeaseAndBusyNotificationsDoNotRestartDirectoryRequests()
     {
         QTemporaryDir files; QVERIFY(files.isValid());

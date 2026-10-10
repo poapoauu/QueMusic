@@ -371,6 +371,27 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void capabilityInvalidationRevokesOrdinaryPresentationKeys() {
+        RoutingHarness h; QVERIFY(h.init(true));
+        h.hub->setSelectedSourceInstanceId("adapter/home");
+        auto *home=h.session(); auto *office=h.session("adapter/office"); QVERIFY(home&&office);
+        home->setProperty("continuable",true);
+        h.adapter->activatePage(0);
+        QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+        QTRY_VERIFY(h.adapter->recommendSongs()->rowCount()>0);
+        const auto old=h.adapter->recommendSongs()->get(0);
+        emit office->capabilitiesChanged({}); QCoreApplication::processEvents();
+        QCOMPARE(h.adapter->recommendSongs()->get(0).value("_adapterKey"),old.value("_adapterKey"));
+        emit home->capabilitiesChanged({});
+        QCOMPARE(h.adapter->recommendSongs()->rowCount(),0);
+        QVERIFY(!h.adapter->capabilities(old).value("canPlay").toBool());
+        QVERIFY(h.adapter->play(old).isNull()); QVERIFY(h.adapter->enqueue(old).isNull());
+        emit home->capabilitiesChanged({});
+        QTRY_COMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Ready);
+        QTRY_VERIFY(h.adapter->recommendSongs()->rowCount()>0);
+        QVERIFY(h.adapter->recommendSongs()->get(0).value("_adapterKey")!=old.value("_adapterKey"));
+        QVERIFY(h.adapter->play(old).isNull());
+    }
     void personalModelsAreIndependentSafeAndRouteOnlyAuthoritativeItems()
     {
         RoutingHarness h; QVERIFY(h.init()); auto *session=h.session();
