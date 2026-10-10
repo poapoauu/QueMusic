@@ -332,6 +332,15 @@ ctest --test-dir build-phase3 --output-on-failure
 
 下一开发切片回到首页剩余私人漫游/雷达与热门歌单：先对照现有 v2 的通用页面/动作契约，明确可表达的 Source 数据和不支持状态，再迁移原卡片及详情入口。不能把普通推荐列表冒充私人漫游，也不能用旧平台路径伪造插件播放项。仍在使用的网易/酷狗账号 UI 保留到对应插件具备迁移条件，最终删除目标不变。Phase 6 未整体完成，后续顺序保持如下。
 
+### 首页旧热门歌单：迁移到通用 Source 歌单（2026-10-10）
+
+- 实际 v2 已有 Category / Playlists 分区，Adapter 已有按实体及 chart 分类的安全 `categoryPlaylists` 投影，直接复用；没有新增 SDK 枚举、Provider 虚接口或 Plugin UI API。
+- 原 148×256 歌单卡片、封面和悬停动画保留，数据改读该投影，标题/歌手按纯文本显示。标题改为“音源歌单”，去掉插件未提供的旧平台播放量/曲目数，避免声称通用列表有热门排名。
+- 点击仅在 `canBrowse` 允许后进入已有安全分类详情；详情的播放、入队、收藏及分页沿用 Adapter/Coordinator 路径。删除此入口独占的旧 `hotlistsWindow`、hash 查询、旧 path 入队和 Legacy 收藏 handlers；私人漫游/雷达仍在使用的兼容业务暂保留。
+- “更多”与重试只使用该模型的可操作分区 ID；空态、部分失败、全失败和加载使用通用提示，缺 Adapter 不回退到旧歌单。加载/进入详情期间再次程序化触发也不发旧请求。
+- 主程序构建及 MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration 共 9 项联合回归通过。实际生产页面测试覆盖实体/chart 过滤、纯文本、详情动作、能力拒绝、非法索引、缺 Adapter、跨分区分页/重试与零旧歌单调用；没有真实服务器/原生视觉验收。
+- 私人漫游/雷达没有明确 v2 契约，不能把 Random 推荐冒充该功能。下一切片审计共享详情容器的遗留平台字段、标题渲染和 Source 范围变化的展示失效；之后继续处理剩余发现入口。Phase 6 未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

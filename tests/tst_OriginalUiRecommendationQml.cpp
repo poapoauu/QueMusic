@@ -7,6 +7,7 @@
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
+#include <QtQml/QQmlExpression>
 
 class FakeListModel final : public QAbstractListModel {
     Q_OBJECT
@@ -24,7 +25,8 @@ public:
         for (const QVariant &row : m_rows) {
             const QVariantMap values = row.toMap();
             for (auto it = values.cbegin(); it != values.cend(); ++it)
-                m_roles.insert(Qt::UserRole + m_roles.size() + 1, it.key().toLatin1());
+                if (!m_roles.values().contains(it.key().toLatin1()))
+                    m_roles.insert(Qt::UserRole + m_roles.size() + 1, it.key().toLatin1());
         }
     }
 
@@ -56,7 +58,8 @@ public:
         for (const QVariant &row : m_rows) {
             const QVariantMap values = row.toMap();
             for (auto it = values.cbegin(); it != values.cend(); ++it)
-                m_roles.insert(Qt::UserRole + m_roles.size() + 1, it.key().toLatin1());
+                if (!m_roles.values().contains(it.key().toLatin1()))
+                    m_roles.insert(Qt::UserRole + m_roles.size() + 1, it.key().toLatin1());
         }
         endResetModel();
         emit countChanged();
@@ -313,19 +316,19 @@ class FakeLegacyMusicApi final : public QObject {
     FAKE_LIST_PROPERTY(singerList)
 #undef FAKE_LIST_PROPERTY
 public:
-    QObject *getHotlistMenu() { return &lists; } QObject *hotPlayLists() { return &lists; }
+    QObject *getHotlistMenu() { return &lists; } QObject *hotPlayLists() { ++hotPlaylistReads; return &lists; }
     QObject *allPlaylistMenu() { return &lists; } QObject *musicPlaylists() { return &lists; }
     QObject *recommendSongs() { return &lists; } QObject *playlistSong() { return &lists; }
     QObject *personalFm() { return &lists; } QObject *personalRadar() { return &lists; }
     QObject *newSongs() { return &lists; } QObject *toplistList() { return &lists; }
     QObject *singerList() { return &lists; }
-    Q_INVOKABLE void getHotPlaylistMenu(int) {} Q_INVOKABLE void getHotPlaylists(int) {}
+    Q_INVOKABLE void getHotPlaylistMenu(int) {} Q_INVOKABLE void getHotPlaylists(int) { ++hotPlaylistCalls; }
     Q_INVOKABLE void getPlaylistMenu(int) {} Q_INVOKABLE void getNewSongs(int, int, int) { ++newSongsMoreCalls; }
     Q_INVOKABLE void getAllToplist() {} Q_INVOKABLE void getRecommendSongs(int, int, int = 0) { ++recommendMoreCalls; }
     Q_INVOKABLE void getMusicPlaylists(int, int, int) { ++musicPlaylistsMoreCalls; } Q_INVOKABLE void getMenuInfo(int) {}
     Q_INVOKABLE void getMusicInfo(const QString &, int = 0, int = 0) { ++musicInfoCalls; }
     Q_INVOKABLE void getPersonalFm(int, int, int) {} Q_INVOKABLE void getPersonalRadar(int, int, int) {}
-    Q_INVOKABLE void getPlaylistSongs(const QString &, int, int) {}
+    Q_INVOKABLE void getPlaylistSongs(const QString &, int, int) { ++playlistSongCalls; }
     Q_INVOKABLE void getHotSingers(int, int, int) {} Q_INVOKABLE void getSingerCategory(int, int, int, int) {}
     Q_INVOKABLE void getSingerSongs(const QString &, int, int, int) {}
     Q_INVOKABLE void getMusicToplist(int, int, int, int) {}
@@ -339,6 +342,9 @@ public:
     int newSongsMoreCalls = 0;
     int musicPlaylistsMoreCalls = 0;
     int musicInfoCalls = 0;
+    int hotPlaylistReads = 0;
+    int hotPlaylistCalls = 0;
+    int playlistSongCalls = 0;
     FakeListModel *listModel() { return &lists; }
 signals:
     void songSourceChanged(); void nowIndexChanged(); void globalidChanged(); void globaltagidChanged(); void loadStateChanged();
@@ -442,6 +448,90 @@ std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, QObje
 class OriginalUiRecommendationQmlTest final : public QObject {
     Q_OBJECT
 private slots:
+    void homePlaylistCardsUseOnlySourcePlaylistsAndSafeActions()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        context.legacyMusicApi()->listModel()->setRows(playlistRows());
+        auto home = loadPage(engine, "pages/HomePage.qml", &adapter, &error); QVERIFY2(home, qPrintable(error));
+        auto *cards = home->findChild<QObject *>("homePlaylistCards"); QVERIFY(cards);
+        QCOMPARE(cards->property("count").toInt(), 0);
+        QVariantMap row = playlistRows().first().toMap(); row["title"] = "<b>Source playlist</b>";
+        QVariantMap chart = row; chart["collectionKind"] = "chart";
+        auto rows = mixedCategoryRows(); rows << row << chart; adapter.category.setRows(rows);
+        QTRY_COMPARE(cards->property("count").toInt(), 1);
+        QCOMPARE(cards->property("model").value<QObject *>(), adapter.categoryPlaylists());
+        QQuickItem *card = nullptr;
+        QVERIFY(QMetaObject::invokeMethod(cards, "itemAt", Q_RETURN_ARG(QQuickItem *, card), Q_ARG(int, 0))); QVERIFY(card);
+        auto *title = card->findChild<QObject *>("homePlaylistCardTitle"); QVERIFY(title);
+        QCOMPARE(title->property("text").toString(), QString("<b>Source playlist</b>")); QCOMPARE(title->property("textFormat").toInt(), 0);
+        auto *action = card->findChild<QObject *>("homePlaylistCardAction"); QVERIFY(action);
+        QVERIFY(action->property("enabled").toBool());
+        QQmlExpression click(engine.rootContext(), action, "clicked(null)"); click.evaluate();
+        QVERIFY2(!click.hasError(), qPrintable(click.error().toString()));
+        QCOMPARE(adapter.browsedRows.size(), 1); QCOMPARE(adapter.browsedRows.first(), row);
+        auto *detail = home->findChild<QObject *>("homeCategoryDetailList"); QVERIFY(detail);
+        QCOMPARE(detail->property("model").value<QObject *>(), adapter.categoryItems());
+        QVariantMap track = mixedCategoryRows().last().toMap(); adapter.category.setRows({track});
+        QVERIFY(QMetaObject::invokeMethod(detail, "clicked", Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(detail, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(detail, "toolClicked", Q_ARG(int, 0), Q_ARG(int, 1)));
+        QCOMPARE(adapter.playedRows, QList<QVariantMap>{track}); QCOMPARE(adapter.enqueuedRows, QList<QVariantMap>{track});
+        QCOMPARE(adapter.favoriteRows.size(), 1); QCOMPARE(adapter.favoriteRows.first(), qMakePair(track, true));
+        auto *detailWindow = home->findChild<QObject *>("recommendationDetailWindow"); QVERIFY(detailWindow);
+        QVERIFY(QMetaObject::invokeMethod(detailWindow, "closed", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+        QTRY_VERIFY(adapter.closedBrowses > 0);
+        row["canBrowse"] = false; adapter.category.setRows({row}); QTRY_COMPARE(cards->property("count").toInt(), 1);
+        QVariant browsed;
+        QVERIFY(QMetaObject::invokeMethod(home.get(), "browsePlaylist", Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, QVariant(0))));
+        QVERIFY(!browsed.toBool()); QCOMPARE(adapter.browsedRows.size(), 1);
+        for (const auto &invalid : {QVariant(-1), QVariant(1), QVariant(0.5), QVariant("0")}) {
+            QVERIFY(QMetaObject::invokeMethod(home.get(), "browsePlaylist", Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, invalid)));
+            QVERIFY(!browsed.toBool());
+        }
+        QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+        QTRY_COMPARE(cards->property("count").toInt(), 0);
+        QVERIFY(QMetaObject::invokeMethod(home.get(), "browsePlaylist", Q_RETURN_ARG(QVariant, browsed), Q_ARG(QVariant, QVariant(0)))); QVERIFY(!browsed.toBool());
+        QCOMPARE(context.legacyMusicApi()->hotPlaylistReads, 0); QCOMPARE(context.legacyMusicApi()->hotPlaylistCalls, 0);
+        QCOMPARE(context.legacyMusicApi()->playlistSongCalls, 0); QCOMPARE(context.legacyMusicApi()->musicInfoCalls, 0);
+        QCOMPARE(context.legacyLists()->favoriteQueries, 0); QCOMPARE(context.legacyLists()->favoriteCalls, 0);
+    }
+
+    void homePlaylistControlsUseSectionCursorsAndFailures()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto home = loadPage(engine, "pages/HomePage.qml", &adapter, &error); QVERIFY2(home, qPrintable(error));
+        auto *status = home->findChild<QObject *>("homePlaylistsStatus"); QVERIFY(status);
+        auto *more = home->findChild<QObject *>("homePlaylistsMoreButton"); QVERIFY(more);
+        auto *retry = home->findChild<QObject *>("homePlaylistsRetryButton"); QVERIFY(retry);
+        QCOMPARE(status->property("text").toString(), QString("当前范围暂无可用的音源歌单"));
+        QVERIFY(!more->property("visible").toBool()); QVERIFY(!retry->property("visible").toBool());
+        adapter.playlists.paginationSectionIds = {"home/playlist-next", "office/playlist-next"};
+        adapter.playlists.loadingMore = true; // Only the per-section cursor list determines eligible requests.
+        emit adapter.playlists.presentationStateChanged(); QVERIFY(more->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(more, "clicked"));
+        QCOMPARE(adapter.moreRequests, (QList<QPair<int, QString>>{{1, "home/playlist-next"}, {1, "office/playlist-next"}}));
+        adapter.playlists.paginationSectionIds.clear(); adapter.playlists.retrySectionIds = {"office/playlist-failed"};
+        adapter.playlists.error = {{"office", QVariantMap{{"detail", "secret/private diagnostic"}}}};
+        emit adapter.playlists.presentationStateChanged(); QVERIFY(!more->property("visible").toBool());
+        QVERIFY(retry->property("visible").toBool()); QVERIFY(retry->property("enabled").toBool());
+        QCOMPARE(status->property("text").toString(), QString("音源歌单加载失败，可重试"));
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked")); QCOMPARE(adapter.retries.last(), qMakePair(1, QString("office/playlist-failed")));
+        adapter.category.setRows(playlistRows());
+        QCOMPARE(status->property("text").toString(), QString("部分音源歌单未能加载，可重试"));
+        adapter.categoryState = "loading"; emit adapter.categoryStatusChanged();
+        QCOMPARE(status->property("text").toString(), QString("正在加载音源歌单…"));
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked")); QCOMPARE(adapter.retries.size(), 1);
+        adapter.categoryState = "ready"; emit adapter.categoryStatusChanged();
+        QVERIFY(adapter.browse(playlistRows().first().toMap()));
+        QVERIFY(QMetaObject::invokeMethod(retry, "clicked")); QCOMPARE(adapter.retries.size(), 1);
+        adapter.closeCategoryBrowse(); adapter.playlists.error.clear(); adapter.playlists.retrySectionIds.clear();
+        emit adapter.playlists.presentationStateChanged(); QCOMPARE(status->property("text").toString(), QString());
+        QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+        QVERIFY(QMetaObject::invokeMethod(more, "clicked")); QVERIFY(QMetaObject::invokeMethod(retry, "clicked"));
+        QCOMPARE(adapter.moreRequests.size(), 2); QCOMPARE(adapter.retries.size(), 1);
+        QCOMPARE(context.legacyMusicApi()->hotPlaylistReads, 0); QCOMPARE(context.legacyMusicApi()->hotPlaylistCalls, 0);
+    }
+
     void homeFavoriteCountUsesLoadedPluginLists()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;

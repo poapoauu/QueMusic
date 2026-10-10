@@ -112,6 +112,13 @@ private slots:
         QVERIFY(home.contains(QStringLiteral("objectName: \"homeCategoryDetailList\"")));
         QVERIFY(!home.contains(QStringLiteral("MusicApi.musicPlaylists")));
         QVERIFY(!home.contains(QStringLiteral("MusicApi.getMusicPlaylists(")));
+        QVERIFY(home.contains(QStringLiteral("objectName: \"homePlaylistCards\"")));
+        QVERIFY(home.contains(QStringLiteral("musicAdapter.categoryPlaylists || null")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi.hotPlayLists")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi.getHotPlaylists(")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi.getPlaylistSongs(")));
+        QVERIFY(!home.contains(QStringLiteral("hotlistsWindow")));
+        QVERIFY(!home.contains(QStringLiteral("PlayListWindow")));
 
         for (const QString &page : {QStringLiteral("pages/PlaylistPage.qml"),
                                     QStringLiteral("pages/FavouritePage.qml"),

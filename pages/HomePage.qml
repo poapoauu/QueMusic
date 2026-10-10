@@ -9,6 +9,14 @@ Item {
     id: homePage
     property var musicAdapter: null
     property var playbackAdapter: null
+    readonly property var playlistModel: musicAdapter ? musicAdapter.categoryPlaylists || null : null
+    readonly property bool playlistHasError: playlistModel && playlistModel.error
+            && Object.keys(playlistModel.error).length > 0
+    readonly property string playlistStatusMessage: {
+        if (musicAdapter && musicAdapter.categoryState === "loading") return "正在加载音源歌单…"
+        if (playlistHasError) return playlistModel.count > 0 ? "部分音源歌单未能加载，可重试" : "音源歌单加载失败，可重试"
+        return !playlistModel || playlistModel.count === 0 ? "当前范围暂无可用的音源歌单" : ""
+    }
     //property alias animatedWindow: animationWrapper
     property real toolsWindow: 0
     //property bool displaytop: flickable.contentY > 60 ? true : false
@@ -58,11 +66,29 @@ Item {
     }
     function browseCategory(index) {
         const row = categoryStripItems()[index]
-        if (!row || !capabilitiesFor(row).canBrowse || !musicAdapter.browse(row))
+        return browsePresentation(row)
+    }
+    function browsePresentation(row) {
+        if (!row || !musicAdapter || !capabilitiesFor(row).canBrowse || !musicAdapter.browse(row))
             return false
         recommendWindow.opened(row.title || "", row.cover || "qrc:/QueMusic/resources/app/musicpic.png")
         window.exitIndex = 1
         return true
+    }
+    function browsePlaylist(index) {
+        if (!playlistModel || typeof playlistModel.get !== "function"
+                || !Number.isInteger(index) || index < 0 || index >= playlistModel.count)
+            return false
+        return browsePresentation(playlistModel.get(index))
+    }
+    function requestPlaylistSections(retry) {
+        if (!musicAdapter || !playlistModel || musicAdapter.categoryState === "loading"
+                || musicAdapter.categoryCanNavigateBack === true) return
+        const action = retry ? "retry" : "loadMore"
+        if (typeof musicAdapter[action] !== "function") return
+        const targets = retry ? playlistModel.retrySectionIds : playlistModel.paginationSectionIds
+        if (!targets) return
+        for (const section of Array.from(targets)) musicAdapter[action](1, section)
     }
 
 
@@ -654,14 +680,25 @@ Item {
                 }
 
 
-                QHead { text: "热门歌单" }
+                QHead { text: "音源歌单" }
+                Text {
+                    objectName: "homePlaylistsStatus"
+                    width: homeView.standWidth
+                    text: homePage.playlistStatusMessage
+                    textFormat: Text.PlainText
+                    visible: text.length > 0
+                    wrapMode: Text.Wrap
+                    color: Style.themes.textColor
+                    font.pixelSize: Style.settings.text
+                }
 
                 Flow {
                     spacing: 24
                     width: homeView.standWidth
 
                     Repeater {
-                        model: MusicApi.hotPlayLists
+                        objectName: "homePlaylistCards"
+                        model: homePage.playlistModel
                         delegate: Rectangle {
                             width: 148
                             height: 256
@@ -683,21 +720,17 @@ Item {
                             }
                             MouseArea {
                                 id: hotPlayListsArea
+                                objectName: "homePlaylistCardAction"
                                 anchors.fill: parent
                                 hoverEnabled: true
-                                onClicked: {
-                                    hotlistsWindow.mainTarget = homeMain;
-                                    MusicApi.playlistSong.clear();
-                                    MusicApi.globalid = model.hash;
-                                    MusicApi.getPlaylistSongs(model.hash,1,20);
-                                    hotlistsWindow.opened(model);
-                                    window.exitIndex = 1;
-                                }
+                                enabled: homePage.playlistModel
+                                        && homePage.capabilitiesFor(homePage.playlistModel.get(index)).canBrowse === true
+                                onClicked: homePage.browsePlaylist(index)
                             }
                             QPicture {
                                 width: 148
                                 height: 148
-                                source: model.cover.replace("{size}", "128")
+                                source: model.cover || "qrc:/QueMusic/resources/app/musicpic.png"
                                 radius: Style.settings.labelRadius
                                 //cache: true
                                 sourceSize: Qt.size(128,128)
@@ -705,10 +738,12 @@ Item {
                                 radius4: 0
                             }
                             Text {
+                                objectName: "homePlaylistCardTitle"
                                 x: 16
                                 y: 160
                                 width: 116
                                 text: model.title
+                                textFormat: Text.PlainText
                                 font.bold: true
                                 color: Style.themes.fontColor
                                 font.pixelSize: Style.settings.textmain
@@ -722,7 +757,8 @@ Item {
                                 y: 200
                                 width: 116
                                 height: 18
-                                text: model.album
+                                text: model.artist || ""
+                                textFormat: Text.PlainText
                                 color: Style.themes.textColor
                                 font.pixelSize: Style.settings.text
                                 //wrapMode: Text.Wrap
@@ -742,7 +778,7 @@ Item {
                                     id: playIcon
                                     x: 16
                                     height: 32
-                                    text: "\uf00e"
+                                    text: "\uf0e7"
                                     font.pixelSize: Style.settings.text
                                     font.family: iconFont.name
                                     color: Style.themes.textColor
@@ -751,15 +787,7 @@ Item {
                                 Text {
                                     x: 20 + playIcon.width
                                     height: 32
-                                    text: Math.floor(model.playcount / 10000) + "万"
-                                    font.pixelSize: Style.settings.textTip
-                                    color: Style.themes.textColor
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                Text {
-                                    x: parent.width - width - 16
-                                    height: 32
-                                    text: model.duration + "首"
+                                    text: hotPlayListsArea.enabled ? "查看曲目" : "暂不可浏览"
                                     font.pixelSize: Style.settings.textTip
                                     color: Style.themes.textColor
                                     verticalAlignment: Text.AlignVCenter
@@ -773,22 +801,32 @@ Item {
                     height: 60
                     width: homeView.standWidth
                     QButton {
-                        anchors.centerIn: parent
+                        objectName: "homePlaylistsMoreButton"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
                         height: 40; width: 120
                         radius: 20
                         iconCharacter: "\uf0f8"
                         text: "更多"
-                        onClicked: {
-                            if(MusicApi.songSource === 0) {
-                                MusicApi.hotPlayLists.clear();
-                            }
-                            if(MusicApi.hotPlayLists.count % 20 === 0) {
-                                MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1);
-                            } else {
-                                MusicApi.hotPlayLists.clear();
-                                MusicApi.getHotPlaylists(MusicApi.hotPlayLists.count / 20 + 1);
-                            }
-                        }
+                        visible: homePage.playlistModel && homePage.playlistModel.paginationSectionIds
+                                && homePage.playlistModel.paginationSectionIds.length > 0
+                        enabled: musicAdapter && musicAdapter.categoryState !== "loading"
+                                && musicAdapter.categoryCanNavigateBack !== true
+                        onClicked: homePage.requestPlaylistSections(false)
+                    }
+                    QButton {
+                        objectName: "homePlaylistsRetryButton"
+                        anchors.centerIn: parent
+                        anchors.horizontalCenterOffset: homePage.playlistModel && homePage.playlistModel.paginationSectionIds
+                                && homePage.playlistModel.paginationSectionIds.length > 0 ? 132 : 0
+                        height: 40; width: 120
+                        radius: 20
+                        text: "重试"
+                        visible: homePage.playlistHasError
+                        enabled: musicAdapter && musicAdapter.categoryState !== "loading"
+                                && musicAdapter.categoryCanNavigateBack !== true && homePage.playlistModel
+                                && homePage.playlistModel.retrySectionIds && homePage.playlistModel.retrySectionIds.length > 0
+                        onClicked: homePage.requestPlaylistSections(true)
                     }
                 }
             }
@@ -974,76 +1012,6 @@ Item {
                 const caps = homePage.capabilitiesFor(row)
                 if (tool === 0 && caps.canEnqueue) musicAdapter.enqueue(row)
                 else if (tool === 1 && caps.canFavorite) musicAdapter.setFavorite(row, true)
-            }
-        }
-    }
-    PlayListWindow {
-        id: hotlistsWindow
-        mainTarget: homeMain
-        winIndex: 2
-        content: Item {
-
-            QListView {
-                id: hotlistsView
-                x: 24
-                y: 184
-                width: hotlistsWindow.width - 32
-                height: hotlistsWindow.height - 184
-                model: MusicApi.playlistSong
-                clip: true
-                //reuseItems: true
-                topMargin: 8
-                bottomMargin: 24
-
-                onClicked: (index) => {
-                               if(Options.settings.soundQuality === 0) {
-                                   MusicApi.getMusicInfo(model.get(index).hash);
-                               } else if(Options.settings.soundQuality === 1) {
-                                   MusicApi.getMusicInfo(model.get(index).hashhq);
-                               } else {
-                                   MusicApi.getMusicInfo(model.get(index).hashsq);
-                               }
-                           }
-
-                onToolClicked: (index,tool) => {
-                                   switch(tool) {
-                                   case 0:
-                                       var listIndex = -1;
-                                       var indexHash = model.get(index).hash;
-                                       for(var i = 0;i < playListModel.count;i++) {
-                                           var forUrl = playListModel.get(i).path;
-                                           if(forUrl === indexHash) {
-                                               listIndex = i;
-                                           }
-                                       }
-                                       if (listIndex == -1) {
-                                           playListModel.append({ name: model.get(index).title, path: model.get(index).hash, songer: model.get(index).artist, source: MusicApi.songSource });
-                                           mainWarn.tiped("成功加入播放列表",1);
-                                       }
-                                       break;
-                                   case 1:
-                                       if (favoritesSong.isFavorite(model.get(index).hash, "song")) {
-                                           favoritesSong.removeFavorite(model.get(index).hash, "song");
-                                           mainWarn.tiped("取消收藏",0);
-                                       } else {
-                                           favoritesSong.addFavorite(model.get(index).hash, model.get(index).title, model.get(index).artist, model.get(index).cover, MusicApi.songSource, model.get(index).duration, "song");
-                                           mainWarn.tiped("成功收藏",1);
-                                       }
-                                       break;
-                                   }
-                               }
-
-                onEnded: {
-                    if(MusicApi.playlistSong.count % 20 === 0 && MusicApi.playlistSong.count !== 0) {
-                        var tagid = hotlistsWindow.id;
-                        MusicApi.getPlaylistSongs(tagid,MusicApi.playlistSong.count / 20 + 1,20);
-                        isEnd = false;
-                    } else {
-                        if(MusicApi.playlistSong.count !== 0) {
-                            isEnd = true;
-                        }
-                    }
-                }
             }
         }
     }
