@@ -697,6 +697,14 @@ Coordinator 新测试覆盖移位与清理的播放／解析／通知保持和�
 
 下一项转入 Player／桌面歌词切歌入口依赖边界及 Phase 6 全量审计；不将该切片等同于原生弹窗／真实音频／跨平台验收。Phase 7／8 平台插件与 Phase 9 Legacy 删除仍未完成。
 
+### 后续增量：Player／桌面切歌入口共用 Source 边界
+
+已有歌词／桌面播放器／系统媒体控制 Adapter 接线保留；Player 上一首、下一首和随机入口改用同一安全队列 helper，按 occurrence 播放。Source 活动状态或 sticky 模式先进入 Source 分支，缺 Coordinator／方法、畸形队列／索引、停播或不可用目标均不读 Legacy 队列；明确 Legacy 状态保持原业务。切歌顺序语义和原 UI 布局不变，仍由 Coordinator 重新检查实际目标与权限。
+
+生产函数测试覆盖三类切歌、末项回绕、随机合法目标、非法索引／队列、缺依赖、停止后的 Source、模式标记迟到及 Legacy 行为，并检查桌面控件转发。首次联合回归中旧源码 guard 字面量断言已改为新分支／共用 guard／occurrence 接线断言，运行行为断言保留。全目标增量构建、专项目标重建、五项联合复跑及全部 74 项 CTest 通过（62.41 秒）。
+
+Source SDK v2／Source 插件 ABI／Plugin UI API／磁盘 schema 不变；下一项为 Phase 6 全量出口扫描及 UI smoke。真实服务、物理音频、原生视觉和跨平台 ABI 验收、Phase 7／8 平台插件及 Phase 9 Legacy 删除仍未完成。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

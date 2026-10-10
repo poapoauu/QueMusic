@@ -667,16 +667,29 @@ Rectangle {
         }
     }
 
+    function playSourceQueueStep(step) {
+        if (!window.securePlaybackCurrent || typeof playbackCoordinator === "undefined"
+                || !playbackCoordinator || typeof playbackCoordinator.playOccurrence !== "function") return;
+        const queue = playbackCoordinator.queue;
+        const current = playbackCoordinator.currentIndex;
+        if (!queue || !Number.isInteger(queue.length) || queue.length <= 0
+                || !Number.isInteger(current) || current < 0 || current >= queue.length) return;
+        const target = step < 0 ? current - 1 : step > 0 ? (current + 1) % queue.length
+                                                     : Math.floor(Math.random() * queue.length);
+        if (target < 0 || target >= queue.length) return;
+        const row = queue[target];
+        if (!row || row.unavailable !== false || !row.occurrenceId) return;
+        playbackCoordinator.playOccurrence(row.occurrenceId);
+    }
+
     // 上一首
     function lastMedia() {
-        if (window.sourceLyricsMode && !window.securePlaybackCurrent)
+        if (window.sourceLyricsMode || musicControlMin.securePlaybackActive) {
+            musicControlMin.playSourceQueueStep(-1);
             return;
-        const index = musicControlMin.securePlaybackActive ? playbackCoordinator.currentIndex : playListModel.playListIndex;
+        }
+        const index = playListModel.playListIndex;
         if(index > 0) {
-            if (musicControlMin.securePlaybackActive) {
-                playbackCoordinator.playQueueEntry(index - 1);
-                return;
-            }
             playListModel.playListIndex -= 1;
             window.playQueueEntry(playListModel.playListIndex);
             if(windowsSmtc.available)
@@ -687,13 +700,8 @@ Rectangle {
     }
     // 下一首
     function enterMedia() {
-        if (window.sourceLyricsMode && !window.securePlaybackCurrent)
-            return;
-        if (musicControlMin.securePlaybackActive) {
-            const queueSize = playbackCoordinator.queue.length;
-            const index = playbackCoordinator.currentIndex;
-            if (queueSize > 0)
-                playbackCoordinator.playQueueEntry(index < queueSize - 1 ? index + 1 : 0);
+        if (window.sourceLyricsMode || musicControlMin.securePlaybackActive) {
+            musicControlMin.playSourceQueueStep(1);
             return;
         }
         if(playListModel.playListIndex < playListModel.count - 1) {
@@ -709,12 +717,8 @@ Rectangle {
     }
     // 随机播放音乐
     function randomMedia() {
-        if (window.sourceLyricsMode && !window.securePlaybackCurrent)
-            return;
-        if (musicControlMin.securePlaybackActive) {
-            const queueSize = playbackCoordinator.queue.length;
-            if (queueSize > 0)
-                playbackCoordinator.playQueueEntry(Math.floor(Math.random() * queueSize));
+        if (window.sourceLyricsMode || musicControlMin.securePlaybackActive) {
+            musicControlMin.playSourceQueueStep(0);
             return;
         }
         playListModel.playListIndex = Math.floor( Math.random() * playListModel.count );

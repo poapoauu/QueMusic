@@ -142,7 +142,7 @@ signals:
 class LegacyShutdownDouble final : public QObject {
     Q_OBJECT
     Q_PROPERTY(int count READ count)
-    Q_PROPERTY(int playListIndex READ index)
+    Q_PROPERTY(int playListIndex READ index WRITE setIndex)
     Q_PROPERTY(QString urlStr READ cover)
 public:
     int playbackInvalidations = 0;
@@ -151,6 +151,7 @@ public:
     mutable int reads = 0;
     int count() const { ++reads; return rows; }
     int index() const { ++reads; return currentIndex; }
+    void setIndex(int value) { currentIndex=value; }
     QString cover() const { ++reads; return "file:///legacy-cover.png"; }
     Q_INVOKABLE QVariantMap get(int) { ++reads; return {{"path", "legacy-id"}, {"source", 1}}; }
     Q_INVOKABLE void stop() { ++stops; }
@@ -185,6 +186,7 @@ private slots:
     void sourceShutdownDoesNotMixLegacyPersistence();
     void sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemptLegacyOnRejection();
     void sourceQueueConfirmationKeepsTheCapturedPlaybackIntent();
+    void actualPlayerQueueStepsStayInSourceMode();
     void coverDialogUsesSafeCurrentLabelsAndFileNames();
     void coverSaveKeepsTheCapturedDestination();
     void coverSaveRejectsFailuresAndChangedImages();
@@ -1734,6 +1736,93 @@ void OriginalUiPlaybackQmlTest::sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemp
     }
 }
 
+void OriginalUiPlaybackQmlTest::actualPlayerQueueStepsStayInSourceMode()
+{
+    QQmlEngine engine;
+    LegacyShutdownDouble legacy;
+    engine.rootContext()->setContextProperty("playListModel", &legacy);
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto source=QString::fromUtf8(file.readAll());
+    QString functions;
+    for(const auto &name:{"playSourceQueueStep","lastMedia","enterMedia","randomMedia"}) {
+        const auto function=capturedQmlBlock(source,source.indexOf(QString("function %1(").arg(name)));
+        QVERIFY(!function.isEmpty()); functions+=function+'\n';
+    }
+    QQmlComponent component(&engine);
+    component.setData((R"QML(import QtQml
+QtObject {
+    id: musicControlMin
+    property bool securePlaybackActive: window.securePlaybackCurrent
+    property QtObject window: QtObject {
+        property bool sourceLyricsMode: true
+        property bool securePlaybackCurrent: true
+        property int legacyCalls: 0
+        function playQueueEntry(index) { ++legacyCalls; }
+    }
+    property QtObject windowsSmtc: QtObject { property bool available: false }
+    property QtObject sourceCoordinator: QtObject {
+        property var currentIndex: 1
+        property var queue: [{occurrenceId: "first", unavailable: false},
+                             {occurrenceId: "current", unavailable: false},
+                             {occurrenceId: "last", unavailable: false}]
+        property int calls: 0
+        property string selected: ""
+        function playOccurrence(id) { ++calls; selected = id; }
+    }
+    property var playbackCoordinator: sourceCoordinator
+)QML"+functions+"}").toUtf8(),QUrl());
+    std::unique_ptr<QObject> root(component.create()); QVERIFY2(root,qPrintable(component.errorString()));
+    auto *coordinator=root->property("sourceCoordinator").value<QObject *>(); QVERIFY(coordinator);
+    auto *window=root->property("window").value<QObject *>(); QVERIFY(window);
+    auto invoke=[&](const char *method) { return QMetaObject::invokeMethod(root.get(),method); };
+    QVERIFY(invoke("lastMedia")); QCOMPARE(coordinator->property("selected").toString(),QString("first"));
+    QVERIFY(invoke("enterMedia")); QCOMPARE(coordinator->property("selected").toString(),QString("last"));
+    QVERIFY(coordinator->setProperty("currentIndex",2));
+    QVERIFY(invoke("enterMedia")); QCOMPARE(coordinator->property("selected").toString(),QString("first"));
+    QVERIFY(invoke("randomMedia"));
+    QVERIFY(QStringList({"first","current","last"}).contains(coordinator->property("selected").toString()));
+    QCOMPARE(coordinator->property("calls").toInt(),4);
+    auto rejectAll=[&] {
+        const int calls=coordinator->property("calls").toInt();
+        for(const auto *method:{"lastMedia","enterMedia","randomMedia"}) QVERIFY(invoke(method));
+        QCOMPARE(coordinator->property("calls").toInt(),calls);
+        QCOMPARE(legacy.reads,0); QCOMPARE(window->property("legacyCalls").toInt(),0);
+    };
+    for(const auto &index:QVariantList{-1,3,1.5,QString("1"),std::numeric_limits<double>::quiet_NaN()}) {
+        QVERIFY(coordinator->setProperty("currentIndex",index)); rejectAll();
+    }
+    QVERIFY(coordinator->setProperty("currentIndex",1));
+    const auto queue=coordinator->property("queue");
+    QVERIFY(coordinator->setProperty("queue",QVariantList{})); rejectAll();
+    QVERIFY(coordinator->setProperty("queue",QVariantMap{{"length",QString("3")}})); rejectAll();
+    QVERIFY(coordinator->setProperty("queue",QVariantList{
+        QVariantMap{{"occurrenceId","first"},{"unavailable",true}},
+        QVariantMap{{"occurrenceId","current"}}, QVariantMap{{"unavailable",false}}})); rejectAll();
+    QVERIFY(coordinator->setProperty("queue",queue));
+    QVERIFY(root->setProperty("playbackCoordinator",QVariant::fromValue<QObject *>(nullptr))); rejectAll();
+    QVERIFY(root->setProperty("playbackCoordinator",QVariantMap{})); rejectAll();
+    QVERIFY(root->setProperty("playbackCoordinator",QVariant::fromValue(coordinator)));
+    QVERIFY(window->setProperty("securePlaybackCurrent",false)); rejectAll();
+    // Even an active Source with a delayed mode flag never falls into Legacy.
+    QVERIFY(window->setProperty("sourceLyricsMode",false));
+    QVERIFY(window->setProperty("securePlaybackCurrent",true));
+    QVERIFY(invoke("enterMedia")); QCOMPARE(coordinator->property("calls").toInt(),5);
+    QCOMPARE(legacy.reads,0);
+    QVERIFY(window->setProperty("securePlaybackCurrent",false));
+    legacy.currentIndex=0; legacy.rows=1;
+    QVERIFY(invoke("enterMedia"));
+    QCOMPARE(window->property("legacyCalls").toInt(),1);
+    QCOMPARE(coordinator->property("calls").toInt(),5);
+    QVERIFY(legacy.reads>0);
+    // All desktop controls keep forwarding to the same audited functions.
+    for(const auto *path:{"/components/DesktopLyrics.qml","/components/DesktopPlayerWindow.qml"}) {
+        QFile desktop(QString(QUEMUSIC_SOURCE_DIR)+path); QVERIFY(desktop.open(QIODevice::ReadOnly));
+        const auto text=QString::fromUtf8(desktop.readAll());
+        QVERIFY(text.contains("onClicked: musicControlMin.lastMedia()"));
+        QVERIFY(text.contains("onClicked: musicControlMin.enterMedia()"));
+    }
+}
+
 void OriginalUiPlaybackQmlTest::sourceQueueConfirmationKeepsTheCapturedPlaybackIntent()
 {
     QQmlEngine engine; CoordinatorDouble coordinator,replacement; QueueConfirmationDouble dialog;
@@ -1907,7 +1996,10 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QFile controlsFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/layout/PlayerControl.qml"));
     QVERIFY(controlsFile.open(QIODevice::ReadOnly | QIODevice::Text));
     const auto controlsText = QString::fromUtf8(controlsFile.readAll());
-    QCOMPARE(controlsText.count(QStringLiteral("if (window.sourceLyricsMode && !window.securePlaybackCurrent)")), 3);
+    QCOMPARE(controlsText.count(QStringLiteral("if (window.sourceLyricsMode || musicControlMin.securePlaybackActive)")), 3);
+    QVERIFY(controlsText.contains(QStringLiteral("if (!window.securePlaybackCurrent || typeof playbackCoordinator === \"undefined\"")));
+    QVERIFY(controlsText.contains(QStringLiteral("playbackCoordinator.playOccurrence(row.occurrenceId)")));
+    QVERIFY(!controlsText.contains(QStringLiteral("playbackCoordinator.playQueueEntry(")));
     QVERIFY(controlsText.contains(QStringLiteral("onMoved: window.lyricsAdapter.seek(value)")));
     QVERIFY(controlsText.contains(QStringLiteral("enabled: window.sourceLyricsMode ? window.lyricsAdapter.favoriteEnabled")));
     QVERIFY(controlsText.contains(QStringLiteral("window.lyricsAdapter.setFavorite(values[index], playbackToken)")));

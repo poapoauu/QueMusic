@@ -483,13 +483,22 @@ ctest --test-dir build-phase3 --output-on-failure
 - 全目标增量构建、六项联合回归及全部 74 项 CTest 通过（67.14 秒）。新增接口仅为 Host QML／C++ 契约，需同步构建；Source SDK v2／Source 插件 ABI／Plugin UI API／持久化格式不变。
 - 下一项继续 Player／桌面歌词切歌入口的依赖边界与 Phase 6 全量审计；真实服务／物理音频／原生视觉／跨平台 ABI、平台插件化及最终 Legacy 删除仍未完成。
 
+### Player／桌面控件：切歌统一 occurrence 与依赖拒绝
+
+- 审计保留已有 PlaybackLyricsAdapter、桌面歌词／播放器及系统媒体控制接线；它们已使用安全展示和共用切歌函数，不重做 UI 或改成插件私有路径播放。
+- Player 上一首／下一首／随机共用 Source helper，核验 Coordinator 方法、队列、当前整数索引和目标安全行，再按 occurrence 发起播放。Source 当前播放或 sticky Source 模式均先进入该分支，依赖缺失、停播、空／畸形队列、非法索引或不可用条目不访问 Legacy；只有明确 Legacy 状态沿用原行为。
+- 保持上一首首项不回绕、下一首末项回绕和随机选择语义；不新增自动跳过不可用条目或自动激活恢复队列。执行仍由 Coordinator 检查实际 Entry 与实时授权，Source UI 不提前停播放器。
+- 抽取实际四个生产函数执行测试，覆盖切歌／回绕／随机、缺方法／Coordinator、空／畸形队列、小数／字符串／越界／NaN 索引、权利缺失、停播、模式标记迟到及明确 Legacy。检查桌面歌词／播放器仍调用同一入口；现有 SMTC、歌词／封面、收藏／下载、播放选项和关闭边界回归保留。
+- 首次联合回归仅旧 guard 字面量断言失败，更新为三入口的模式分支、共用 guard 和 occurrence 接线检查；行为测试未放宽。全目标增量构建、测试目标重建、五项联合复跑及全部 74 项 CTest 通过（62.41 秒）。
+- SDK v2／Source 插件 ABI／Plugin UI API／持久化格式不变。下一项为 Phase 6 全量出口扫描及 UI smoke；真实服务／物理音频／原生视觉／跨平台 ABI 尚未验收，平台插件化与 Legacy 删除继续按原顺序。
+
 ## 后续顺序与验收
 
-最新自动验证以本文件最后的阶段记录为准；目录批次、过渡播放边界、Queue 缺依赖／展示保护及 occurrence／清理切片完成全目标增量构建及全部 74 项 CTest。仍未执行真实服务器音频或手工视觉验收。
+最新自动验证以本文件最后的阶段记录为准；目录批次、过渡播放边界、Queue occurrence／清理及 Player／桌面切歌依赖保护完成全目标增量构建及全部 74 项 CTest。仍未执行真实服务器音频或手工视觉验收。
 
 1. Home 原卡片已完成 Source 数据与动作接入，私人服务由后续真实平台插件实现扩展后验收；不能以 Host 替身代替实际算法。未来若要从已移出队列的历史记录重新播放，应增加可信插件媒体项查找能力，不能猜造动作。
 2. 收藏/Playlist/Category：关注歌手、安全历史列表、收藏嵌套详情、通用分区批次上下文、队列停播回调 occurrence 保护、普通页/目录能力通知失效、队列／历史实时权利及 Adapter 动作四层投影已补齐。历史只重放 Coordinator 中可信且可用的完整身份，不从脱离队列的快照猜造媒体项。后续跟随整体审计检查剩余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。
-3. File/Download、Queue、Player 和桌面歌词：目录批次、旧播放回调、Source 队列缺依赖回退、弹窗 occurrence 定位及“清空其他”已补齐；下一项检查 Player／桌面歌词切歌入口依赖边界，再继续全量审计剩余直接分支。确保 Source 播放只由 Coordinator 发起，保留原控件和布局；验证来源标签、切歌、停播、恢复和卸载后的展示状态。
+3. File/Download、Queue、Player 和桌面歌词：目录批次、旧播放回调、Source 队列缺依赖回退、弹窗 occurrence 定位、“清空其他”及 Player／桌面切歌入口已补齐；继续全量出口审计剩余直接分支。确保 Source 播放只由 Coordinator 发起，保留原控件和布局；验证来源标签、切歌、停播、恢复和卸载后的展示状态。
 4. 全量扫描及 UI smoke：页面新增一个 Source Plugin 不需要改 source switch/case；无权限动作不显示或不可触发；完整构建、CTest 和 macOS 手工视觉/音频检查通过。
 
 Kugou、Netease 业务及账号/登录 UI 的插件化属于后续阶段。在其 Source Plugin 可用前，不用 Host 的旧平台 fallback 冒充动态 Source；其他页面的 legacy 分支按上述顺序逐项迁移，不能一次性删掉仍在使用的代码。
