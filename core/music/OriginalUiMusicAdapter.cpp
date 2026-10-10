@@ -68,7 +68,8 @@ QVariantMap browseCapability(const QVariantMap &item)
                      : unavailable(QStringLiteral("music.browseUnsupported"));
 }
 
-QVariantMap aggregateSectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds)
+QVariantMap aggregateSectionState(MusicPageModel *model, const QList<PageSectionKindV2> &kinds,
+                                  bool ignoreUnsupported = false)
 {
     if (!model) return {};
     QString firstId;
@@ -87,14 +88,15 @@ QVariantMap aggregateSectionState(MusicPageModel *model, const QList<PageSection
         const auto sourceErrors = model->data(index, MusicPageModel::ErrorRole).toMap();
         for (const auto &value : sourceErrors)
             failed |= value.toMap().value("kind").toInt() != int(SourceErrorKindV2::Unsupported);
-        hasMore |= more && sourceErrors.isEmpty();
+        const bool noBlockingErrors = sourceErrors.isEmpty() || (ignoreUnsupported && !failed);
+        hasMore |= more && noBlockingErrors;
         loadingMore |= loading;
         if (id.isEmpty()) continue;
         // Keep diagnostic text and source identities out of this aggregate UI state.
         if (failed) {
             errors.insert(id, QVariantMap{{"failed", true}});
             if (!loading) retryIds.append(id);
-        } else if (more && !loading && sourceErrors.isEmpty()) {
+        } else if (more && !loading && noBlockingErrors) {
             paginationIds.append(id);
         }
     }
@@ -107,7 +109,9 @@ QVariantMap aggregateSectionState(MusicPageModel *model, const QList<PageSection
 OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinator *playback,
                                                QObject *parent)
     : QObject(parent), m_hub(hub), m_playback(playback),
-      m_recommendSongs(new OnlineListModel(this)), m_categoryItems(new OnlineListModel(this)),
+      m_recommendSongs(new OnlineListModel(this)),
+      m_personalRadio(new OnlineListModel(this)), m_personalRadar(new OnlineListModel(this)),
+      m_categoryItems(new OnlineListModel(this)),
       m_categorySongs(new OnlineListModel(this)),
       m_categoryArtists(new OnlineListModel(this)), m_categoryPlaylists(new OnlineListModel(this)),
       m_categoryCharts(new OnlineListModel(this)),
@@ -194,6 +198,12 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         connect(model, &QAbstractItemModel::dataChanged, this, [this] { rebuild(); });
     };
     observe(m_hub->recommendation());
+    for (int kind = 0; kind < 2; ++kind) {
+        auto *model = m_hub->discovery(kind);
+        observe(model);
+        connect(model, &MusicPageModel::stateChanged, this, &OriginalUiMusicAdapter::discoveryStatusChanged);
+        connect(model, &MusicPageModel::errorChanged, this, &OriginalUiMusicAdapter::discoveryStatusChanged);
+    }
     observe(m_hub->category());
     connect(m_hub->category(), &MusicPageModel::stateChanged,
             this, &OriginalUiMusicAdapter::categoryStatusChanged);
@@ -217,6 +227,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         m_hub = nullptr;
         clearCurrentLyrics();
         clearPresentationState();
+        emit discoveryStatusChanged();
         emit categoryStatusChanged();
         emit categoryNavigationChanged();
         emit directoryChanged();
@@ -759,6 +770,8 @@ void OriginalUiMusicAdapter::clearPresentationState()
 {
     m_fullItems.clear();
     m_recommendSongs->setItems({});
+    m_personalRadio->setItems({});
+    m_personalRadar->setItems({});
     m_categoryItems->setItems({});
     m_categorySongs->setItems({});
     m_categoryArtists->setItems({});
@@ -772,7 +785,7 @@ void OriginalUiMusicAdapter::clearPresentationState()
     m_searchLyrics->setItems({});
     m_directoryItems->setItems({});
     m_directoryKeys.clear();
-    for (OnlineListModel *model : {m_recommendSongs, m_categoryItems, m_categorySongs, m_favoriteSongs,
+    for (OnlineListModel *model : {m_recommendSongs, m_personalRadio, m_personalRadar, m_categoryItems, m_categorySongs, m_favoriteSongs,
                                    m_categoryArtists, m_categoryPlaylists, m_categoryCharts,
                                    m_favoriteLists, m_searchSongs, m_searchLists,
                                    m_searchAlbums, m_searchLyrics, m_directoryItems})
@@ -782,6 +795,7 @@ void OriginalUiMusicAdapter::clearPresentationState()
 void OriginalUiMusicAdapter::rebuild()
 {
     QVariantList recommendations;
+    QVariantList radio, radar;
     QVariantList category;
     QVariantList favoriteSongs;
     QVariantList favoriteLists;
@@ -793,7 +807,8 @@ void OriginalUiMusicAdapter::rebuild()
     m_directoryKeys.clear();
 
     const auto append = [this](MusicPageModel *model, QVariantList *target,
-                               QVariantList *tracks = nullptr, QVariantList *playlists = nullptr) {
+                               QVariantList *tracks = nullptr, QVariantList *playlists = nullptr,
+                               bool privateFeed = false) {
         for (int section = 0; section < model->rowCount(); ++section) {
             const auto items = model->data(model->index(section), MusicPageModel::ItemsRole).toList();
             const auto sectionIndex = model->index(section);
@@ -801,7 +816,9 @@ void OriginalUiMusicAdapter::rebuild()
                 {QStringLiteral("sectionId"), model->data(sectionIndex, MusicPageModel::SectionIdRole)},
                 {QStringLiteral("hasMore"), model->data(sectionIndex, MusicPageModel::HasMoreRole)},
                 {QStringLiteral("loadingMore"), model->data(sectionIndex, MusicPageModel::LoadingMoreRole)},
-                {QStringLiteral("error"), model->data(sectionIndex, MusicPageModel::ErrorRole)}};
+                {QStringLiteral("error"), privateFeed
+                    ? aggregateSectionState(model, {PageSectionKindV2::Tracks}, true).value("error")
+                    : model->data(sectionIndex, MusicPageModel::ErrorRole)}};
             for (int index = 0; index < items.size(); ++index) {
                 const QVariantMap full = model->itemAt(section, index);
                 const int entityType = full.value(QStringLiteral("ref")).toMap()
@@ -816,6 +833,8 @@ void OriginalUiMusicAdapter::rebuild()
 
     if (m_hub) {
         append(m_hub->recommendation(), &recommendations);
+        append(m_hub->discovery(0), &radio, nullptr, nullptr, true);
+        append(m_hub->discovery(1), &radar, nullptr, nullptr, true);
         append(m_hub->category(), &category);
         append(m_hub->favorites(), nullptr, &favoriteSongs, &favoriteLists);
         for (int section = 0; section < m_hub->searchResults()->rowCount(); ++section) {
@@ -848,6 +867,8 @@ void OriginalUiMusicAdapter::rebuild()
         }
     }
     m_recommendSongs->setItems(recommendations);
+    m_personalRadio->setItems(radio);
+    m_personalRadar->setItems(radar);
     m_categoryItems->setItems(category);
     QVariantList categorySongs, categoryArtists, categoryPlaylists, categoryCharts;
     for (const QVariant &row : category) {
@@ -873,6 +894,8 @@ void OriginalUiMusicAdapter::rebuild()
     m_searchAlbums->setItems(searchAlbums);
     m_searchLyrics->setItems(searchLyrics);
     if (m_hub) {
+        m_personalRadio->setPresentationState(aggregateSectionState(m_hub->discovery(0), {PageSectionKindV2::Tracks}, true));
+        m_personalRadar->setPresentationState(aggregateSectionState(m_hub->discovery(1), {PageSectionKindV2::Tracks}, true));
         m_recommendSongs->setPresentationState(aggregateSectionState(m_hub->recommendation(), {
             PageSectionKindV2::RecentlyPlayed, PageSectionKindV2::FrequentlyPlayed,
             PageSectionKindV2::HighestRated, PageSectionKindV2::Newest, PageSectionKindV2::Random}));
@@ -894,7 +917,52 @@ void OriginalUiMusicAdapter::rebuild()
     }
     rebuildDirectories();
     emit categoryStatusChanged();
+    emit discoveryStatusChanged();
 }
+
+OnlineListModel *OriginalUiMusicAdapter::personalRadio() const { return m_personalRadio; }
+OnlineListModel *OriginalUiMusicAdapter::personalRadar() const { return m_personalRadar; }
+QString OriginalUiMusicAdapter::personalRadioState() const { return discoveryState(0); }
+QString OriginalUiMusicAdapter::personalRadarState() const { return discoveryState(1); }
+QString OriginalUiMusicAdapter::discoveryState(int kind) const
+{
+    auto *model = m_hub ? m_hub->discovery(kind) : nullptr;
+    if (!model) return QStringLiteral("unsupported");
+    switch (model->state()) {
+    case PageLoadStateV2::Idle: return QStringLiteral("idle");
+    case PageLoadStateV2::Loading: return QStringLiteral("loading");
+    case PageLoadStateV2::Ready: return QStringLiteral("ready");
+    case PageLoadStateV2::Empty: return QStringLiteral("empty");
+    case PageLoadStateV2::Failed: {
+        bool supportedEmpty = false, blockingError = false;
+        auto failure = model->error().kind;
+        for (const auto &value : model->sourceStates()) {
+            const auto source = value.toMap();
+            supportedEmpty |= source.value("state").toInt() == int(SourcePageLoadStateV2::Empty)
+                && source.value("error").toMap().isEmpty();
+        }
+        for (int i = 0; i < model->rowCount(); ++i)
+            for (const auto &value : model->data(model->index(i), MusicPageModel::ErrorRole).toMap()) {
+                const auto kind = SourceErrorKindV2(value.toMap().value("kind").toInt());
+                if (kind != SourceErrorKindV2::Unsupported) {
+                    if (!blockingError) failure = kind;
+                    blockingError = true;
+                }
+            }
+        // The generic model reports a partially unsupported empty aggregate as
+        // Failed. For an optional feed, successful-empty is not unsupported.
+        if (supportedEmpty && !blockingError) return QStringLiteral("empty");
+        if (failure == SourceErrorKindV2::Unsupported) return QStringLiteral("unsupported");
+        if (failure == SourceErrorKindV2::Authorization && !supportedEmpty) return QStringLiteral("forbidden");
+        return QStringLiteral("failed");
+    }
+    }
+    return QStringLiteral("failed");
+}
+void OriginalUiMusicAdapter::refreshDiscovery(int kind) { if (m_hub) m_hub->refreshDiscovery(kind); }
+void OriginalUiMusicAdapter::loadMoreDiscovery(int kind, const QString &id) { if (m_hub) m_hub->loadMoreDiscovery(kind, id); }
+void OriginalUiMusicAdapter::retryDiscovery(int kind, const QString &id) { if (m_hub) m_hub->retryDiscovery(kind, id); }
+void OriginalUiMusicAdapter::closeDiscovery(int kind) { if (m_hub) m_hub->closeDiscovery(kind); }
 
 void OriginalUiMusicAdapter::rebuildDirectories()
 {

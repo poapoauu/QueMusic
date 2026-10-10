@@ -56,6 +56,20 @@ PageRepository::PageRepository(SourceRegistry *sources,AggregateComposer *compos
     if (!sources) return;
     connect(sources,&SourceRegistry::instanceChanged,this,&PageRepository::sourceChanged);
     connect(sources,&SourceRegistry::instanceContentChanged,this,&PageRepository::contentChanged);
+    connect(sources,&SourceRegistry::instanceCapabilitiesChanged,this,[this](const QString &source) {
+        // A buffered continuation must not bypass the next per-account check.
+        if (m_composer) m_composer->invalidateSource(source);
+        const QPointer<PageRepository> guard(this);
+        for (const auto &id:m_groups.keys()) {
+            const auto group=m_groups.value(id);
+            if (!group || !discoveryKindV1(group->key.query)) continue;
+            const auto scope=group->key.query.scope;
+            if (group->key.sourceInstanceIds.contains(source)
+                || (!group->fannedOut && (scope.isAggregate() || scope.sourceInstanceId==source)))
+                fail(id,error(SourceErrorKindV2::Unavailable));
+            if (!guard) return;
+        }
+    });
     connect(sources,&QObject::destroyed,this,[this] {
         for (const auto &id:m_groups.keys()) fail(id,error(SourceErrorKindV2::Unavailable));
     });
@@ -101,6 +115,7 @@ void PageRepository::begin(const QUuid &id)
         if (d.enabled && (q.scope.isAggregate() || q.scope.sourceInstanceId==d.sourceInstanceId))
             g->key.sourceInstanceIds.append(d.sourceInstanceId);
     g->key.sourceInstanceIds.sort(); g->key.sourceInstanceIds.removeDuplicates();
+    if (discovery && q.scope.isAggregate() && g->key.sourceInstanceIds.isEmpty()) { fail(id,error(SourceErrorKindV2::Unsupported)); return; }
     if (!q.scope.isAggregate() && g->key.sourceInstanceIds.isEmpty()) { fail(id,error(SourceErrorKindV2::Unavailable)); return; }
     g->scope=PageCache::queryScope(g->key);
     if (!q.cursor.isEmpty()) {
@@ -254,7 +269,12 @@ void PageRepository::finish(const QUuid &id)
         auto req=g->requests.value(source); if (!req || !req->done) return;
         inputs.append(req->result); if (!req->result.error) ++success;
     }
-    if (!inputs.isEmpty() && !success) { fail(id,inputs.first().error.value()); return; }
+    if (!inputs.isEmpty() && !success) {
+        auto failure=inputs.first().error.value();
+        if (discoveryKindV1(g->key.query)) for (const auto &input:inputs)
+            if (input.error->kind!=SourceErrorKindV2::Unsupported) { failure=*input.error; break; }
+        fail(id,failure); return;
+    }
     QHash<PageSectionKindV2,QString> sectionScopes;
     for (const auto &input:inputs) for (const auto &section:input.page.sections) {
         auto key=g->key;

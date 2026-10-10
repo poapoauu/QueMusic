@@ -53,6 +53,9 @@ public:
 
 signals:
     void instanceChanged(QString sourceInstanceId);
+    // Effective capability/session invalidation; also fires when a live session
+    // is retired. Host-only, not a new signal on the frozen v2 Session.
+    void instanceCapabilitiesChanged(QString sourceInstanceId);
     void instanceContentChanged(QString sourceInstanceId, quint64 revision);
     void instanceRefreshFailed(QString sourceInstanceId, SourceErrorV2 error);
 

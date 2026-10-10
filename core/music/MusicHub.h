@@ -33,6 +33,13 @@ public:
     MusicPageModel *category() const;
     MusicPageModel *favorites() const;
     MusicPageModel *searchResults() const;
+    // Host-private discovery indices: 0 PersonalRadio, 1 PersonalRadar. These
+    // are independent model/request generations, NOT new MusicPageKindV2 values.
+    MusicPageModel *discovery(int kind) const;
+    Q_INVOKABLE void refreshDiscovery(int kind);
+    Q_INVOKABLE void loadMoreDiscovery(int kind, const QString &sectionId);
+    Q_INVOKABLE void retryDiscovery(int kind, const QString &sectionId);
+    Q_INVOKABLE void closeDiscovery(int kind);
     MediaActionRouter *actions() const;
     DirectoryLibraryController *directoryLibrary() const;
     bool sourcePluginLoaded(const QString &packageId) const;

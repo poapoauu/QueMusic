@@ -1,14 +1,16 @@
 #if defined(QUEMUSIC_ORIGINAL_UI_ADAPTER_FIXTURE)
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
+#include "extensions/discovery/v1/IDiscoveryProviderV1.h"
 
 class OriginalUiAdapterSession final : public IMusicSourceSessionV2,
                                        public IPageProviderV2,
                                        public IFavoriteProviderV2,
                                        public IDownloadProviderV2,
-                                       public IPlaybackProviderV2 {
+                                       public IPlaybackProviderV2,
+                                       public IDiscoveryProviderV1 {
     Q_OBJECT
-    Q_INTERFACES(IPageProviderV2 IFavoriteProviderV2 IDownloadProviderV2 IPlaybackProviderV2)
+    Q_INTERFACES(IPageProviderV2 IFavoriteProviderV2 IDownloadProviderV2 IPlaybackProviderV2 IDiscoveryProviderV1)
 public:
     OriginalUiAdapterSession(SourceConfigurationV2 configuration, QObject *parent)
         : IMusicSourceSessionV2(parent), m_configuration(std::move(configuration)) {}
@@ -44,6 +46,40 @@ public:
     void cancel(const QUuid &id) override {
         setProperty("cancelled", id);
         auto ids = property("cancelledRequests").toList(); ids.append(id); setProperty("cancelledRequests", ids);
+    }
+    AvailabilityV2 discoveryAvailability(DiscoveryKindV1 kind) const override
+    {
+        if (!property("discoveryEnabled").toBool()) return AvailabilityV2::Unsupported;
+        const auto state=property(kind==DiscoveryKindV1::PersonalRadio ? "radioAvailability" : "radarAvailability");
+        return state.isValid() ? AvailabilityV2(state.toInt()) : AvailabilityV2::Available;
+    }
+    QUuid fetchDiscovery(DiscoveryKindV1 kind,const PageQueryV2 &query) override
+    {
+        const auto id=QUuid::createUuid();
+        auto requests=property("discoveryRequests").toList();
+        requests.append(QVariantMap{{"id",id},{"kind",int(kind)},{"scope",query.scope.sourceInstanceId},
+            {"cursor",query.cursor},{"filters",query.filters}});
+        setProperty("discoveryRequests",requests);
+        emit requestStarted(id);
+        if (property("holdDiscovery").toBool()) return id;
+        if (property("failDiscovery").toBool()) { emit requestFailed(id,{SourceErrorKindV2::Network}); return id; }
+        PageSectionV2 section;
+        section.sectionId="personal-tracks"; section.kind=PageSectionKindV2::Tracks;
+        section.hasMore=query.cursor.isEmpty() && property("discoveryMore").toBool();
+        section.nextCursor=section.hasMore ? "private-personal-next" : QString{};
+        if (!property("emptyDiscovery").toBool()) {
+            MediaItemV2 item;
+            item.ref={"adapter",m_configuration.sourceInstanceId,m_configuration.accountId,MediaEntityTypeV2::Track,
+                QString::number(int(kind))+"-"+QString::number(requests.size())};
+            item.title=kind==DiscoveryKindV1::PersonalRadio ? "<b>Radio</b>" : "Radar";
+            item.artists={m_configuration.accountId};
+            item.metadata={{"rawBody","private"},{"url","https://private.invalid/stream"}};
+            for (const auto action:{SourceActionV2::Play,SourceActionV2::Favorite,SourceActionV2::Unfavorite})
+                item.availableActions.insert(action,{AvailabilityV2::Available,{},{}});
+            section.items={item};
+        }
+        emit pageReady(id,{{section},{},false,true});
+        return id;
     }
     QUuid fetchPage(const PageQueryV2 &query) override
     {
@@ -325,6 +361,120 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void personalModelsAreIndependentSafeAndRouteOnlyAuthoritativeItems()
+    {
+        RoutingHarness h; QVERIFY(h.init()); auto *session=h.session();
+        session->setProperty("discoveryEnabled",true);
+        h.adapter->setSelectedSourceInstanceId("adapter/home");
+        QCOMPARE(h.adapter->personalRadioState(),QString("idle"));
+        h.adapter->refreshDiscovery(0); h.adapter->refreshDiscovery(1);
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("ready"));
+        QTRY_COMPARE(h.adapter->personalRadarState(),QString("ready"));
+        QCOMPARE(h.adapter->personalRadio()->rowCount(),1); QCOMPARE(h.adapter->personalRadar()->rowCount(),1);
+        QCOMPARE(h.hub->recommendation()->state(),PageLoadStateV2::Idle);
+        QCOMPARE(h.hub->category()->state(),PageLoadStateV2::Idle);
+        QCOMPARE(session->property("pageRequests").toList().size(),0);
+        auto row=h.adapter->personalRadio()->get(0);
+        QCOMPARE(row["title"].toString(),QString("<b>Radio</b>"));
+        for (const auto key:{"ref","accountId","entityId","rawBody","url","headers","metadata"}) QVERIFY(!row.contains(key));
+        row["title"]="forged"; row["ref"]=mediaRefV2ToVariantMap({"other","other/account","account",MediaEntityTypeV2::Track,"forged"});
+        QVERIFY(!h.adapter->play(row).isNull()); QTRY_COMPARE(h.sink.plays,1);
+        QCOMPARE(h.sink.stream.media.sourceInstanceId,QString("adapter/home"));
+        QVERIFY(h.sink.stream.media.entityId.startsWith("0-"));
+        row=h.adapter->personalRadio()->get(0);
+        QVERIFY(!h.adapter->enqueue(row).isNull());
+        QVERIFY(!h.adapter->setFavorite(row,true).isNull());
+        QTRY_COMPARE(session->property("favoriteRef").toMap().value("sourceInstanceId").toString(),QString("adapter/home"));
+        const auto radarTitle=h.adapter->personalRadar()->get(0)["title"];
+        h.adapter->refreshDiscovery(0); QCOMPARE(h.adapter->personalRadio()->rowCount(),0);
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("ready"));
+        QCOMPARE(h.adapter->personalRadar()->get(0)["title"],radarTitle);
+        row=h.adapter->personalRadio()->get(0);
+        h.adapter->closeDiscovery(0); QCOMPARE(h.adapter->personalRadioState(),QString("idle"));
+        QVERIFY(h.adapter->play(row).isNull()); QCOMPARE(h.adapter->personalRadar()->rowCount(),1);
+        QVERIFY(!h.hub->discovery(-1)); QVERIFY(!h.hub->discovery(2));
+        h.adapter->refreshDiscovery(-1); h.adapter->refreshDiscovery(2);
+        h.adapter->closeDiscovery(999); h.adapter->loadMoreDiscovery(2,"personal-tracks");
+        h.hub.reset(); QCOMPARE(h.adapter->personalRadar()->rowCount(),0);
+        QCOMPARE(h.adapter->personalRadarState(),QString("unsupported"));
+    }
+    void discoveryUnsupportedInstancesDoNotBlockSupportedFeedPagination()
+    {
+        RoutingHarness h; QVERIFY(h.init(true));
+        auto *home=h.session(); auto *office=h.session("adapter/office");
+        h.adapter->refreshDiscovery(0); QTRY_COMPARE(h.adapter->personalRadioState(),QString("unsupported"));
+        QCOMPARE(home->property("discoveryRequests").toList().size(),0);
+        home->setProperty("discoveryEnabled",true); home->setProperty("discoveryMore",true);
+        h.adapter->refreshDiscovery(0); QTRY_COMPARE(h.adapter->personalRadioState(),QString("ready"));
+        const auto ids=h.adapter->personalRadio()->paginationSectionIds(); QVERIFY(!ids.isEmpty());
+        QVERIFY(h.adapter->personalRadio()->error().isEmpty());
+        QVERIFY(h.adapter->personalRadio()->get(0)["error"].toMap().isEmpty());
+        h.adapter->loadMoreDiscovery(0,ids[0]); h.adapter->loadMoreDiscovery(0,ids[0]);
+        QTRY_COMPARE(home->property("discoveryRequests").toList().size(),2);
+        QTRY_COMPARE(h.adapter->personalRadio()->rowCount(),2);
+        QCOMPARE(home->property("discoveryRequests").toList().last().toMap()["cursor"].toString(),QString("private-personal-next"));
+        QCOMPARE(office->property("discoveryRequests").toList().size(),0);
+        QCOMPARE(home->property("pageRequests").toList().size(),0); QCOMPARE(office->property("pageRequests").toList().size(),0);
+        home->setProperty("radioAvailability",int(AvailabilityV2::Forbidden));
+        const auto old=h.adapter->personalRadio()->get(0);
+        emit home->capabilitiesChanged({}); QCOMPARE(h.adapter->personalRadio()->rowCount(),0);
+        QVERIFY(h.adapter->play(old).isNull());
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("forbidden"));
+        QCOMPARE(home->property("discoveryRequests").toList().size(),2);
+        home->setProperty("radioAvailability",int(AvailabilityV2::Available)); home->setProperty("emptyDiscovery",true);
+        emit home->capabilitiesChanged({}); QTRY_COMPARE(h.adapter->personalRadioState(),QString("empty"));
+        home->setProperty("failDiscovery",true); emit home->capabilitiesChanged({});
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("failed"));
+        QVERIFY(!h.adapter->personalRadio()->retrySectionIds().isEmpty());
+        home->setProperty("failDiscovery",false);
+        h.adapter->retryDiscovery(0,h.adapter->personalRadio()->retrySectionIds()[0]);
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("empty"));
+        office->setProperty("discoveryEnabled",true);
+        office->setProperty("radioAvailability",int(AvailabilityV2::Forbidden));
+        emit office->capabilitiesChanged({}); QTRY_COMPARE(h.adapter->personalRadioState(),QString("failed"));
+    }
+    void discoveryScopeAndPermissionChangesCancelLateResults()
+    {
+        RoutingHarness h; QVERIFY(h.init(true)); auto *home=h.session(); auto *office=h.session("adapter/office");
+        home->setProperty("discoveryEnabled",true); office->setProperty("discoveryEnabled",true);
+        h.adapter->setSelectedSourceInstanceId("adapter/home"); h.adapter->refreshDiscovery(0);
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("ready"));
+        const auto old=h.adapter->personalRadio()->get(0);
+        office->setProperty("holdDiscovery",true);
+        h.adapter->setSelectedSourceInstanceId("adapter/office"); QCOMPARE(h.adapter->personalRadio()->rowCount(),0);
+        QVERIFY(h.adapter->play(old).isNull());
+        QTRY_COMPARE(office->property("discoveryRequests").toList().size(),1);
+        const auto held=office->property("discoveryRequests").toList()[0].toMap()["id"].toUuid();
+        office->setProperty("radioAvailability",int(AvailabilityV2::Forbidden)); emit office->capabilitiesChanged({});
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("forbidden"));
+        QVERIFY(office->property("cancelledRequests").toList().contains(held));
+        auto late=routedItem(MediaEntityTypeV2::Track,"late"); late.ref.sourceInstanceId="adapter/office"; late.ref.accountId="office";
+        emit office->pageReady(held,resultWith({late},"personal-tracks"));
+        QCoreApplication::processEvents(); QCOMPARE(h.adapter->personalRadio()->rowCount(),0);
+        h.adapter->setSelectedSourceInstanceId("adapter/home"); QTRY_COMPARE(h.adapter->personalRadioState(),QString("ready"));
+        const auto unaffected=h.adapter->personalRadio()->get(0);
+        emit office->capabilitiesChanged({}); QCoreApplication::processEvents();
+        QCOMPARE(h.adapter->personalRadio()->get(0),unaffected);
+        h.adapter->closeDiscovery(0); const auto calls=home->property("discoveryRequests").toList().size();
+        emit home->capabilitiesChanged({}); QCoreApplication::processEvents();
+        QCOMPARE(home->property("discoveryRequests").toList().size(),calls);
+        QCOMPARE(h.adapter->personalRadioState(),QString("idle"));
+        h.adapter->refreshDiscovery(0); QTRY_COMPARE(h.adapter->personalRadioState(),QString("ready"));
+        const auto removed=h.adapter->personalRadio()->get(0);
+        QVERIFY(h.registry.disableInstance("adapter/home")); QTRY_COMPARE(h.adapter->personalRadioState(),QString("failed"));
+        QCOMPARE(h.adapter->personalRadio()->rowCount(),0); QVERIFY(h.adapter->play(removed).isNull());
+    }
+    void retiredDiscoverySessionClearsCompletedItemsBeforeReplacement()
+    {
+        RoutingHarness h; QVERIFY(h.init()); h.adapter->setSelectedSourceInstanceId("adapter/home");
+        auto *session=h.session(); session->setProperty("discoveryEnabled",true);
+        h.adapter->refreshDiscovery(0); QTRY_COMPARE(h.adapter->personalRadioState(),QString("ready"));
+        const auto retired=h.adapter->personalRadio()->get(0);
+        QVERIFY(h.registry.closeInstance("adapter/home"));
+        QCOMPARE(h.adapter->personalRadio()->rowCount(),0); QVERIFY(h.adapter->play(retired).isNull());
+        QTRY_COMPARE(h.adapter->personalRadioState(),QString("unsupported"));
+        QCOMPARE(h.session()->property("discoveryRequests").toList().size(),0);
+    }
     void downloadTaskCancellationDoesNotUseTheCurrentPlaybackIdentity()
     {
         RoutingHarness h; QVERIFY(h.init(true)); auto *home = h.session(); auto *office = h.session("adapter/office");

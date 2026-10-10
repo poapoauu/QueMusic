@@ -19,6 +19,10 @@ class PlaybackCoordinator;
 class OriginalUiMusicAdapter final : public QObject {
     Q_OBJECT
     Q_PROPERTY(OnlineListModel *recommendSongs READ recommendSongs CONSTANT)
+    Q_PROPERTY(OnlineListModel *personalRadio READ personalRadio CONSTANT)
+    Q_PROPERTY(OnlineListModel *personalRadar READ personalRadar CONSTANT)
+    Q_PROPERTY(QString personalRadioState READ personalRadioState NOTIFY discoveryStatusChanged)
+    Q_PROPERTY(QString personalRadarState READ personalRadarState NOTIFY discoveryStatusChanged)
     Q_PROPERTY(OnlineListModel *categoryItems READ categoryItems CONSTANT)
     Q_PROPERTY(OnlineListModel *categorySongs READ categorySongs CONSTANT)
     Q_PROPERTY(OnlineListModel *categoryArtists READ categoryArtists CONSTANT)
@@ -65,6 +69,14 @@ public:
     Q_INVOKABLE void retryCurrentLyrics();
 
     OnlineListModel *recommendSongs() const;
+    OnlineListModel *personalRadio() const;
+    OnlineListModel *personalRadar() const;
+    QString personalRadioState() const;
+    QString personalRadarState() const;
+    Q_INVOKABLE void refreshDiscovery(int kind);
+    Q_INVOKABLE void loadMoreDiscovery(int kind, const QString &sectionId);
+    Q_INVOKABLE void retryDiscovery(int kind, const QString &sectionId);
+    Q_INVOKABLE void closeDiscovery(int kind);
     OnlineListModel *categoryItems() const;
     OnlineListModel *categorySongs() const;
     OnlineListModel *categoryArtists() const;
@@ -112,6 +124,7 @@ public:
     Q_INVOKABLE bool pluginAvailable(const QString &packageId) const;
 
 signals:
+    void discoveryStatusChanged();
     void categoryStatusChanged();
     void categoryNavigationChanged();
     void sourceOptionsChanged();
@@ -131,6 +144,7 @@ private:
     QVariantMap presentationItem(const QVariantMap &fullItem, const QVariantMap &sectionState);
     void clearPresentationState();
     void rebuild();
+    QString discoveryState(int kind) const;
     void rebuildDirectories();
     void syncCurrentLyrics(bool force = false);
     void cancelCurrentLyrics();
@@ -155,6 +169,8 @@ private:
     QPointer<MusicHub> m_hub;
     QPointer<PlaybackCoordinator> m_playback;
     OnlineListModel *m_recommendSongs;
+    OnlineListModel *m_personalRadio;
+    OnlineListModel *m_personalRadar;
     OnlineListModel *m_categoryItems;
     OnlineListModel *m_categorySongs;
     OnlineListModel *m_categoryArtists;

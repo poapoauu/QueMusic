@@ -365,6 +365,13 @@ ctest --test-dir build-phase3 --output-on-failure
 - 分发持有独立 callable lease 并检查重入后的存活/代次，覆盖权限检查中关闭会话时卸载 Busy；不再依赖可能在回调中释放的 Registry session lease。
 - 新扩展/安装后外部编译、v2 契约、PageRepository、AggregateComposer 共 5 项联合回归通过。测试替身不等于真实私人算法或服务器支持；Home 卡片、Host 模型与权限变化后结果失效仍在下一切片接入，现有平台插件化与 Phase 6 未整体完成。
 
+### 私人发现：Host 模型与安全 Adapter 投影
+
+- MusicHub 新增两个独立发现模型，沿用既有模型代次、分区请求、取消和共享范围；内部模型槽位不是新增 v2 页面枚举。普通推荐/分类不被私人查询覆盖，关闭发现后不再自动刷新，重新打开才主动请求。
+- SourceRegistry 转发当前会话的有效能力失效通知并在会话退休时通知 Host；PageRepository 撤销在途私人请求和缓冲游标，MusicHub 立即清除旧行并按当前范围重新查询。重入/范围变化/关闭会作废排队刷新，旧 key 与迟到结果不能执行。
+- OriginalUiMusicAdapter 增加 personalRadio / personalRadar 安全投影及 idle/loading/ready/empty/unsupported/forbidden/failed 状态；动作仍恢复私有完整项后经 Coordinator / Router。私人行的错误也只展示 Host 分区状态，不输出逐账号诊断/身份字段。部分实例不支持不阻塞支持实例续页，成功空结果不误标为不支持，真正失败保留重试。
+- 主程序构建及 v2/发现契约、外部安装编译、MusicHub、Adapter、PageRepository、Registry 共 7 项联合回归通过。覆盖独立模型、真实请求与动作链、混合实例、权限失效、取消/迟到、会话替换、Hub 销毁和 Registry 当前会话通知；尚未迁移生产 Home 私人入口，也未验收真实平台服务。下一切片迁移原卡片与详情，不宣称私人插件或 Phase 6 整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

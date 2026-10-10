@@ -518,7 +518,24 @@ private slots:
     void disableClosesSessionBeforeReleasingLease();
     void destructionClosesSessionBeforeReleasingLease();
     void closeAllIsIdempotent();
+    void forwardsOnlyCurrentCapabilitiesAndRetirement();
 };
+
+void SourceRegistryV2Test::forwardsOnlyCurrentCapabilitiesAndRetirement()
+{
+    RegistryHarness h; QVERIFY(h.loadValidPlugin()); QVERIFY(h.saveAccount("home","Home"));
+    auto *session=h.registry.sessionFor("registry-v2/home"); QVERIFY(session);
+    QSignalSpy changed(&h.registry,&SourceRegistry::instanceCapabilitiesChanged);
+    emit session->capabilitiesChanged({}); QCOMPARE(changed.size(),1);
+    QCOMPARE(changed[0][0].toString(),QString("registry-v2/home"));
+    QVERIFY(QMetaObject::invokeMethod(session,"capabilitiesChanged",Qt::QueuedConnection,
+        Q_ARG(CapabilitySetV2,CapabilitySetV2{})));
+    QVERIFY(h.registry.closeInstance("registry-v2/home")); QCOMPARE(changed.size(),2);
+    auto *replacement=h.registry.sessionFor("registry-v2/home"); QVERIFY(replacement);
+    QCoreApplication::processEvents(); QCOMPARE(changed.size(),2);
+    emit replacement->capabilitiesChanged({}); QCOMPARE(changed.size(),3);
+    QVERIFY(h.registry.configurationChanged("registry-v2/home")); QCOMPARE(changed.size(),4);
+}
 
 template<class Registry>
 auto configurationChanged(Registry &r, const QString &id, int)

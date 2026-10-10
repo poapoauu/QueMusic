@@ -2,6 +2,7 @@
 #include "MediaAssetRepository.h"
 #include "DirectoryLibraryController.h"
 #include "PageRepository.h"
+#include "extensions/discovery/v1/IDiscoveryProviderV1.h"
 #include <QDir>
 #include <QSettings>
 #include <QTimer>
@@ -10,6 +11,7 @@
 
 namespace {
 bool validPage(int page) { return page >= 0 && page <= int(MusicPageKindV2::Search); }
+bool validDiscovery(int kind) { return kind >= 0 && kind <= 1; }
 bool validSearchTab(int tab) { return tab >= 0 && tab <= 3; }
 PageSectionKindV2 searchSectionForTab(int tab)
 {
@@ -91,7 +93,7 @@ struct MusicHub::Impl {
     QPointer<SourceScopeStore> scope;
     AggregateComposer composer;
     ArtworkCache artwork;
-    std::array<Page, 4> pages;
+    std::array<Page, 6> pages;
     std::unique_ptr<PageRepository> repository;
     std::unique_ptr<DirectoryLibraryController> directory;
     std::unique_ptr<MediaAssetRepository> assets;
@@ -113,7 +115,8 @@ struct MusicHub::Impl {
           assets(std::make_unique<MediaAssetRepository>(registry, &artwork, owner)),
           router(std::make_unique<MediaActionRouter>(registry, owner))
     {
-        for (int i = 0; i < 4; ++i) pages[i].model = std::make_unique<MusicPageModel>(MusicPageKindV2(i), owner);
+        for (int i = 0; i < int(pages.size()); ++i)
+            pages[i].model = std::make_unique<MusicPageModel>(i < 4 ? MusicPageKindV2(i) : MusicPageKindV2::Recommendation, owner);
         QObject::connect(repository.get(), &PageRepository::pageReady, q,
             [this](QUuid id, quint64 gen, PageResultV2 result) { receive(id, gen, result); });
         QObject::connect(repository.get(), &PageRepository::pageFailed, q,
@@ -149,11 +152,25 @@ struct MusicHub::Impl {
             QObject::connect(sources, &SourceRegistry::instanceContentChanged, q,
                 [this](const QString &source, quint64) {
                     const QPointer<MusicHub> guard(q);
-                    for (int i = 0; i < 4; ++i) {
+                    for (int i = 0; i < int(pages.size()); ++i) {
                         const auto query = baseQuery(i);
                         if (pages[i].activated && (query.scope.isAggregate()
                             || query.scope.sourceInstanceId == source)) refresh(i);
                         if (!guard) return;
+                    }
+                });
+            QObject::connect(sources, &SourceRegistry::instanceCapabilitiesChanged, q,
+                [this](const QString &source) {
+                    const QPointer<MusicHub> guard(q);
+                    const auto initialScope = selected();
+                    for (int i = 4; i < int(pages.size()); ++i) {
+                        if (!selected().isEmpty() && selected() != source) continue;
+                        const bool active = pages[i].activated;
+                        const auto revision = invalidate(i, true); // discard old private rows immediately
+                        if (!guard || selected() != initialScope) return;
+                        if (active) QTimer::singleShot(0, q, [this, i, revision] {
+                            if (pages[i].activated && pages[i].revision == revision) refresh(i);
+                        });
                     }
                 });
             QObject::connect(sources, &SourceRegistry::instanceRefreshFailed, q,
@@ -241,17 +258,18 @@ struct MusicHub::Impl {
     void resetPages()
     {
         const auto revision = ++contextRevision;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < int(pages.size()); ++i) {
             invalidate(i, true);
             if (revision != contextRevision) return;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < int(pages.size()); ++i) {
             if (pages[i].activated) refresh(i);
             if (revision != contextRevision) return;
         }
     }
     PageQueryV2 baseQuery(int index) const
     {
+        if (index >= 4) return discoveryQueryV1(DiscoveryKindV1(index-4), {selected()});
         if (index == 1 && !stack.isEmpty()) return stack.last().query;
         PageQueryV2 query;
         query.page = MusicPageKindV2(index); query.scope.sourceInstanceId = selected();
@@ -264,10 +282,10 @@ struct MusicHub::Impl {
     void refresh(int index)
     {
         auto &page = pages[index];
-        const auto revision = invalidate(index, false);
+        const auto revision = invalidate(index, index >= 4); // personalized refresh never keeps stale cached rows
         if (page.revision != revision) return;
         const auto query = baseQuery(index);
-        const auto sections = index == 1 && !stack.isEmpty() ? QList<PageSectionKindV2>{query.section}
+        const auto sections = index >= 4 || (index == 1 && !stack.isEmpty()) ? QList<PageSectionKindV2>{query.section}
             : index == int(MusicPageKindV2::Search) ? QList<PageSectionKindV2>{query.section}
                                                      : sectionsForPage(query.page);
         page.expected = sections.size();
@@ -414,6 +432,21 @@ MusicPageModel *MusicHub::recommendation() const { return d->pages[0].model.get(
 MusicPageModel *MusicHub::category() const { return d->pages[1].model.get(); }
 MusicPageModel *MusicHub::favorites() const { return d->pages[2].model.get(); }
 MusicPageModel *MusicHub::searchResults() const { return d->pages[3].model.get(); }
+MusicPageModel *MusicHub::discovery(int kind) const { return validDiscovery(kind) ? d->pages[4+kind].model.get() : nullptr; }
+void MusicHub::refreshDiscovery(int kind)
+{
+    if (!validDiscovery(kind)) return;
+    d->pages[4+kind].activated = true; d->refresh(4+kind);
+}
+void MusicHub::loadMoreDiscovery(int kind, const QString &id)
+{ if (validDiscovery(kind)) d->sectionRequest(4+kind, id, true); }
+void MusicHub::retryDiscovery(int kind, const QString &id)
+{ if (validDiscovery(kind)) d->sectionRequest(4+kind, id, false); }
+void MusicHub::closeDiscovery(int kind)
+{
+    if (!validDiscovery(kind)) return;
+    d->pages[4+kind].activated = false; d->invalidate(4+kind, true);
+}
 MediaActionRouter *MusicHub::actions() const { return d->router.get(); }
 DirectoryLibraryController *MusicHub::directoryLibrary() const { return d->directory.get(); }
 bool MusicHub::sourcePluginLoaded(const QString &packageId) const

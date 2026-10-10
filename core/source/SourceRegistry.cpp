@@ -239,6 +239,16 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     m_sessions.insert(instanceId, std::move(entry));
 
     QObject *const sessionIdentity = session.data();
+    connect(session, &IMusicSourceSessionV2::capabilitiesChanged, this,
+            [this, instanceId, sessionIdentity](const CapabilitySetV2 &) {
+                bool active = false;
+                {
+                    const auto current = m_sessions.constFind(instanceId);
+                    active = current != m_sessions.cend() && current->session
+                        && current->sessionIdentity == sessionIdentity;
+                }
+                if (active) emit instanceCapabilitiesChanged(instanceId);
+            });
     connect(session, &IMusicSourceSessionV2::requestStarted, this,
             [this, instanceId, sessionIdentity](const QUuid &requestId) {
                 trackRequest(instanceId, sessionIdentity, requestId);
@@ -585,6 +595,8 @@ void SourceRegistry::handleExternalDestruction(const QString &instanceId, QObjec
     // The package pin, not this session's lease count, now guarantees safety.
     entry.lease = {};
     if (registry != nullptr) {
+        emit registry->instanceCapabilitiesChanged(instanceId);
+        if (!registry) return;
         emit registry->instanceChanged(instanceId);
     }
 }
@@ -625,6 +637,8 @@ bool SourceRegistry::closeEntry(const QString &instanceId, bool notify)
     entry.lease = {};
     if (!guard) return true;
     m_closingInstances.remove(instanceId);
+    if (!m_destroying) emit instanceCapabilitiesChanged(instanceId);
+    if (!guard) return true;
     if (notify) {
         emit instanceChanged(instanceId);
     }
