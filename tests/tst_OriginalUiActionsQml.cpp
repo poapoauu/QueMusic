@@ -71,6 +71,10 @@ class FakeAdapter final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *favoriteSongs READ favoriteSongs CONSTANT)
     Q_PROPERTY(QObject *favoriteLists READ favoriteLists CONSTANT)
+    Q_PROPERTY(QObject *favoriteArtists READ favoriteArtists CONSTANT)
+    Q_PROPERTY(QString favoriteArtistsState MEMBER favoriteArtistsState NOTIFY favoriteStatusChanged)
+    Q_PROPERTY(bool categoryCanNavigateBack READ categoryCanNavigateBack NOTIFY categoryNavigationChanged)
+    Q_PROPERTY(QString categoryTitle READ categoryTitle NOTIFY categoryNavigationChanged)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
     Q_PROPERTY(QObject *searchSongs READ searchSongs CONSTANT)
     Q_PROPERTY(QObject *searchLists READ searchLists CONSTANT)
@@ -87,6 +91,8 @@ public:
                                  true, false, false, false, false)}),
           lists(QVariantList{row(QStringLiteral("List"), QStringLiteral("favorite-lists"),
                                  true, false, true, true, true)}),
+          artists(QVariantList{row(QStringLiteral("<b>Followed artist</b>"), QStringLiteral("favorite-artists"),
+                                    false, false, false, true, true)}),
           categoryRows(QVariantList{row(QStringLiteral("Detail song"),
                                         QStringLiteral("detail-tracks"))}),
           searchRows(QVariantList{row(QStringLiteral("Search song"),
@@ -101,17 +107,21 @@ public:
                                            QStringLiteral("search-lyrics"))})
     {
         lists.sectionId = QStringLiteral("favorite-lists");
+        artists.sectionId = QStringLiteral("favorite-artists");
         categoryRows.sectionId = QStringLiteral("detail-tracks");
         searchRows.sectionId = QStringLiteral("search-songs");
         searchListRows.sectionId = QStringLiteral("search-lists");
         searchAlbumRows.sectionId = QStringLiteral("search-albums");
         searchLyricRows.sectionId = QStringLiteral("search-lyrics");
         songs.sectionId = QStringLiteral("favorite-songs");
-        for (auto *model : {&songs, &lists, &categoryRows, &searchRows, &searchListRows, &searchAlbumRows, &searchLyricRows})
+        for (auto *model : {&songs, &lists, &artists, &categoryRows, &searchRows, &searchListRows, &searchAlbumRows, &searchLyricRows})
             model->paginationSectionIds = {model->sectionId};
     }
     QObject *favoriteSongs() { return &songs; }
     QObject *favoriteLists() { return &lists; }
+    QObject *favoriteArtists() { return &artists; }
+    bool categoryCanNavigateBack() const { return !navigation.isEmpty(); }
+    QString categoryTitle() const { return navigation.isEmpty() ? QString{} : navigation.last().value("title").toString(); }
     QObject *categoryItems() { return &categoryRows; }
     QObject *searchSongs() { return &searchRows; }
     QObject *searchLists() { return &searchListRows; }
@@ -171,7 +181,14 @@ public:
     }
     Q_INVOKABLE void retry(int page, const QString &section) { retries << qMakePair(page, section); }
     FakeListModel *pagingMutationModel = nullptr;
-    Q_INVOKABLE bool browse(const QVariantMap &value) { browsed << value; return true; }
+    Q_INVOKABLE bool browse(const QVariantMap &value) {
+        browsed << value; navigation << value; emit categoryNavigationChanged(); emit browseRequested(); return true;
+    }
+    Q_INVOKABLE void closeCategoryBrowse() { ++closedBrowses; navigation.clear(); emit categoryNavigationChanged(); }
+    Q_INVOKABLE bool categoryBack() {
+        if (navigation.isEmpty()) return false;
+        navigation.removeLast(); emit categoryNavigationChanged(); return true;
+    }
     Q_INVOKABLE QUuid play(const QVariantMap &value) { played << value; return QUuid::createUuid(); }
     Q_INVOKABLE QUuid enqueue(const QVariantMap &value) { enqueued << value; return QUuid::createUuid(); }
     Q_INVOKABLE QUuid setFavorite(const QVariantMap &value, bool favorite) { favorites << qMakePair(value, favorite); return QUuid::createUuid(); }
@@ -223,12 +240,15 @@ public:
                 {QStringLiteral("canBrowse"), canBrowse},
                 {QStringLiteral("_adapterKey"), 42ULL}};
     }
-    FakeListModel songs, lists, categoryRows, searchRows, searchListRows,
+    FakeListModel songs, lists, artists, categoryRows, searchRows, searchListRows,
         searchAlbumRows, searchLyricRows;
     QList<int> activated;
     QList<QPair<QString, int>> searches;
     QList<QPair<int, QString>> more, retries;
     QList<QVariantMap> played, enqueued, browsed;
+    QList<QVariantMap> navigation;
+    int closedBrowses = 0;
+    QString favoriteArtistsState = "ready";
     QList<QPair<QVariantMap, bool>> favorites;
     QString selectedSource;
     QVariantList customSourceOptions;
@@ -236,6 +256,9 @@ public:
     QStringList dismissedDownloads;
     QStringList cancelledDownloads;
 signals:
+    void favoriteStatusChanged();
+    void categoryNavigationChanged();
+    void browseRequested();
     void selectedSourceInstanceIdChanged();
     void sourceOptionsChanged();
     void downloadTasksChanged();
@@ -377,6 +400,114 @@ private slots:
         QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
     }
 
+    void followedArtistsUseSafeBrowseUnfavoriteAndNestedNavigation()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
+        auto page=load(engine,"pages/FavouritePage.qml",&adapter,&error); QVERIFY2(page,qPrintable(error));
+        auto *view=page->findChild<QObject *>("favoriteArtistsList"); QVERIFY(view);
+        QCOMPARE(view->property("model").value<QObject *>(),adapter.favoriteArtists());
+        QVERIFY(view->property("sourcePaging").toBool()); QCOMPARE(view->property("sourcePageKind").toInt(),2);
+        QVERIFY(view->property("isList").toBool()); QVERIFY(!view->property("showListCount").toBool());
+        auto *tabs=page->findChild<QObject *>("favoriteTabs"); QVERIFY(tabs);
+        QVERIFY(QMetaObject::invokeMethod(tabs,"tabChange",Q_ARG(int,2)));
+        QVERIFY(QMetaObject::invokeMethod(view,"forceLayout"));
+        auto *artistItem=qobject_cast<QQuickItem *>(view); QVERIFY(artistItem);
+        QTRY_VERIFY(visualChild(artistItem,"sourceRowTitle"));
+        auto *rowTitle=visualChild(artistItem,"sourceRowTitle");
+        QCOMPARE(rowTitle->property("text").toString(),QString("<b>Followed artist</b>"));
+        QCOMPARE(rowTitle->property("textFormat").toInt(),0);
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0)));
+        QCOMPARE(adapter.browsed.size(),1); QCOMPARE(adapter.played.size(),0);
+        auto *detail=page->findChild<QObject *>("favoriteAdapterDetailWindow"); QVERIFY(detail);
+        QVERIFY(detail->property("visible").toBool());
+        auto *title=page->findChild<QObject *>("favoriteDetailTitle"); QVERIFY(title);
+        QCOMPARE(title->property("text").toString(),QString("<b>Followed artist</b>"));
+        QCOMPARE(title->property("textFormat").toInt(),0);
+        QVERIFY(QMetaObject::invokeMethod(view,"toolClicked",Q_ARG(int,0),Q_ARG(int,0)));
+        QCOMPARE(adapter.enqueued.size(),0);
+        QVERIFY(QMetaObject::invokeMethod(view,"toolClicked",Q_ARG(int,0),Q_ARG(int,1)));
+        QCOMPARE(adapter.favorites.size(),1); QVERIFY(!adapter.favorites.last().second);
+        adapter.categoryRows.setRows({FakeAdapter::row("<i>Album</i>","albums",false,false,false,false,true)});
+        auto *children=page->findChild<QObject *>("favoriteAdapterDetailList"); QVERIFY(children);
+        QVERIFY(QMetaObject::invokeMethod(children,"clicked",Q_ARG(int,0)));
+        QCOMPARE(adapter.browsed.size(),2); QCOMPARE(adapter.played.size(),0);
+        QCOMPARE(title->property("text").toString(),QString("<i>Album</i>"));
+        auto *back=page->findChild<QObject *>("favoriteDetailBack"); QVERIFY(back);
+        QVERIFY(QMetaObject::invokeMethod(back,"clicked")); QVERIFY(detail->property("visible").toBool());
+        QCOMPARE(title->property("text").toString(),QString("<b>Followed artist</b>"));
+        QVERIFY(QMetaObject::invokeMethod(back,"clicked")); QVERIFY(!detail->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(children,"clicked",Q_ARG(int,0))); QCOMPARE(adapter.browsed.size(),2);
+        const auto moreBeforeClose=adapter.more.size();
+        QVERIFY(QMetaObject::invokeMethod(children,"ended")); QCOMPARE(adapter.more.size(),moreBeforeClose);
+        adapter.artists.setRows({FakeAdapter::row("Denied","artists",false,false,false,false,false)});
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0)));
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,-1)));
+        QVERIFY(QMetaObject::invokeMethod(view,"toolClicked",Q_ARG(int,0),Q_ARG(int,1)));
+        QCOMPARE(adapter.browsed.size(),2); QCOMPARE(adapter.favorites.size(),1);
+        QCOMPARE(context.musicApi.legacyPlaylistRequests,0); QCOMPARE(context.musicApi.legacyPlays,0);
+        QCOMPARE(context.legacy.legacyFavoriteCalls,0);
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(),qPrintable(diagnostics.runtimeErrors()));
+    }
+
+    void followedArtistStatusPagingAndContextChangesDoNotUseLegacy()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeAdapter adapter,replacement; QmlDiagnosticCapture diagnostics; QString error;
+        auto page=load(engine,"pages/FavouritePage.qml",&adapter,&error); QVERIFY2(page,qPrintable(error));
+        auto *view=page->findChild<QObject *>("favoriteArtistsList"); QVERIFY(view);
+        auto *status=page->findChild<QObject *>("favoriteArtistsStatus"); QVERIFY(status);
+        auto *tabs=page->findChild<QObject *>("favoriteTabs"); QVERIFY(tabs);
+        QVERIFY(QMetaObject::invokeMethod(tabs,"tabChange",Q_ARG(int,2)));
+        adapter.artists.setRows({});
+        for (const auto &entry:QList<QPair<QString,QString>>{{"loading","正在加载关注歌手…"},{"failed","关注歌手加载失败，请重试"},{"empty","当前范围暂无关注歌手"},{"unavailable","当前音源不可用"}}) {
+            adapter.favoriteArtistsState=entry.first; emit adapter.favoriteStatusChanged();
+            QCOMPARE(status->property("text").toString(),entry.second); QVERIFY(status->property("visible").toBool());
+        }
+        adapter.artists.retrySectionIds={"failed-artists"}; emit adapter.artists.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(page.get(),"retryCurrentSection"));
+        QCOMPARE(adapter.retries,(QList<QPair<int,QString>>{{2,"failed-artists"}}));
+        adapter.artists.paginationSectionIds={"artists-a","artists-b"}; emit adapter.artists.presentationStateChanged();
+        adapter.more.clear(); // Empty ListView also legitimately requests its first continuation atYEnd.
+        QVERIFY(QMetaObject::invokeMethod(view,"ended"));
+        QCOMPARE(adapter.more,(QList<QPair<int,QString>>{{2,"artists-a"},{2,"artists-b"}}));
+        adapter.artists.paginationSectionIds.clear(); adapter.artists.retrySectionIds.clear(); emit adapter.artists.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(view,"ended")); QVERIFY(QMetaObject::invokeMethod(view,"retrySection"));
+        QCOMPARE(adapter.more.size(),2); QCOMPARE(adapter.retries.size(),1);
+        adapter.artists.setRows({FakeAdapter::row("Artist","artists",false,false,false,true,true)});
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0)));
+        auto *detail=page->findChild<QObject *>("favoriteAdapterDetailWindow"); QVERIFY(detail);
+        QVERIFY(detail->property("visible").toBool());
+        page->setProperty("chooseIndex",QVariantList{0}); page->setProperty("setMode",1);
+        adapter.setSelectedSourceInstanceId("other/account");
+        QVERIFY(!detail->property("visible").toBool()); QCOMPARE(page->property("setMode").toInt(),0);
+        QCOMPARE(adapter.closedBrowses,0);
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0)));
+        replacement.browse(FakeAdapter::row("Replacement navigation","replacement"));
+        QVERIFY(page->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&replacement)));
+        QVERIFY(!detail->property("visible").toBool()); QCOMPARE(replacement.closedBrowses,0);
+        QCOMPARE(replacement.navigation.size(),1);
+        QVERIFY(page->setProperty("musicAdapter",QVariant::fromValue<QObject *>(nullptr)));
+        QCOMPARE(view->property("count").toInt(),0);
+        QCOMPARE(status->property("text").toString(),QString("当前音源不可用"));
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0)));
+        QVERIFY(QMetaObject::invokeMethod(view,"toolClicked",Q_ARG(int,0),Q_ARG(int,1)));
+        QCOMPARE(replacement.closedBrowses,0); QCOMPARE(context.musicApi.legacyPlays,0);
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(),qPrintable(diagnostics.runtimeErrors()));
+    }
+
+    void favoriteBrowseStopsWhenItsCallbackReplacesAdapter()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeAdapter adapter,replacement; QString error;
+        auto page=load(engine,"pages/FavouritePage.qml",&adapter,&error); QVERIFY2(page,qPrintable(error));
+        connect(&adapter,&FakeAdapter::browseRequested,page.get(),[&] {
+            page->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&replacement));
+        });
+        auto *view=page->findChild<QObject *>("favoriteArtistsList"); QVERIFY(view);
+        QVERIFY(QMetaObject::invokeMethod(view,"clicked",Q_ARG(int,0)));
+        auto *detail=page->findChild<QObject *>("favoriteAdapterDetailWindow"); QVERIFY(detail);
+        QVERIFY(!detail->property("visible").toBool()); QCOMPARE(replacement.browsed.size(),0);
+        QCOMPARE(replacement.closedBrowses,0); QCOMPARE(context.musicApi.legacyPlaylistRequests,0);
+    }
+
     void mixedCapabilityRowsBindEachToolButtonIndependently()
     {
         QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
@@ -490,10 +621,10 @@ private slots:
             QVERIFY2(page, qPrintable(error));
             QList<FakeListModel *> models = search
                 ? QList<FakeListModel *>{&adapter.searchRows, &adapter.searchListRows, &adapter.searchAlbumRows, &adapter.searchLyricRows}
-                : QList<FakeListModel *>{&adapter.songs, &adapter.lists};
+                : QList<FakeListModel *>{&adapter.songs, &adapter.lists, &adapter.artists};
             const QStringList names = search
                 ? QStringList{"searchSongsList", "searchListsList", "searchAlbumsList", "searchLyricsList"}
-                : QStringList{"favoriteSongsList", "favoritePlaylistsList"};
+                : QStringList{"favoriteSongsList", "favoritePlaylistsList", "favoriteArtistsList"};
             const int pageKind = search ? 3 : 2;
             for (int i = 0; i < models.size(); ++i) {
                 auto *model = models[i];

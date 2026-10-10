@@ -116,6 +116,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
       m_categoryArtists(new OnlineListModel(this)), m_categoryPlaylists(new OnlineListModel(this)),
       m_categoryCharts(new OnlineListModel(this)),
       m_favoriteSongs(new OnlineListModel(this)), m_favoriteLists(new OnlineListModel(this)),
+      m_favoriteArtists(new OnlineListModel(this)),
       m_searchSongs(new OnlineListModel(this)), m_searchLists(new OnlineListModel(this)),
       m_searchAlbums(new OnlineListModel(this)), m_searchLyrics(new OnlineListModel(this)),
       m_directoryItems(new OnlineListModel(this))
@@ -212,6 +213,10 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     connect(m_hub, &MusicHub::categoryContextChanged,
             this, &OriginalUiMusicAdapter::categoryNavigationChanged);
     observe(m_hub->favorites());
+    connect(m_hub->favorites(), &MusicPageModel::stateChanged,
+            this, &OriginalUiMusicAdapter::favoriteStatusChanged);
+    connect(m_hub->favorites(), &MusicPageModel::errorChanged,
+            this, &OriginalUiMusicAdapter::favoriteStatusChanged);
     observe(m_hub->searchResults());
     connect(m_hub->directoryLibrary(), &DirectoryLibraryController::changed,
             this, [this] { rebuildDirectories(); emit directoryChanged(); });
@@ -533,6 +538,14 @@ QString OriginalUiMusicAdapter::categoryCover() const
 }
 OnlineListModel *OriginalUiMusicAdapter::favoriteSongs() const { return m_favoriteSongs; }
 OnlineListModel *OriginalUiMusicAdapter::favoriteLists() const { return m_favoriteLists; }
+OnlineListModel *OriginalUiMusicAdapter::favoriteArtists() const { return m_favoriteArtists; }
+QString OriginalUiMusicAdapter::favoriteArtistsState() const
+{
+    if (!m_hub) return QStringLiteral("unavailable");
+    if (m_hub->favorites()->state() == PageLoadStateV2::Loading) return QStringLiteral("loading");
+    if (m_favoriteArtists->rowCount() > 0) return QStringLiteral("ready");
+    return m_favoriteArtists->error().isEmpty() ? QStringLiteral("empty") : QStringLiteral("failed");
+}
 OnlineListModel *OriginalUiMusicAdapter::searchSongs() const { return m_searchSongs; }
 OnlineListModel *OriginalUiMusicAdapter::searchLists() const { return m_searchLists; }
 OnlineListModel *OriginalUiMusicAdapter::searchAlbums() const { return m_searchAlbums; }
@@ -779,6 +792,7 @@ void OriginalUiMusicAdapter::clearPresentationState()
     m_categoryCharts->setItems({});
     m_favoriteSongs->setItems({});
     m_favoriteLists->setItems({});
+    m_favoriteArtists->setItems({});
     m_searchSongs->setItems({});
     m_searchLists->setItems({});
     m_searchAlbums->setItems({});
@@ -787,9 +801,10 @@ void OriginalUiMusicAdapter::clearPresentationState()
     m_directoryKeys.clear();
     for (OnlineListModel *model : {m_recommendSongs, m_personalRadio, m_personalRadar, m_categoryItems, m_categorySongs, m_favoriteSongs,
                                    m_categoryArtists, m_categoryPlaylists, m_categoryCharts,
-                                   m_favoriteLists, m_searchSongs, m_searchLists,
+                                   m_favoriteLists, m_favoriteArtists, m_searchSongs, m_searchLists,
                                    m_searchAlbums, m_searchLyrics, m_directoryItems})
         model->setPresentationState({});
+    emit favoriteStatusChanged();
 }
 
 void OriginalUiMusicAdapter::rebuild()
@@ -799,6 +814,7 @@ void OriginalUiMusicAdapter::rebuild()
     QVariantList category;
     QVariantList favoriteSongs;
     QVariantList favoriteLists;
+    QVariantList favoriteArtists;
     QVariantList searchSongs;
     QVariantList searchLists;
     QVariantList searchAlbums;
@@ -808,7 +824,7 @@ void OriginalUiMusicAdapter::rebuild()
 
     const auto append = [this](MusicPageModel *model, QVariantList *target,
                                QVariantList *tracks = nullptr, QVariantList *playlists = nullptr,
-                               bool privateFeed = false) {
+                               bool privateFeed = false, QVariantList *artists = nullptr) {
         for (int section = 0; section < model->rowCount(); ++section) {
             const auto items = model->data(model->index(section), MusicPageModel::ItemsRole).toList();
             const auto sectionIndex = model->index(section);
@@ -823,9 +839,14 @@ void OriginalUiMusicAdapter::rebuild()
                 const QVariantMap full = model->itemAt(section, index);
                 const int entityType = full.value(QStringLiteral("ref")).toMap()
                     .value(QStringLiteral("entityType")).toInt();
-                if (tracks || playlists) {
-                    if (entityType == int(MediaEntityTypeV2::Track)) tracks->append(presentationItem(full, sectionState));
-                    else if (entityType == int(MediaEntityTypeV2::Playlist)) playlists->append(presentationItem(full, sectionState));
+                if (tracks || playlists || artists) {
+                    if (tracks && entityType == int(MediaEntityTypeV2::Track)) tracks->append(presentationItem(full, sectionState));
+                    else if (playlists && entityType == int(MediaEntityTypeV2::Playlist)) playlists->append(presentationItem(full, sectionState));
+                    else if (artists && entityType == int(MediaEntityTypeV2::Artist)) {
+                        auto safeState = sectionState;
+                        safeState["error"] = aggregateSectionState(model, {PageSectionKindV2::FavoriteArtists}, true).value("error");
+                        artists->append(presentationItem(full, safeState));
+                    }
                 } else target->append(presentationItem(full, sectionState));
             }
         }
@@ -836,7 +857,7 @@ void OriginalUiMusicAdapter::rebuild()
         append(m_hub->discovery(0), &radio, nullptr, nullptr, true);
         append(m_hub->discovery(1), &radar, nullptr, nullptr, true);
         append(m_hub->category(), &category);
-        append(m_hub->favorites(), nullptr, &favoriteSongs, &favoriteLists);
+        append(m_hub->favorites(), nullptr, &favoriteSongs, &favoriteLists, false, &favoriteArtists);
         for (int section = 0; section < m_hub->searchResults()->rowCount(); ++section) {
             auto *model = m_hub->searchResults();
             const auto sectionIndex = model->index(section);
@@ -889,6 +910,7 @@ void OriginalUiMusicAdapter::rebuild()
     m_categoryCharts->setItems(categoryCharts);
     m_favoriteSongs->setItems(favoriteSongs);
     m_favoriteLists->setItems(favoriteLists);
+    m_favoriteArtists->setItems(favoriteArtists);
     m_searchSongs->setItems(searchSongs);
     m_searchLists->setItems(searchLists);
     m_searchAlbums->setItems(searchAlbums);
@@ -910,6 +932,7 @@ void OriginalUiMusicAdapter::rebuild()
         m_categoryCharts->setPresentationState(playlistsState);
         m_favoriteSongs->setPresentationState(aggregateSectionState(m_hub->favorites(), {PageSectionKindV2::FavoriteTracks}));
         m_favoriteLists->setPresentationState(aggregateSectionState(m_hub->favorites(), {PageSectionKindV2::Playlists}));
+        m_favoriteArtists->setPresentationState(aggregateSectionState(m_hub->favorites(), {PageSectionKindV2::FavoriteArtists}, true));
         m_searchSongs->setPresentationState(aggregateSectionState(m_hub->searchResults(), {PageSectionKindV2::Tracks}));
         m_searchLists->setPresentationState(aggregateSectionState(m_hub->searchResults(), {PageSectionKindV2::Playlists}));
         m_searchAlbums->setPresentationState(aggregateSectionState(m_hub->searchResults(), {PageSectionKindV2::Albums}));
@@ -918,6 +941,7 @@ void OriginalUiMusicAdapter::rebuild()
     rebuildDirectories();
     emit categoryStatusChanged();
     emit discoveryStatusChanged();
+    emit favoriteStatusChanged();
 }
 
 OnlineListModel *OriginalUiMusicAdapter::personalRadio() const { return m_personalRadio; }

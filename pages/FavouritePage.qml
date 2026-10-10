@@ -10,6 +10,41 @@ Item {
     property var playbackAdapter: null
     property int setMode: 0
     property list<int> chooseIndex: []
+    property bool changingFavoriteContext: false
+
+    function resetFavoriteContext() {
+        changingFavoriteContext = true
+        favoriteAdapterDetailWindow.visible = false
+        changingFavoriteContext = false
+        setMode = 0
+        chooseIndex = []
+    }
+    onMusicAdapterChanged: resetFavoriteContext()
+    function browseFavorite(row) {
+        const adapter = musicAdapter
+        if (!adapter || !row || typeof adapter.browse !== "function") return false
+        const scope = adapter.selectedSourceInstanceId
+        if (!capabilitiesFor(row).canBrowse || musicAdapter !== adapter
+                || adapter.selectedSourceInstanceId !== scope) return false
+        if (musicAdapter !== adapter || !adapter.browse(row)
+                || musicAdapter !== adapter || adapter.selectedSourceInstanceId !== scope) return false
+        favoriteAdapterDetailWindow.opened(row)
+        if (musicAdapter !== adapter || adapter.selectedSourceInstanceId !== scope || !favoriteAdapterDetailWindow.visible) return false
+        mainContent.contentIndexed(1)
+        if (musicAdapter !== adapter || adapter.selectedSourceInstanceId !== scope || !favoriteAdapterDetailWindow.visible) return false
+        window.exitIndex = 1
+        return true
+    }
+    Connections {
+        target: favouritePage.musicAdapter
+        ignoreUnknownSignals: true
+        function onSelectedSourceInstanceIdChanged() { favouritePage.resetFavoriteContext() }
+        function onCategoryNavigationChanged() {
+            if (favoriteAdapterDetailWindow.visible && favouritePage.musicAdapter
+                    && favouritePage.musicAdapter.categoryCanNavigateBack === false)
+                favouritePage.resetFavoriteContext()
+        }
+    }
 
     function capabilitiesFor(row) {
         return musicAdapter && row && typeof musicAdapter.capabilities === "function"
@@ -38,8 +73,8 @@ Item {
     }
 
     function retryCurrentSection() {
-        if (!musicAdapter || favouriteChildPage.lastIndex > 1) return
-        const view = favouriteChildPage.lastIndex === 1 ? lists : songs
+        if (!musicAdapter || favouriteChildPage.lastIndex > 2) return
+        const view = [songs, lists, singer][favouriteChildPage.lastIndex]
         view.retrySection()
     }
 
@@ -76,6 +111,7 @@ Item {
         }
 
         QBlurTapBar {
+            objectName: "favoriteTabs"
             x: 0
             y: 12
             z: 5
@@ -200,11 +236,7 @@ Item {
                     }
                 } else {
                     var row = model.get(index)
-                    if (favouritePage.capabilitiesFor(row).canBrowse && musicAdapter.browse(row)) {
-                        favoriteAdapterDetailWindow.opened(row)
-                        mainContent.contentIndexed(1)
-                        window.exitIndex = 1;
-                    }
+                    favouritePage.browseFavorite(row)
                 }
             }
             onToolClicked: (index,tool) => {
@@ -221,14 +253,42 @@ Item {
                 font.pixelSize: 14
             }
         }
-        Item {
+        QListView {
             id: singer
+            objectName: "favoriteArtistsList"
             visible: false
-            width: favouriteChildPage.width
+            width: favouriteChildPage.width + 16
             height: favouriteChildPage.height
+            model: favouritePage.modelFor("favoriteArtists")
+            clip: true
+            topMargin: 72
+            isList: true
+            showListCount: false
+            headerModel: ["歌手", "信息", "", "操作"]
+            menuModel: []
+            toolText0: ""
+            toolText1: ""
+            toolText1ForRow: function(index) {
+                return favouritePage.capabilitiesFor(favouritePage.rowFor(singer, index)).canUnfavorite ? "\uf0c8" : ""
+            }
+            sourcePaging: true
+            sourceAdapter: musicAdapter
+            sourcePageKind: 2
+            onClicked: (index) => favouritePage.browseFavorite(favouritePage.rowFor(singer, index))
+            onToolClicked: (index, tool) => {
+                const row = favouritePage.rowFor(singer, index)
+                if (tool === 1 && favouritePage.capabilitiesFor(row).canUnfavorite)
+                    musicAdapter.setFavorite(row, false)
+            }
             Text {
+                objectName: "favoriteArtistsStatus"
                 anchors.centerIn: parent
-                text: "喜欢的歌手"
+                visible: singer.count === 0
+                text: !musicAdapter || musicAdapter.favoriteArtistsState === "unavailable" ? "当前音源不可用"
+                    : musicAdapter.favoriteArtistsState === "loading" ? "正在加载关注歌手…"
+                    : musicAdapter.favoriteArtistsState === "failed" ? "关注歌手加载失败，请重试"
+                    : "当前范围暂无关注歌手"
+                textFormat: Text.PlainText
                 color: Style.themes.textColor
                 font.pixelSize: 14
             }
@@ -345,6 +405,14 @@ Item {
         z: 20
         anchors.fill: parent
         visible: false
+        onVisibleChanged: {
+            if (!visible) {
+                if (window.exitIndex === 1) window.exitIndex = 0
+                if (!favouritePage.changingFavoriteContext && musicAdapter
+                        && typeof musicAdapter.closeCategoryBrowse === "function")
+                    musicAdapter.closeCategoryBrowse()
+            }
+        }
         function opened(info) { visible = true }
         Connections {
             target: window
@@ -357,6 +425,26 @@ Item {
         Rectangle {
             anchors.fill: parent
             color: Style.themes.primaryColor
+        }
+        QButton {
+            objectName: "favoriteDetailBack"
+            x: 24; y: 96; width: 96; height: 36
+            text: "返回"
+            onClicked: {
+                if (favoriteAdapterDetailWindow.visible && musicAdapter
+                        && musicAdapter.categoryCanNavigateBack === true
+                        && typeof musicAdapter.categoryBack === "function") musicAdapter.categoryBack()
+            }
+        }
+        Text {
+            objectName: "favoriteDetailTitle"
+            x: 136; y: 96; width: parent.width - 160; height: 36
+            text: musicAdapter ? musicAdapter.categoryTitle || "" : ""
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+            color: Style.themes.fontColor
+            font.pixelSize: Style.settings.pageTitle
         }
         QListView {
             objectName: "favoriteAdapterDetailList"
@@ -373,7 +461,7 @@ Item {
             toolText0: ""
             toolText1: ""
             sourcePaging: true
-            sourceAdapter: musicAdapter
+            sourceAdapter: favoriteAdapterDetailWindow.visible ? musicAdapter : null
             sourcePageKind: 1
             toolText0ForRow: function(index) {
                 return favouritePage.capabilitiesFor(favouritePage.rowFor(favoriteDetailList, index)).canEnqueue ? "\uf095" : ""
@@ -382,13 +470,15 @@ Item {
                 return favouritePage.capabilitiesFor(favouritePage.rowFor(favoriteDetailList, index)).canFavorite ? "\uf0c8" : ""
             }
             onClicked: (index) => {
-                if (!musicAdapter || !model) return
+                if (!favoriteAdapterDetailWindow.visible || !musicAdapter || !model) return
                 var row = model.get(index)
-                if (favouritePage.capabilitiesFor(row).canPlay)
+                if (favouritePage.capabilitiesFor(row).canBrowse)
+                    favouritePage.browseFavorite(row)
+                else if (favouritePage.capabilitiesFor(row).canPlay)
                     musicAdapter.play(row)
             }
             onToolClicked: (index, tool) => {
-                if (!musicAdapter || !model) return
+                if (!favoriteAdapterDetailWindow.visible || !musicAdapter || !model) return
                 var row = model.get(index)
                 if (tool === 0 && favouritePage.capabilitiesFor(row).canEnqueue)
                     musicAdapter.enqueue(row)

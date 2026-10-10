@@ -35,6 +35,8 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(QString categoryCover READ categoryCover NOTIFY categoryNavigationChanged)
     Q_PROPERTY(OnlineListModel *favoriteSongs READ favoriteSongs CONSTANT)
     Q_PROPERTY(OnlineListModel *favoriteLists READ favoriteLists CONSTANT)
+    Q_PROPERTY(OnlineListModel *favoriteArtists READ favoriteArtists CONSTANT)
+    Q_PROPERTY(QString favoriteArtistsState READ favoriteArtistsState NOTIFY favoriteStatusChanged)
     Q_PROPERTY(OnlineListModel *searchSongs READ searchSongs CONSTANT)
     Q_PROPERTY(OnlineListModel *searchLists READ searchLists CONSTANT)
     Q_PROPERTY(OnlineListModel *searchAlbums READ searchAlbums CONSTANT)
@@ -89,6 +91,8 @@ public:
     QString categoryCover() const;
     OnlineListModel *favoriteSongs() const;
     OnlineListModel *favoriteLists() const;
+    OnlineListModel *favoriteArtists() const;
+    QString favoriteArtistsState() const;
     OnlineListModel *searchSongs() const;
     OnlineListModel *searchLists() const;
     OnlineListModel *searchAlbums() const;
@@ -124,6 +128,7 @@ public:
     Q_INVOKABLE bool pluginAvailable(const QString &packageId) const;
 
 signals:
+    void favoriteStatusChanged();
     void discoveryStatusChanged();
     void categoryStatusChanged();
     void categoryNavigationChanged();
@@ -178,6 +183,7 @@ private:
     OnlineListModel *m_categoryCharts;
     OnlineListModel *m_favoriteSongs;
     OnlineListModel *m_favoriteLists;
+    OnlineListModel *m_favoriteArtists;
     OnlineListModel *m_searchSongs;
     OnlineListModel *m_searchLists;
     OnlineListModel *m_searchAlbums;

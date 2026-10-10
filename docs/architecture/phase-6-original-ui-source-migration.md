@@ -382,12 +382,22 @@ ctest --test-dir build-phase3 --output-on-failure
 - 修复后现有 macOS / Qt 6.11.1 build-phase3 全目标增量构建成功；全部 73 项 CTest 通过（123.13 秒），包括目录、安装后发现扩展外部编译、全部原 UI 和 macOS 包/增量/移动后包测试。此前两项目录失败已在完整重跑中消除；不等同从零构建、跨 OS/ABI、真实私人服务器/物理音频/原生视觉验收。
 - 不修改 Source SDK v2 / Source 插件 ABI / Plugin UI API；真实 Local / Navidrome 没有私人扩展实现，明确显示不支持。Kugou / Netease 私人服务、其余平台账号 UI 和 Phase 6 整体仍未完成，下一切片补齐收藏页关注歌手的既有 v2 投影与入口。
 
+### 收藏页：关注歌手投影与嵌套详情
+
+- 实际 v2 / MusicHub 已有 FavoriteArtists，Navidrome 的 starred 映射与按分区续页也已实现；缺口是 Adapter 只保留 Track / Playlist，原关注歌手页仍占位。新增 Host 私有 favoriteArtists 安全投影，不新增 SDK 页面/虚接口；其他实体不混入该列表，普通收藏歌曲/歌单行为保留。
+- 只用 FavoriteArtists 的可操作游标、重试和通用状态；部分不支持成员不阻塞健康成员续页，未知/不支持与成功无内容沿用通用分类的空态语义。歌手行及模型错误仅输出 Host failed 状态，不输出账号诊断；原关注歌手 tab 使用原 QListView，支持浏览与取消关注，不直接播放/入队歌手或猜造收藏。
+- 既有收藏详情可继续浏览歌手返回的专辑/集合，复用 MusicHub 分类栈与返回；安全标题按纯文本显示。Source 范围变化、导航失效和 Adapter 替换/移除立即关闭详情并重置选择，不清新 Adapter 导航；正常关闭清当前导航，隐藏详情不继续分类分页或执行旧点击。
+- 共享 QListView 的曲目/集合标题及歌手显示改为 PlainText，避免插件文本成为富文本；生产歌手委托有实际 Text 验证。保留原收藏 tab、列表尺寸/主题，新增返回控件使用现有 Host 组件，不公开主程序私有 QML 给插件。
+- 验收覆盖真实 Hub 收藏请求、同名跨账号私有 key、篡改展示字段后正确取消关注/浏览、代次/范围旧 key 拒绝、分区游标/错误隔离、空行重试、Hub 销毁，以及生产 QML 能力拒绝、非法索引、嵌套返回、状态、终态、隐藏详情和回调替换。真实 Navidrome 服务/原生视觉仍待原计划验收。
+- 最新全目标增量构建成功；全部 73 项 CTest 通过（124.67 秒），含 Navidrome 收藏曲目/专辑/歌手映射及分区续页的既有回归。不是从零构建、跨平台 ABI 或真实服务器/物理音频/原生视觉验收。
+- 收藏历史占位、更多页面上下文与有效能力通知后展示更新、Kugou / Netease 平台插件化及最终 Legacy 删除仍未完成；Source SDK v2 / Source 插件 ABI / Plugin UI API 不变。
+
 ## 后续顺序与验收
 
-本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
+最新自动验证以本文件最后的阶段记录为准；收藏歌手切片完成全目标增量构建及全部 73 项 CTest。仍未执行真实服务器音频或手工视觉验收。
 
 1. Home 原卡片已完成 Source 数据与动作接入，私人服务由后续真实平台插件实现扩展后验收；不能以 Host 替身代替实际算法。未来若要从已移出队列的历史记录重新播放，应增加可信插件媒体项查找能力，不能猜造动作。
-2. 收藏/Playlist/Category：收藏关注歌手、历史占位与更广泛实例失效验收仍待补齐，优先复用既有 v2 分区/详情能力。继续审计其余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。
+2. 收藏/Playlist/Category：关注歌手投影、原 tab 及收藏嵌套详情已补齐；历史占位与更广泛实例/有效能力失效验收仍待完成，优先复用既有分区/详情/历史能力。继续审计其余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。
 3. File/Download、Queue、Player 和桌面歌词：清理剩余直接音源分支，确保实际播放只由 Coordinator 发起；保留原控件和布局。验证来源标签、切歌、停播、恢复和卸载后的展示状态。
 4. 全量扫描及 UI smoke：页面新增一个 Source Plugin 不需要改 source switch/case；无权限动作不显示或不可触发；完整构建、CTest 和 macOS 手工视觉/音频检查通过。
 

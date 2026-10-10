@@ -169,6 +169,8 @@ private slots:
         const QString favorite = readSource(QStringLiteral("pages/FavouritePage.qml"));
         QVERIFY(favorite.contains(QStringLiteral("objectName: \"favoriteSongsList\"")));
         QVERIFY(favorite.contains(QStringLiteral("objectName: \"favoritePlaylistsList\"")));
+        QVERIFY(favorite.contains(QStringLiteral("objectName: \"favoriteArtistsList\"")));
+        QVERIFY(favorite.contains(QStringLiteral("modelFor(\"favoriteArtists\")")));
         QVERIFY(favorite.contains(QStringLiteral("objectName: \"favoriteAdapterDetailWindow\"")));
         QVERIFY(!favorite.contains(QStringLiteral("MusicApi.")));
         QVERIFY(!favorite.contains(QStringLiteral("playListModel")));

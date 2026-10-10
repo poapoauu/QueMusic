@@ -101,6 +101,16 @@ public:
             return id;
         }
         PageResultV2 result;
+        if (query.page == MusicPageKindV2::Favorites && query.section == PageSectionKindV2::FavoriteArtists
+                && property("artistPages").toBool()) {
+            MediaItemV2 artist;
+            artist.ref={"adapter",m_configuration.sourceInstanceId,m_configuration.accountId,MediaEntityTypeV2::Artist,"same-id"};
+            artist.title="<b>Artist</b>";
+            artist.metadata={{"rawBody","private"},{"url","https://secret.invalid"}};
+            artist.availableActions.insert(SourceActionV2::Unfavorite,{AvailabilityV2::Available});
+            PageSectionV2 section; section.kind=PageSectionKindV2::FavoriteArtists; section.sectionId="favorite-artists";
+            section.items={artist}; result.sections={section};
+        }
         if (property("continuable").toBool()) {
             PageSectionV2 section;
             section.kind = query.section;
@@ -117,7 +127,7 @@ public:
             result.sections = {section};
         }
         result.sourceStates.insert(m_configuration.sourceInstanceId,
-                                   {SourcePageLoadStateV2::Empty, std::nullopt});
+                                   {result.sections.isEmpty() ? SourcePageLoadStateV2::Empty : SourcePageLoadStateV2::Ready, std::nullopt});
         emit pageReady(id, result);
         return id;
     }
@@ -1273,6 +1283,77 @@ private slots:
                      QStringLiteral("adapter/home"));
     }
 
+    void favoriteArtistsKeepSafeIdentityAndRouteUnfavoriteToTheOwningAccount()
+    {
+        RoutingHarness h; QVERIFY(h.init(true));
+        h.session()->setProperty("artistPages",true); h.session("adapter/office")->setProperty("artistPages",true);
+        h.adapter->activatePage(2);
+        QTRY_COMPARE(h.adapter->favoriteArtists()->rowCount(),2);
+        auto first=routedItem(MediaEntityTypeV2::Artist,"same-id");
+        auto second=first; second.ref.sourceInstanceId="adapter/office"; second.ref.accountId="office";
+        QCOMPARE(h.adapter->favoriteArtistsState(),QString("ready"));
+        QCOMPARE(h.adapter->favoriteSongs()->rowCount(),0); QCOMPARE(h.adapter->favoriteLists()->rowCount(),0);
+        auto row=h.adapter->favoriteArtists()->get(1);
+        QVERIFY(row["_adapterKey"]!=h.adapter->favoriteArtists()->get(0)["_adapterKey"]);
+        for (const auto key:{"ref","accountId","entityId","rawBody","metadata","url","headers"}) QVERIFY(!row.contains(key));
+        row["ref"]=mediaRefV2ToVariantMap(first.ref); row["title"]="forged";
+        QVERIFY(!h.adapter->setFavorite(row,false).isNull());
+        QTRY_COMPARE(h.session("adapter/office")->property("favoriteRef").toMap(),mediaRefV2ToVariantMap(second.ref));
+        QVERIFY(!h.session("adapter/office")->property("favoriteValue").toBool());
+        QVERIFY(h.session()->property("favoriteRef").toMap().isEmpty());
+        row=h.adapter->favoriteArtists()->get(0); QVERIFY(h.adapter->browse(row));
+        const auto artistRequest=[&] {
+            for (const auto &value:h.session()->property("pageRequests").toList()) {
+                const auto candidate=value.toMap();
+                if (candidate["filters"].toMap()["artistId"].toString()==first.ref.entityId) return candidate;
+            }
+            return QVariantMap{};
+        };
+        QTRY_VERIFY(!artistRequest().isEmpty());
+        const auto request=artistRequest();
+        QCOMPARE(request["scope"].toString(),first.ref.sourceInstanceId);
+        QCOMPARE(request["filters"].toMap()["artistId"].toString(),first.ref.entityId);
+        row=h.adapter->favoriteArtists()->get(0);
+        h.adapter->setSelectedSourceInstanceId("adapter/office");
+        QCOMPARE(h.adapter->favoriteArtists()->rowCount(),0); QVERIFY(!h.adapter->browse(row));
+        QVERIFY(h.adapter->setFavorite(row,false).isNull());
+        h.hub.reset(); QCOMPARE(h.adapter->favoriteArtistsState(),QString("unavailable"));
+    }
+
+    void favoriteArtistsUseOnlyTheirOwnCursorErrorsAndResetState()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid()); QSettings settings(dir.filePath("settings.ini"),QSettings::IniFormat);
+        SourceScopeStore scope(&settings); MusicHub hub(nullptr,&scope,&settings); OriginalUiMusicAdapter adapter(&hub,nullptr);
+        auto *model=hub.favorites(); QSignalSpy changes(&adapter,&OriginalUiMusicAdapter::favoriteStatusChanged);
+        const auto generation=model->beginRequest(); QCOMPARE(adapter.favoriteArtistsState(),QString("loading"));
+        auto result=resultWith({makeItem(MediaEntityTypeV2::Artist,"source","source/a","artist")},"artists-a");
+        result.sections[0].kind=PageSectionKindV2::FavoriteArtists;
+        result.sections[0].hasMore=true; result.sections[0].nextCursor="private-cursor";
+        auto another=result.sections[0]; another.sectionId="artists-b"; result.sections.append(another);
+        auto tracks=resultWith({makeItem(MediaEntityTypeV2::Track,"source","source/a","track")},"tracks").sections[0];
+        tracks.kind=PageSectionKindV2::FavoriteTracks; tracks.hasMore=true; tracks.nextCursor="track-cursor"; result.sections.append(tracks);
+        QVERIFY(model->applyResult(generation,result)); QVERIFY(model->finishGeneration(generation,1));
+        QCOMPARE(adapter.favoriteArtists()->paginationSectionIds(),QStringList({"artists-a","artists-b"}));
+        QCOMPARE(adapter.favoriteSongs()->paginationSectionIds(),QStringList({"tracks"}));
+        QVERIFY(model->beginSectionRequest(generation,"artists-a"));
+        QCOMPARE(adapter.favoriteArtists()->paginationSectionIds(),QStringList({"artists-b"}));
+        QVERIFY(model->applySectionFailure(generation,"artists-a",{SourceErrorKindV2::Network,"network","https://secret.invalid"}));
+        QCOMPARE(adapter.favoriteArtists()->retrySectionIds(),QStringList({"artists-a"}));
+        QCOMPARE(adapter.favoriteArtists()->error(),QVariantMap({{"artists-a",QVariantMap{{"failed",true}}}}));
+        QCOMPARE(adapter.favoriteArtists()->get(0)["error"].toMap(),adapter.favoriteArtists()->error());
+        QVERIFY(adapter.favoriteSongs()->error().isEmpty());
+        const auto stale=adapter.favoriteArtists()->get(0); QVERIFY(model->resetGeneration(generation));
+        QCOMPARE(adapter.favoriteArtists()->rowCount(),0); QCOMPARE(adapter.favoriteArtistsState(),QString("empty"));
+        QVERIFY(adapter.favoriteArtists()->paginationSectionIds().isEmpty()); QVERIFY(adapter.favoriteArtists()->retrySectionIds().isEmpty());
+        QVERIFY(adapter.setFavorite(stale,false).isNull());
+        for (const auto kind:{SourceErrorKindV2::Unsupported,SourceErrorKindV2::Network}) {
+            const auto next=model->beginRequest(); PageSectionV2 section; section.kind=PageSectionKindV2::FavoriteArtists; section.sectionId="artists";
+            QVERIFY(model->applyQueryFailure(next,section,{kind})); QVERIFY(model->finishGeneration(next,1));
+            QCOMPARE(adapter.favoriteArtistsState(),kind==SourceErrorKindV2::Unsupported ? QString("empty") : QString("failed"));
+        }
+        QVERIFY(changes.count()>0);
+    }
+
     void splitsFavoriteTracksAndPlaylistsByEntityType()
     {
         QTemporaryDir dir;
@@ -1284,11 +1365,13 @@ private slots:
         accept(hub.favorites(), resultWith({
             makeItem(MediaEntityTypeV2::Track, QStringLiteral("navidrome"), QStringLiteral("nas-a"), QStringLiteral("track")),
             makeItem(MediaEntityTypeV2::Playlist, QStringLiteral("navidrome"), QStringLiteral("nas-a"), QStringLiteral("playlist")),
+            makeItem(MediaEntityTypeV2::Artist, QStringLiteral("navidrome"), QStringLiteral("nas-a"), QStringLiteral("artist")),
             makeItem(MediaEntityTypeV2::Album, QStringLiteral("navidrome"), QStringLiteral("nas-a"), QStringLiteral("album"))},
             QStringLiteral("favorites")));
 
         QCOMPARE(adapter.favoriteSongs()->rowCount(), 1);
         QCOMPARE(adapter.favoriteLists()->rowCount(), 1);
+        QCOMPARE(adapter.favoriteArtists()->rowCount(), 1);
         QCOMPARE(adapter.favoriteSongs()->get(0).value(QStringLiteral("entityType")).toInt(), int(MediaEntityTypeV2::Track));
         QCOMPARE(adapter.favoriteLists()->get(0).value(QStringLiteral("entityType")).toInt(), int(MediaEntityTypeV2::Playlist));
     }
@@ -1616,6 +1699,7 @@ private slots:
             MediaEntityTypeV2::Album, QStringLiteral("category"))}, QStringLiteral("category")));
         accept(harness.hub->favorites(), resultWith({
             routedItem(MediaEntityTypeV2::Track, QStringLiteral("favorite-track")),
+            routedItem(MediaEntityTypeV2::Artist, QStringLiteral("favorite-artist")),
             routedItem(MediaEntityTypeV2::Playlist, QStringLiteral("favorite-list"))}, QStringLiteral("favorites")));
         accept(harness.hub->searchResults(), resultWith({routedItem(
             MediaEntityTypeV2::Track, QStringLiteral("search"))}, QStringLiteral("search")));
@@ -1630,6 +1714,7 @@ private slots:
         QCOMPARE(harness.adapter->categoryItems()->rowCount(), 0);
         QCOMPARE(harness.adapter->favoriteSongs()->rowCount(), 0);
         QCOMPARE(harness.adapter->favoriteLists()->rowCount(), 0);
+        QCOMPARE(harness.adapter->favoriteArtists()->rowCount(), 0);
         QCOMPARE(harness.adapter->searchSongs()->rowCount(), 0);
         QVERIFY(harness.adapter->sourceOptions().isEmpty());
         QVERIFY(harness.adapter->selectedSourceInstanceId().isEmpty());

@@ -321,12 +321,14 @@ ListView {
 
         Text {
             id: title
+            objectName: "sourceRowTitle"
             x: 80
             y: 16
             z: 3
             width: view.artistX - 110
             height: 28
             text: displayRow.title || "Unknown"
+            textFormat: Text.PlainText
             color: Style.themes.fontColor
             font.weight: Font.DemiBold
             elide: Text.ElideRight
@@ -358,6 +360,7 @@ ListView {
             width: view.artistX - 128
             height: 28
             text: displayRow.artist || "Unknown"
+            textFormat: Text.PlainText
             color: Style.themes.textColor
             font.weight: Font.Normal
             elide: Text.ElideRight
