@@ -235,6 +235,26 @@ bool PlaybackCoordinator::removeOccurrence(const QUuid &id) {
     }
     return false;
 }
+QUuid PlaybackCoordinator::playOccurrence(const QUuid &id) {
+    if(m_destroying||id.isNull())return {};
+    for(int i=0;i<m_queue.size();++i)
+        if(m_queue.at(i)->occurrence==id)return playQueueEntry(i);
+    return {};
+}
+bool PlaybackCoordinator::clearOtherOccurrences(const QUuid &expectedOccurrence,
+                                               const QUuid &expectedGeneration) {
+    if(m_destroying||!m_active||m_active->ended||expectedOccurrence.isNull()
+        ||expectedGeneration.isNull()||m_active->generation!=expectedGeneration
+        ||m_active->entry->occurrence!=expectedOccurrence||!m_queue.contains(m_active->entry))return false;
+    if(m_queue.size()==1)return true;
+    // No provider/sink calls or synchronous notifications during this mutation.
+    // Keep the actual Entry and Active, not a reconstructed presentation row.
+    m_queue={m_active->entry};
+    m_active->index=0;
+    notifyCurrent();
+    QTimer::singleShot(0,this,[this] { emit queueChanged(); });
+    return true;
+}
 QUuid PlaybackCoordinator::enqueue(const QVariantMap &map) {
     if(m_destroying)return {};
     auto e=std::make_shared<Entry>(); if(!e->parse(map))return {};

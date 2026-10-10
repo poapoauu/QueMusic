@@ -6,6 +6,7 @@
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
 #include <QtQml/QQmlContext>
+#include <QtQml/QJSValue>
 
 #include <memory>
 #include <limits>
@@ -59,7 +60,18 @@ public:
 
 class CoordinatorDouble final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(int currentIndex MEMBER sourceIndex)
+    Q_PROPERTY(QUuid currentOccurrence MEMBER occurrence)
+    Q_PROPERTY(QUuid currentGeneration MEMBER generation)
 public:
+    int sourceIndex = 0, occurrenceCalls = 0, clearCalls = 0, cleared = 0;
+    QUuid occurrence = QUuid::createUuid(), generation = QUuid::createUuid(), lastOccurrence;
+    Q_INVOKABLE void playOccurrence(const QUuid &id) { ++occurrenceCalls; lastOccurrence = id; }
+    Q_INVOKABLE bool clearOtherOccurrences(const QUuid &id, const QUuid &expectedGeneration) {
+        ++clearCalls;
+        if(sourceIndex<0||id!=occurrence||expectedGeneration!=generation)return false;
+        ++cleared; return true;
+    }
     int playQueueCalls = 0;
     int lastIndex = -1;
     Q_INVOKABLE void playQueueEntry(int index)
@@ -67,6 +79,16 @@ public:
         ++playQueueCalls;
         lastIndex = index;
     }
+};
+class QueueConfirmationDouble final : public QObject {
+    Q_OBJECT
+public:
+    int opened = 0, notices = 0;
+    QJSValue confirmation;
+    Q_INVOKABLE void openSimpleDialog(const QString &, const QString &, const QJSValue &callback) {
+        ++opened; confirmation=callback;
+    }
+    Q_INVOKABLE void warned(const QString &, int) { ++notices; }
 };
 
 class PlaybackControllerDouble final : public QObject {
@@ -162,6 +184,7 @@ private slots:
     void actualSettingsNavigationPreservesPluginAndInstanceSelection();
     void sourceShutdownDoesNotMixLegacyPersistence();
     void sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemptLegacyOnRejection();
+    void sourceQueueConfirmationKeepsTheCapturedPlaybackIntent();
     void coverDialogUsesSafeCurrentLabelsAndFileNames();
     void coverSaveKeepsTheCapturedDestination();
     void coverSaveRejectsFailuresAndChangedImages();
@@ -1675,7 +1698,8 @@ void OriginalUiPlaybackQmlTest::sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemp
     std::unique_ptr<QObject> root(component.create()); QVERIFY(root);
     const QVariantList rows{
         QVariantMap{{"title", "<b>Song</b>"}, {"artists", QStringList{"<i>Artist</i>"}},
-                    {"sourceLabel", "<b>Local library</b>"}, {"unavailable", false}},
+                    {"sourceLabel", "<b>Local library</b>"}, {"unavailable", false},
+                    {"occurrenceId", coordinator.occurrence.toString()}},
         QVariantMap{{"title", "Unavailable"}, {"unavailable", true}},
         QVariantMap{{"title", "No rights snapshot"}}};
     QVERIFY(root->setProperty("secureModel", rows));
@@ -1692,9 +1716,9 @@ void OriginalUiPlaybackQmlTest::sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemp
     }
     for (const QVariant &rejected : {QVariant(-1), QVariant(0.5), QVariant("0"), QVariant(1), QVariant(2), QVariant(3)})
         QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, rejected)));
-    QCOMPARE(coordinator.playQueueCalls, 0); QCOMPARE(legacy.stops, 0); QCOMPARE(legacy.reads, 0);
+    QCOMPARE(coordinator.occurrenceCalls, 0); QCOMPARE(legacy.stops, 0); QCOMPARE(legacy.reads, 0);
     QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
-    QCOMPARE(coordinator.playQueueCalls, 1); QCOMPARE(coordinator.lastIndex, 0);
+    QCOMPARE(coordinator.occurrenceCalls, 1); QCOMPARE(coordinator.lastOccurrence, coordinator.occurrence);
     QVERIFY(root->setProperty("secureModel", QVariantList{}));
     QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
     QVERIFY(root->setProperty("secureModel", rows));
@@ -1702,12 +1726,58 @@ void OriginalUiPlaybackQmlTest::sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemp
     QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
     QVERIFY(root->setProperty("secureMode", false));
     QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
-    QCOMPARE(coordinator.playQueueCalls, 1); QCOMPARE(legacy.stops, 0); QCOMPARE(legacy.reads, 0);
+    QCOMPARE(coordinator.occurrenceCalls, 1); QCOMPARE(legacy.stops, 0); QCOMPARE(legacy.reads, 0);
     QVERIFY(!source.contains("mainMedia.stop()"));
     for (const auto &caption : {"displayName", "displayArtist", "displaySource"}) {
         const auto start = source.indexOf(QString("text: playList.%1(index)").arg(caption));
         QVERIFY(start >= 0); QVERIFY(source.mid(start, 160).contains("textFormat: Text.PlainText"));
     }
+}
+
+void OriginalUiPlaybackQmlTest::sourceQueueConfirmationKeepsTheCapturedPlaybackIntent()
+{
+    QQmlEngine engine; CoordinatorDouble coordinator,replacement; QueueConfirmationDouble dialog;
+    engine.rootContext()->setContextProperty("playbackCoordinator",&coordinator);
+    engine.rootContext()->setContextProperty("globalDialog",&dialog);
+    engine.rootContext()->setContextProperty("Style",&dialog);
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/components/PlayList.qml"));
+    QVERIFY(file.open(QIODevice::ReadOnly)); const auto source=QString::fromUtf8(file.readAll());
+    const auto request=capturedQmlBlock(source,source.indexOf("function requestClearOtherSongs("));
+    QVERIFY(!request.isEmpty());
+    QQmlComponent component(&engine);
+    component.setData((QString("import QtQml\nQtObject { property bool secureMode: true; "
+        "property int queueContextRevision: 0; onSecureModeChanged: queueContextRevision++; "
+        "property int legacyClears: 0; function clearOtherSongs() { legacyClears++; }\n")
+        +request+"}").toUtf8(),QUrl{});
+    QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create()); QVERIFY(root);
+    for(int mutation=0;mutation<7;++mutation) {
+        engine.rootContext()->setContextProperty("playbackCoordinator",&coordinator);
+        coordinator.sourceIndex=0;
+        QVERIFY(QMetaObject::invokeMethod(root.get(),"requestClearOtherSongs"));
+        QCOMPARE(dialog.opened,mutation+1);
+        switch(mutation) {
+        case 0: break;
+        case 1: coordinator.occurrence=QUuid::createUuid(); coordinator.generation=QUuid::createUuid(); break;
+        case 2: coordinator.generation=QUuid::createUuid(); break; // Same occurrence, new playback.
+        case 3: coordinator.sourceIndex=-1; break;
+        case 4: engine.rootContext()->setContextProperty("playbackCoordinator",&replacement); break;
+        case 5: engine.rootContext()->setContextProperty("playbackCoordinator",QVariant::fromValue<QObject *>(nullptr)); break;
+        case 6: QVERIFY(root->setProperty("secureMode",false)); QVERIFY(root->setProperty("secureMode",true)); break;
+        }
+        const auto result=dialog.confirmation.call(); QVERIFY2(!result.isError(),qPrintable(result.toString()));
+        QCOMPARE(coordinator.cleared,1); QCOMPARE(replacement.cleared,0); QCOMPARE(dialog.notices,1);
+        QCOMPARE(root->property("legacyClears").toInt(),0);
+    }
+    QCOMPARE(coordinator.clearCalls,4);
+    engine.rootContext()->setContextProperty("playbackCoordinator",&coordinator);
+    coordinator.sourceIndex=-1;
+    QVERIFY(QMetaObject::invokeMethod(root.get(),"requestClearOtherSongs")); QCOMPARE(dialog.opened,7);
+    QVERIFY(root->setProperty("secureMode",false));
+    QVERIFY(QMetaObject::invokeMethod(root.get(),"requestClearOtherSongs")); QCOMPARE(dialog.opened,8);
+    const auto result=dialog.confirmation.call(); QVERIFY(!result.isError());
+    QCOMPARE(root->property("legacyClears").toInt(),1); QCOMPARE(coordinator.cleared,1);
+    QVERIFY(source.contains("onClicked: playList.requestClearOtherSongs()"));
 }
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,
@@ -1867,7 +1937,7 @@ void OriginalUiPlaybackQmlTest::mainWiringKeepsSecurePlaybackBelowTheOriginalUi(
     QFile popupFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/components/PlayList.qml"));
     QVERIFY(popupFile.open(QIODevice::ReadOnly | QIODevice::Text));
     const QString popupSource = QString::fromUtf8(popupFile.readAll());
-    QVERIFY(popupSource.contains(QStringLiteral("playbackCoordinator.playQueueEntry(index)")));
+    QVERIFY(popupSource.contains(QStringLiteral("playbackCoordinator.playOccurrence(value.occurrenceId)")));
     QVERIFY(popupSource.contains(QStringLiteral("playbackCoordinator.removeOccurrence")));
 
     QFile startupFile(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.cpp"));

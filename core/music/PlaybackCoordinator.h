@@ -21,6 +21,10 @@ public:
     Q_INVOKABLE QUuid play(const QVariantMap &item);
     Q_INVOKABLE QUuid enqueue(const QVariantMap &item);
     Q_INVOKABLE QUuid playQueueEntry(int index);
+    Q_INVOKABLE QUuid playOccurrence(const QUuid &id);
+    // Confirmation is tied to the playback intent, including same-song replay.
+    Q_INVOKABLE bool clearOtherOccurrences(const QUuid &expectedOccurrence,
+                                          const QUuid &expectedGeneration);
     Q_INVOKABLE bool removeOccurrence(const QUuid &id);
     Q_INVOKABLE bool stop();
     Q_INVOKABLE bool reportPosition(QUuid generation, qint64 positionMs);

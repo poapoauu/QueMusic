@@ -493,6 +493,7 @@ private slots:
         QTRY_COMPARE(h.plugins.plugin("org.quemusic.source.task12c").activeLeases,1);
     }
     void switchingRevalidatesOccurrenceAfterStopCallbacks() {
+        for (bool byOccurrence : {false,true})
         for (int mutation=0;mutation<3;++mutation) {
             Harness h; QVERIFY(h.init());
             auto first=savedItem(), selected=savedItem(), last=savedItem("bare");
@@ -507,7 +508,8 @@ private slots:
                     QVERIFY(h.coordinator.restoreQueue({first,replacement,last}));
                 }
             };
-            const auto generation=h.coordinator.playQueueEntry(1);
+            const auto generation=byOccurrence ? h.coordinator.playOccurrence(selected.occurrenceId)
+                                               : h.coordinator.playQueueEntry(1);
             if(mutation==0) {
                 QVERIFY(!generation.isNull()); QTRY_COMPARE(h.sink.plays,2);
                 QCOMPARE(h.coordinator.currentOccurrence(),selected.occurrenceId);
@@ -519,6 +521,59 @@ private slots:
                 QCOMPARE(h.session("bare")->property("resolutions").toInt(),0);
             }
         }
+    }
+    void occurrenceSelectionSurvivesAnUnpublishedIndexShift() {
+        Harness h; QVERIFY(h.init());
+        auto first=savedItem(), selected=savedItem(), last=savedItem("bare");
+        QVERIFY(h.coordinator.restoreQueue({first,selected,last}));
+        QVERIFY(!h.coordinator.playOccurrence(last.occurrenceId).isNull()); QTRY_COMPARE(h.sink.plays,1);
+        const auto active=h.coordinator.currentGeneration();
+        QVERIFY(h.coordinator.playOccurrence({}).isNull());
+        QVERIFY(h.coordinator.playOccurrence(QUuid::createUuid()).isNull());
+        QCOMPARE(h.coordinator.currentGeneration(),active); QCOMPARE(h.sink.stops,0);
+        const auto oldRows=h.coordinator.queue();
+        QVERIFY(h.coordinator.removeOccurrence(first.occurrenceId));
+        // queueChanged is queued; a still-visible row has the old index 1.
+        QVERIFY(!h.coordinator.playOccurrence(oldRows.at(1).toMap().value("occurrenceId").toUuid()).isNull());
+        QTRY_COMPARE(h.sink.plays,2);
+        QCOMPARE(h.coordinator.currentOccurrence(),selected.occurrenceId);
+        QCOMPARE(h.coordinator.currentIndex(),0);
+        QVERIFY(h.coordinator.removeOccurrence(last.occurrenceId));
+        QVERIFY(h.coordinator.playOccurrence(last.occurrenceId).isNull());
+        QCOMPARE(h.coordinator.currentOccurrence(),selected.occurrenceId);
+    }
+    void clearingOthersKeepsTheActualPlaybackAndRejectsStaleConfirmation() {
+        Harness h; QVERIFY(h.init());
+        auto first=savedItem(), selected=savedItem(), last=savedItem("bare");
+        QVERIFY(h.coordinator.restoreQueue({first,selected,last}));
+        QVERIFY(!h.coordinator.clearOtherOccurrences(selected.occurrenceId,QUuid::createUuid()));
+        const auto generation=h.coordinator.playOccurrence(selected.occurrenceId);
+        QVERIFY(!generation.isNull()); QTRY_COMPARE(h.sink.plays,1);
+        const auto before=h.coordinator.currentItem();
+        const auto resolutions=h.session()->property("resolutions").toInt();
+        QVERIFY(!h.coordinator.clearOtherOccurrences({},generation));
+        QVERIFY(!h.coordinator.clearOtherOccurrences(selected.occurrenceId,{}));
+        QVERIFY(!h.coordinator.clearOtherOccurrences(first.occurrenceId,generation));
+        QVERIFY(!h.coordinator.clearOtherOccurrences(selected.occurrenceId,QUuid::createUuid()));
+        QCOMPARE(h.coordinator.queue().size(),3);
+        QCoreApplication::processEvents(); QSignalSpy changed(&h.coordinator,&PlaybackCoordinator::queueChanged);
+        QVERIFY(h.coordinator.clearOtherOccurrences(selected.occurrenceId,generation));
+        QCOMPARE(h.coordinator.exportQueue().size(),1);
+        QCOMPARE(h.coordinator.exportQueue().first().occurrenceId,selected.occurrenceId);
+        QCOMPARE(h.coordinator.currentIndex(),0); QCOMPARE(h.coordinator.currentGeneration(),generation);
+        QCOMPARE(h.coordinator.currentItem(),before); QCOMPARE(h.sink.stops,0); QCOMPARE(h.sink.plays,1);
+        QCOMPARE(h.session()->property("resolutions").toInt(),resolutions);
+        QTRY_COMPARE(changed.size(),1);
+        QVERIFY(h.coordinator.clearOtherOccurrences(selected.occurrenceId,generation));
+        QCoreApplication::processEvents(); QCOMPARE(changed.size(),1);
+        QVERIFY(!h.coordinator.enqueue(item()).isNull());
+        const auto replay=h.coordinator.playOccurrence(selected.occurrenceId);
+        QVERIFY(!replay.isNull()); QVERIFY(replay!=generation); QTRY_COMPARE(h.sink.plays,2);
+        QVERIFY(!h.coordinator.clearOtherOccurrences(selected.occurrenceId,generation));
+        QCOMPARE(h.coordinator.queue().size(),2);
+        QVERIFY(h.coordinator.stop());
+        QVERIFY(!h.coordinator.clearOtherOccurrences(selected.occurrenceId,replay));
+        QCOMPARE(h.coordinator.queue().size(),2);
     }
     void newerPlaybackFromStopWinsOverTheOldSelection() {
         Harness h; QVERIFY(h.init());

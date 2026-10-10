@@ -689,6 +689,14 @@ Host 内部播放信号新增 token 参数、平台方法新增可选参数，�
 
 仍需按 occurrence 而非旧展示 index 定位弹窗目标，并补 Source“清空其他”的真实队列管理；Player／桌面歌词审计、Phase 6 完整出口、Phase 7／8 平台插件与 Phase 9 Legacy 删除继续保留为未完成任务。
 
+### 后续增量：队列 occurrence 定位与 Source 清空其他
+
+弹窗播放由 Host occurrence 定位真实队列，通知前索引移位不换目标；目标删除不停止现有播放，同 UUID 恢复替换仍由既有 stop 后 Entry 对象核验拒绝。Source“清空其他”绑定确认时捕获的 occurrence／generation，保留实际 Active Entry，不重播、不解析、不补造权限。切歌、同项重播、停播、模式往返和依赖移除／替换后的旧确认拒绝，Legacy 行为保持。
+
+Coordinator 新测试覆盖移位与清理的播放／解析／通知保持和旧确认拒绝，生产 QML 函数测试覆盖跨模式／依赖／播放 intent；既有 Store／持久化测试继续通过。全目标增量构建、六项联合回归及全部 74 项 CTest 通过（67.14 秒）。新增 Host invokable 方法需 C++／QML 同步构建，Source SDK v2／Source 插件 ABI／Plugin UI API／磁盘 schema 不变。
+
+下一项转入 Player／桌面歌词切歌入口依赖边界及 Phase 6 全量审计；不将该切片等同于原生弹窗／真实音频／跨平台验收。Phase 7／8 平台插件与 Phase 9 Legacy 删除仍未完成。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

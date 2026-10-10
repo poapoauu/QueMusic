@@ -14,6 +14,7 @@ Popup {
     property bool secureMode: false
     property bool secureAvailable: false
     property bool showRestoredQueue: false
+    property int queueContextRevision: 0
     onClosed: showRestoredQueue = false
 
     function activeIndex() {
@@ -30,9 +31,10 @@ Popup {
     function playSourceRow(index) {
         if (!secureMode || typeof playbackCoordinator === "undefined" || !playbackCoordinator) return;
         const value = queueRow(index);
-        if (!value || value.unavailable !== false) return;
+        if (!value || value.unavailable !== false || !value.occurrenceId
+                || typeof playbackCoordinator.playOccurrence !== "function") return;
         // Coordinator validates the target before stopping/replacing playback.
-        playbackCoordinator.playQueueEntry(index);
+        playbackCoordinator.playOccurrence(value.occurrenceId);
     }
 
     function displayName(index) {
@@ -51,7 +53,10 @@ Popup {
         return !value ? "" : secureMode ? (value.sourceLabel || "音源") : (value.source == -1 ? "本地" : "在线");
     }
 
-    onSecureModeChanged: playListView.model = secureMode ? secureModel : playListModel
+    onSecureModeChanged: {
+        queueContextRevision++;
+        playListView.model = secureMode ? secureModel : playListModel;
+    }
     onSecureModelChanged: if (secureMode) playListView.model = secureModel
 
     function clearOtherSongs() {
@@ -63,6 +68,24 @@ Popup {
         playListModel.append(currentEntry);
         playListModel.playListIndex = 0;
         Style.warned("已清空播放列表", 1);
+    }
+    function requestClearOtherSongs() {
+        const mode = secureMode;
+        const revision = queueContextRevision;
+        const coordinator = typeof playbackCoordinator === "undefined" ? null : playbackCoordinator;
+        if (mode && (!coordinator || coordinator.currentIndex < 0
+                || typeof coordinator.clearOtherOccurrences !== "function")) return;
+        const occurrence = mode ? coordinator.currentOccurrence : null;
+        const generation = mode ? coordinator.currentGeneration : null;
+        globalDialog.openSimpleDialog("删除", "这将移除播放列表其他歌曲，是否继续？", function() {
+            if (secureMode !== mode || queueContextRevision !== revision) return;
+            if (mode) {
+                if (typeof playbackCoordinator === "undefined" || !playbackCoordinator
+                        || playbackCoordinator !== coordinator) return;
+                if (coordinator.clearOtherOccurrences(occurrence, generation))
+                    Style.warned("已移除其他歌曲", 1);
+            } else clearOtherSongs();
+        });
     }
     padding: 0
     margins: -1
@@ -115,13 +138,9 @@ Popup {
             buttonColor: "transparent"
             hoverColor: Qt.rgba(1.0,0.5,0.5,0.5)
             shadowEnabled: false
-            onClicked: {
-                globalDialog.openSimpleDialog("删除", "这将移除播放列表其他歌曲，是否继续？",
-                    function() {
-                        playList.clearOtherSongs();
-                    }
-                );
-            }
+            enabled: !playList.secureMode || (typeof playbackCoordinator !== "undefined"
+                     && playbackCoordinator && playbackCoordinator.currentIndex >= 0)
+            onClicked: playList.requestClearOtherSongs()
         }
         SButton {
             iconCharacter: "\uf025"
