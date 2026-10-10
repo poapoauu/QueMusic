@@ -9,6 +9,11 @@ Item {
     id: homePage
     property var musicAdapter: null
     property var playbackAdapter: null
+    property bool viewReady: false
+    property bool changingDiscoveryContext: false
+    onMusicAdapterChanged: {
+        if (viewReady) resetSourceDiscoveryViews()
+    }
     readonly property var playlistModel: musicAdapter ? musicAdapter.categoryPlaylists || null : null
     readonly property bool playlistHasError: playlistModel && playlistModel.error
             && Object.keys(playlistModel.error).length > 0
@@ -90,9 +95,32 @@ Item {
         if (!targets) return
         for (const section of Array.from(targets)) musicAdapter[action](1, section)
     }
+    function resetSourceDiscoveryViews() {
+        changingDiscoveryContext = true
+        dailyRecomWindow.resetView()
+        recommendWindow.resetView()
+        changingDiscoveryContext = false
+    }
+    Connections {
+        target: homePage.musicAdapter
+        ignoreUnknownSignals: true
+        function onSelectedSourceInstanceIdChanged() { homePage.resetSourceDiscoveryViews() }
+        function onCategoryNavigationChanged() {
+            if (!recommendWindow.visible || homePage.changingDiscoveryContext) return
+            if (homePage.musicAdapter && homePage.musicAdapter.categoryCanNavigateBack === true) {
+                recommendWindow.title = homePage.musicAdapter.categoryTitle || ""
+                recommendWindow.image = homePage.musicAdapter.categoryCover || ""
+            } else {
+                homePage.changingDiscoveryContext = true
+                recommendWindow.resetView()
+                homePage.changingDiscoveryContext = false
+            }
+        }
+    }
 
 
     Component.onCompleted: {
+        homePage.viewReady = true
         if (musicAdapter) {
             musicAdapter.activatePage(0)
             musicAdapter.activatePage(1)
@@ -967,7 +995,8 @@ Item {
         mainTarget: homeMain
         haveControl: false
         onVisibleChanged: {
-            if (!visible && musicAdapter && typeof musicAdapter.closeCategoryBrowse === "function")
+            if (!visible && !homePage.changingDiscoveryContext
+                    && musicAdapter && typeof musicAdapter.closeCategoryBrowse === "function")
                 musicAdapter.closeCategoryBrowse()
         }
         content: QListView {

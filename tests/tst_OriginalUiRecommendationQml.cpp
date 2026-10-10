@@ -3,6 +3,7 @@
 #include <QMetaObject>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QPointer>
 #include <QTest>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
@@ -448,6 +449,52 @@ std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, QObje
 class OriginalUiRecommendationQmlTest final : public QObject {
     Q_OBJECT
 private slots:
+    void sourceDiscoveryViewsInvalidateScopeAndAdapterWithoutResettingNewNavigation()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter, replacement; QString error;
+        adapter.category.setRows(playlistRows());
+        auto home = loadPage(engine, "pages/HomePage.qml", &adapter, &error); QVERIFY2(home, qPrintable(error));
+        auto *detailWindow = home->findChild<QObject *>("recommendationDetailWindow"); QVERIFY(detailWindow);
+        auto *dailyWindow = home->findChild<QObject *>("dailyRecommendationWindow"); QVERIFY(dailyWindow);
+        auto *target = detailWindow->property("mainTarget").value<QObject *>(); QVERIFY(target);
+        auto browse = [&] { return QMetaObject::invokeMethod(home.get(), "browsePlaylist", Q_ARG(QVariant, QVariant(0))); };
+        QVERIFY(browse()); QVERIFY(detailWindow->property("visible").toBool());
+        auto *title = detailWindow->findChild<QObject *>("animatorWindowTitle"); QVERIFY(title);
+        QCOMPARE(title->property("textFormat").toInt(), 0);
+        QVariantMap nested{{"title", "<b>Nested title</b>"}, {"cover", "file:///fixture/nested-cover.png"}};
+        QVERIFY(adapter.browse(nested));
+        QCOMPARE(title->property("text").toString(), QString("<b>Nested title</b>"));
+        QCOMPARE(detailWindow->property("image").toString(), QString("file:///fixture/nested-cover.png"));
+        QPointer<QObject> oldList(home->findChild<QObject *>("homeCategoryDetailList")); QVERIFY(oldList);
+        adapter.navigation.clear(); // MusicHub clears the stack before announcing a new scope.
+        adapter.setSelectedSourceInstanceId("another/instance");
+        QVERIFY(!detailWindow->property("visible").toBool()); QTRY_VERIFY(!oldList);
+        QCOMPARE(detailWindow->property("title").toString(), QString()); QCOMPARE(detailWindow->property("image").toString(), QString());
+        QCOMPARE(context.windowObject()->exitIndex, 0); QCOMPARE(adapter.closedBrowses, 0);
+        QVERIFY(target->property("visible").toBool()); QCOMPARE(target->property("opacity").toDouble(), 1.0);
+        QTest::qWait(400); // A cancelled entrance must not later hide the restored page.
+        QVERIFY(target->property("visible").toBool());
+        QVERIFY(browse()); QVERIFY(QMetaObject::invokeMethod(detailWindow, "closed", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant())));
+        QVariantMap reopened{{"title", "Reopened"}, {"cover", ""}};
+        QVERIFY(QMetaObject::invokeMethod(home.get(), "browsePresentation", Q_ARG(QVariant, QVariant(reopened))));
+        QTest::qWait(320); QVERIFY(detailWindow->property("visible").toBool());
+        QCOMPARE(detailWindow->property("title").toString(), QString("Reopened"));
+        QVERIFY(home->findChild<QObject *>("homeCategoryDetailList"));
+        QVERIFY(replacement.browse(QVariantMap{{"title", "Replacement's existing navigation"}}));
+        QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&replacement)));
+        QVERIFY(!detailWindow->property("visible").toBool()); QCOMPARE(replacement.closedBrowses, 0);
+        QCOMPARE(replacement.navigation.size(), 1);
+        QVERIFY(QMetaObject::invokeMethod(dailyWindow, "opened", Q_ARG(QVariant, QVariant("Daily")), Q_ARG(QVariant, QVariant(""))));
+        QPointer<QObject> dailyList(home->findChild<QObject *>("recommendationList")); QVERIFY(dailyList);
+        QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
+        QVERIFY(!dailyWindow->property("visible").toBool()); QTRY_VERIFY(!dailyList);
+        QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&adapter)));
+        adapter.navigation.clear(); QVERIFY(browse());
+        const int closes = adapter.closedBrowses;
+        adapter.navigation.clear(); emit adapter.categoryNavigationChanged();
+        QVERIFY(!detailWindow->property("visible").toBool()); QCOMPARE(adapter.closedBrowses, closes);
+    }
+
     void homePlaylistCardsUseOnlySourcePlaylistsAndSafeActions()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
@@ -732,11 +779,15 @@ private slots:
         adapter.category.setRows({}); emit adapter.category.presentationStateChanged();
         QVERIFY(QMetaObject::invokeMethod(detail, "retrySection"));
         QCOMPARE(adapter.retries.last(), qMakePair(1, QString("detail-failed")));
+        QPointer<QObject> oldDaily(daily), oldDetail(detail);
         QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr)));
-        QVERIFY(QMetaObject::invokeMethod(daily, "clicked", Q_ARG(int, 0)));
-        QVERIFY(QMetaObject::invokeMethod(detail, "clicked", Q_ARG(int, 0)));
+        QVERIFY(!dailyWindow->property("visible").toBool());
+        QVERIFY(!categoryWindow->property("visible").toBool());
+        QTRY_VERIFY(!oldDaily && !oldDetail);
         QCOMPARE(adapter.playedRows.size(), 1);
         QVERIFY(home->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&adapter)));
+        adapter.category.setRows(mixedCategoryRows());
+        QVERIFY(QMetaObject::invokeMethod(home.get(), "browseCategory", Q_ARG(QVariant, QVariant(0))));
         const int closed = adapter.closedBrowses;
         QVERIFY(QMetaObject::invokeMethod(categoryWindow, "closed",
                                           Q_ARG(QVariant, QVariant(QString{})),

@@ -119,6 +119,10 @@ private slots:
         QVERIFY(!home.contains(QStringLiteral("MusicApi.getPlaylistSongs(")));
         QVERIFY(!home.contains(QStringLiteral("hotlistsWindow")));
         QVERIFY(!home.contains(QStringLiteral("PlayListWindow")));
+        const auto animator = readSource(QStringLiteral("components/AnimatorWindow.qml"));
+        QVERIFY(!animator.contains(QStringLiteral("MusicApi")));
+        QVERIFY(!animator.contains(QStringLiteral("songSource")));
+        QVERIFY(animator.contains(QStringLiteral("textFormat: Text.PlainText")));
 
         for (const QString &page : {QStringLiteral("pages/PlaylistPage.qml"),
                                     QStringLiteral("pages/FavouritePage.qml"),

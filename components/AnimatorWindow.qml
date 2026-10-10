@@ -18,18 +18,43 @@ Item {
     property var mainTarget
     property bool haveControl: true
 
-    property int songSource: MusicApi.songSource
     default property alias content: loadWidget.sourceComponent
     function opened(title,image) {
+        windowCloseAnime.stop();
+        windowOpenAnime.stop();
         root.title = title;
         root.image = image;
-        loadWidget.active = true;
+        root.visible = true;
+        if (loadWidget.active && loadWidget.status === Loader.Ready)
+            windowOpenAnime.start();
+        else
+            loadWidget.active = true;
     }
     function closed(title,image) {
         windowOpenAnime.running = false;
         mainTarget.visible = true;
         windowCloseAnime.running = true;
         window.exitIndex -= 1;
+    }
+    // Host-private immediate invalidation. A Source context change must not
+    // leave a closing animation or lazy content attached to the next scope.
+    function resetView() {
+        const wasOpen = root.visible || loadWidget.active;
+        windowOpenAnime.stop();
+        windowCloseAnime.stop();
+        loadWidget.active = false;
+        root.visible = false;
+        root.title = "";
+        root.image = "";
+        root.scale = 1;
+        root.opacity = 1;
+        if (root.mainTarget) {
+            root.mainTarget.visible = true;
+            root.mainTarget.scale = 1;
+            root.mainTarget.opacity = 1;
+        }
+        if (wasOpen && window.exitIndex === root.winIndex)
+            window.exitIndex = Math.max(0, root.winIndex - 1);
     }
     Connections {
         target: window
@@ -136,12 +161,14 @@ Item {
 
     Text {
         id: headTitle
+        objectName: "animatorWindowTitle"
         x: 144
         y: root.haveControl ? 16 : 34
         width: 200
         height: 60
         color: Style.themes.fontColor
         text: root.title
+        textFormat: Text.PlainText
         font.pixelSize: Style.settings.textH1
         verticalAlignment: Text.AlignVCenter
     }

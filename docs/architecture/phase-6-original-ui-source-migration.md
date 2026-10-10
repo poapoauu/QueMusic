@@ -341,6 +341,15 @@ ctest --test-dir build-phase3 --output-on-failure
 - 主程序构建及 MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure、PlaybackCoordinator、MediaActionRouterV2、QueueHistoryIntegration 共 9 项联合回归通过。实际生产页面测试覆盖实体/chart 过滤、纯文本、详情动作、能力拒绝、非法索引、缺 Adapter、跨分区分页/重试与零旧歌单调用；没有真实服务器/原生视觉验收。
 - 私人漫游/雷达没有明确 v2 契约，不能把 Random 推荐冒充该功能。下一切片审计共享详情容器的遗留平台字段、标题渲染和 Source 范围变化的展示失效；之后继续处理剩余发现入口。Phase 6 未整体完成。
 
+### 共享详情容器：去平台字段与 Source 视图失效
+
+- 当前代码检索确认 `AnimatorWindow.songSource` 未被自身或调用方使用，删除其旧 MusicApi 绑定；共享详情标题使用 PlainText。容器仍为 Host 私有组件，不成为公共 Plugin UI Kit/API。
+- 新增 Host 私有 `resetView`：停止开关动画、关闭 Loader、清空标题/封面并恢复父页面。QObject 内容遵循 Qt 的延后销毁，隐藏/取消动画立即发生；仅在对应退出层级仍活动时归还该层级。
+- 首页 Source 范围变化及 Adapter 替换/移除立即清空每日推荐与分类/歌单详情；分类导航失效关闭详情，嵌套导航更新标题/封面。上下文切换期间不调用新 Adapter 的 closeCategoryBrowse，防止误清另一实例的现有导航；正常用户关闭仍重置当前分类导航。
+- 容器在关闭动画期间重新打开会取消旧动画并复用已加载内容，不让旧完成动作再隐藏新详情。原布局、动画参数与控件保留。
+- 主程序及相关 QML 资源重建，前述 9 项加 OriginalUiLocalDirectories 共 10 项联合回归通过。实际页面/容器测试覆盖 Source 切换、导航失效、Adapter 替换/移除、延后销毁、父页面恢复、嵌套纯文本标题、动画中重新打开与正常关闭。尚无真实服务器或原生视觉验收，SDK v2 / Source 插件 ABI / Plugin UI API 未改。
+- 下一检查点扩大为全目标构建/回归，再推进私人漫游/雷达的明确能力契约与入口边界；其 Legacy 实现和平台登录 UI 仍未完成插件迁移，Phase 6 未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
