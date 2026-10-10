@@ -13,6 +13,7 @@
 #include "KugouApi.h"
 #include "NeteaseCloudApi.h"   // 基于 QCloudMusicApi 的网易云实现（替代旧 NeteaseApi）
 #include "OnlineListModel.h"
+#include "LegacyPlaybackRequestGuard.h"
 #include "../cpp/DownloadManager.h"
 
 class AccountManager;
@@ -132,6 +133,10 @@ public:
     Q_INVOKABLE void getSingerSongs(const QString &singerid, int page = 1, int pageSize = 20,
                                     int source = -1);
     Q_INVOKABLE void getMusicInfo(const QString &hash, int type = 0, int source = -1);
+    Q_INVOKABLE void invalidateLegacyPlayback() { m_legacyPlayback.invalidate(); }
+    Q_INVOKABLE bool legacyPlaybackRequestIsCurrent(const QString &token) const {
+        return m_legacyPlayback.isCurrent(token);
+    }
     Q_INVOKABLE void getLyricInfo(const QString &hash, int duration, int source = -1);
     // 私人漫游（每日推荐式流媒体，网易云 personal_fm / 酷狗推荐榜）
     Q_INVOKABLE void getPersonalFm(int page = 1, int pageSize = 20, int source = -1);
@@ -152,7 +157,8 @@ signals:
     void loaded();   // loadState 置 true（QLoadSign 显示加载动画）
     void finished(); // loadState 置 false（QLoadSign 结束动画）
     void urlplay(const QString &playurl, const QString &title, const QString &artist,
-                 const QString &cover, const QString &solve, const QString &hash, int source);
+                 const QString &cover, const QString &solve, const QString &hash, int source,
+                 const QString &requestToken);
     void warned(const QString &text, int type); // 下载等提示
     void songSourceChanged();
     void allPlaylistMenuChanged();
@@ -186,6 +192,7 @@ private:
     };
 
     int m_source = 0;
+    LegacyPlaybackRequestGuard m_legacyPlayback;
     NeteaseCloudApi m_netease;   // 网易云（源 1）：基于 QCloudMusicApi（weapi 加密协议）
     KugouApi m_kugou;
     AccountManager *m_account = nullptr;

@@ -1005,11 +1005,11 @@ void KugouApi::getSingerSongs(const QString &singerid, int page, int pageSize)
 }
 
 // 歌曲播放信息（type: 0 播放 / 1 下载）
-void KugouApi::getMusicInfo(const QString &hash, int type)
+void KugouApi::getMusicInfo(const QString &hash, int type, const QString &playbackRequest)
 {
     QUrl url(QStringLiteral("https://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=")
              + hash);
-    get(url.toString(), [this, hash, type](const QJsonObject &json) {
+    get(url.toString(), [this, hash, type, playbackRequest](const QJsonObject &json) {
         // 与 JS 版一致：兼容 {data:{...}} 和直接 {...} 两种返回结构
         QJsonObject d = json.value(QStringLiteral("data")).toObject();
         if (d.isEmpty())
@@ -1046,6 +1046,7 @@ void KugouApi::getMusicInfo(const QString &hash, int type)
         data.insert(QStringLiteral("fileName"), fileName);
         data.insert(QStringLiteral("hash"), hash);
         data.insert(QStringLiteral("type"), type);
+        data.insert(QStringLiteral("_legacyPlaybackRequest"), playbackRequest);
         emit resultReady(QStringLiteral("getMusicInfo"), data, Source);
     });
 }

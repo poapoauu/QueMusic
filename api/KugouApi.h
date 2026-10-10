@@ -45,7 +45,7 @@ public:
     void getHotSingers(int page, int pageSize); // 热门歌手（singer/rank）
     void getSingerCategory(int area, int page, int pageSize); // 歌手分类（singer/list）
     void getSingerSongs(const QString &singerid, int page, int pageSize); // 歌手歌曲
-    void getMusicInfo(const QString &hash, int type);
+    void getMusicInfo(const QString &hash, int type, const QString &playbackRequest = {});
     void getLyricInfo(const QString &hash, int duration);
     void getPersonalFm(int page, int pageSize);     // 私人漫游 → TOP500 热门榜（分页）
     void getPersonalRadar(int page, int pageSize);  // 私人雷达 → 飙升榜（分页）

@@ -457,9 +457,18 @@ ctest --test-dir build-phase3 --output-on-failure
 - 全目标增量构建、四项联合回归及全部 73 项 CTest 通过（75.43 秒）。不是原生视觉、真实服务器、物理音频或跨平台 ABI 验收。
 - 下一切片处理审计发现的旧 MusicApi 异步播放结果抢占 Source：当前 `onUrlplay` 无条件 stop Coordinator。Download Source 完成记录没有路径直播放，兼容下载列表不因此删除；Queue／Player 与桌面歌词仍继续审计。
 
+### 过渡播放边界：旧在线回调不能抢占新 Source
+
+- 真实审计发现 `MusicApi.urlplay` 无条件 stop Coordinator。现在每次 Legacy 播放请求生成独立 token，绑定平台／歌曲，Kugou 网络回调和 Netease worker call 原样携带 Host token；结果只消费一次，不能以相同 hash 匹配另一代请求。
+- Source 当前项接管及同步展示时撤销旧 intent；过期结果不发播放信号。信号显式携带原 token，QML 在 stop 前后、播放前后及队列写入前检查，早期监听器或 stop 回调发起新播放后旧结果不能继续。信号返回后歌词请求也检查同一 token。真实的新 Legacy 用户请求仍可切换，下载请求不撤销播放 intent。
+- Legacy 队列同 hash 不跨平台复用；删除播放 URL 的 console 输出。保留现有原 UI 与尚在使用的 Legacy 平台业务，这不是把旧 API 包装成 Source Plugin，Phase 7／8 的真正迁移和 Phase 9 删除目标不变。
+- 新增请求 Guard 单测与抽取生产 `onUrlplay` 的 QML 验收，覆盖同歌不同请求、平台／歌曲不符、重复结果、Source 提前接管、stop 重入、早期监听器的新 intent、正常显式 Legacy 播放和跨平台队列隔离。平台 token 传递有源码接线断言及主程序编译验证；未运行真实旧平台网络请求，不将其冒充端到端服务验收。
+- 旧关闭边界夹具缺新增撤销接口，已注入并增加次数断言；原零 Legacy 持久化／停播断言保持。全目标增量构建、七项联合回归及新增后的全部 74 项 CTest 通过（61.39 秒）。
+- Host 内部 `MusicApi.urlplay` 信号新增 token 参数、平台内部方法新增可选参数，C++／QML 必须同步构建；Source SDK v2／Source 插件 ABI／Plugin UI API／磁盘格式不变。下一项收紧队列桥接的 Source 缺依赖回退与索引类型；真实服务／原生音频／视觉／跨平台验收仍待完成。
+
 ## 后续顺序与验收
 
-最新自动验证以本文件最后的阶段记录为准；Host 快照、队列／历史权利与普通页面动作投影完成全目标增量构建及全部 73 项 CTest。仍未执行真实服务器音频或手工视觉验收。
+最新自动验证以本文件最后的阶段记录为准；目录批次与过渡播放边界完成全目标增量构建及全部 74 项 CTest。仍未执行真实服务器音频或手工视觉验收。
 
 1. Home 原卡片已完成 Source 数据与动作接入，私人服务由后续真实平台插件实现扩展后验收；不能以 Host 替身代替实际算法。未来若要从已移出队列的历史记录重新播放，应增加可信插件媒体项查找能力，不能猜造动作。
 2. 收藏/Playlist/Category：关注歌手、安全历史列表、收藏嵌套详情、通用分区批次上下文、队列停播回调 occurrence 保护、普通页/目录能力通知失效、队列／历史实时权利及 Adapter 动作四层投影已补齐。历史只重放 Coordinator 中可信且可用的完整身份，不从脱离队列的快照猜造媒体项。后续跟随整体审计检查剩余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。

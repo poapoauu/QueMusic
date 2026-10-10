@@ -45,7 +45,7 @@ public slots:
     void getHotSingers(int page, int pageSize);
     void getSingerCategory(int area, int page, int pageSize); // 歌手分类（artist_list）
     void getSingerSongs(const QString &singerid, int page, int pageSize);
-    void getMusicInfo(const QString &hash, int type);
+    void getMusicInfo(const QString &hash, int type, const QString &playbackRequest = {});
     void getLyricInfo(const QString &hash, int duration);
     void getPersonalFm(int page, int pageSize);     // 私人漫游 → personal_fm
     void getPersonalRadar(int page, int pageSize);  // 私人雷达 → recommend_songs

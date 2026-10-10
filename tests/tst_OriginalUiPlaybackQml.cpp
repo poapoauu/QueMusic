@@ -5,6 +5,7 @@
 #include <QUuid>
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlEngine>
+#include <QtQml/QQmlContext>
 
 #include <memory>
 #include <limits>
@@ -122,6 +123,8 @@ class LegacyShutdownDouble final : public QObject {
     Q_PROPERTY(int playListIndex READ index)
     Q_PROPERTY(QString urlStr READ cover)
 public:
+    int playbackInvalidations = 0;
+    Q_INVOKABLE void invalidateLegacyPlayback() { ++playbackInvalidations; }
     int rows = 1, currentIndex = 0, stops = 0;
     mutable int reads = 0;
     int count() const { ++reads; return rows; }
@@ -298,6 +301,7 @@ Item {
 void OriginalUiPlaybackQmlTest::sourceShutdownDoesNotMixLegacyPersistence()
 {
     QQmlEngine engine; LegacyShutdownDouble legacy;
+    engine.rootContext()->setContextProperty("MusicApi", &legacy);
     QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/main.qml")); QVERIFY(file.open(QIODevice::ReadOnly));
     const auto source = QString::fromUtf8(file.readAll());
     const auto sync = capturedQmlBlock(source, source.indexOf("function syncSecureCurrent()"));
@@ -329,9 +333,11 @@ QtObject { id: window
     auto *options = root->property("optionsFixture").value<QObject *>(); QVERIFY(options);
     const auto previous = options->property("lastSongs").toMap();
     QVERIFY(QMetaObject::invokeMethod(root.get(), "syncSecureCurrent")); QCOMPARE(legacy.stops, 0);
+    QCOMPARE(legacy.playbackInvalidations, 0);
     QVERIFY(root->setProperty("securePlaybackCurrent", true));
     QVERIFY(QMetaObject::invokeMethod(root.get(), "syncSecureCurrent"));
     QCOMPARE(legacy.stops, 1); QVERIFY(root->property("sourceLyricsMode").toBool());
+    QCOMPARE(legacy.playbackInvalidations, 1);
     QCOMPARE(root->property("musicTitle").toString(), QString("Legacy Title"));
     QCOMPARE(root->property("musicArtist").toString(), QString("Legacy Artist"));
     QVERIFY(QMetaObject::invokeMethod(root.get(), "toClosing")); QCOMPARE(legacy.reads, 0);

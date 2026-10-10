@@ -203,8 +203,10 @@ void MusicApiService::getSingerSongs(const QString &singerid, int page, int page
 
 void MusicApiService::getMusicInfo(const QString &hash, int type, int source)
 {
+    const QString playbackRequest = type == 0 ? m_legacyPlayback.begin(hash, resolve(source)) : QString{};
+    if (type == 0 && playbackRequest.isEmpty()) return;
     setLoadState(true);
-    DISPATCH(source, getMusicInfo(hash, type));
+    DISPATCH(source, getMusicInfo(hash, type, playbackRequest));
 }
 
 void MusicApiService::getPersonalFm(int page, int pageSize, int source)
@@ -587,6 +589,8 @@ void MusicApiService::handleMusicInfo(const QVariantMap &d, int source)
 {
     const int type = d.value(QStringLiteral("type")).toInt();
     if (type == 0) { // 播放
+        const auto token = d.value(QStringLiteral("_legacyPlaybackRequest")).toString();
+        if (!m_legacyPlayback.take(token, d.value(QStringLiteral("hash")).toString(), source)) return;
         QString cover = d.value(QStringLiteral("album_img")).toString();
         if (cover.contains(QLatin1String("{size}")))
             cover.replace(QLatin1String("{size}"), QLatin1String("512"));
@@ -601,9 +605,10 @@ void MusicApiService::handleMusicInfo(const QVariantMap &d, int source)
                      d.value(QStringLiteral("author_name")).toString(),
                      cover, solve,
                      d.value(QStringLiteral("hash")).toString(),
-                     source);
+                     source, token);
         // 直接请求歌词
-        getLyricInfo(d.value(QStringLiteral("hash")).toString(), time, source);
+        if (m_legacyPlayback.isCurrent(token))
+            getLyricInfo(d.value(QStringLiteral("hash")).toString(), time, source);
     } else if (type == 1) { // 下载
         // 秒 → 毫秒
         const double timeLength = d.value(QStringLiteral("timeLength")).toDouble();

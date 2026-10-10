@@ -338,6 +338,7 @@ private:
             d.insert(QStringLiteral("fileName"), fileNameBase + QStringLiteral(".mp3"));
             d.insert(QStringLiteral("hash"), hash);
             d.insert(QStringLiteral("type"), type);
+            d.insert(QStringLiteral("_legacyPlaybackRequest"), call.value(QStringLiteral("_legacyPlaybackRequest")));
             return d;
         }
         else if (action == QLatin1String("getLyricInfo")) {
@@ -591,7 +592,7 @@ void NeteaseCloudApi::getSingerSongs(const QString &singerid, int page, int page
     enqueue(QStringLiteral("getSingerSongs"), call);
 }
 
-void NeteaseCloudApi::getMusicInfo(const QString &hash, int type)
+void NeteaseCloudApi::getMusicInfo(const QString &hash, int type, const QString &playbackRequest)
 {
     QVariantMap arg;
     // 注意 ids 必须是字符串（QCloudMusicApi 的 song_detail 内部会 split(",")），
@@ -603,6 +604,7 @@ void NeteaseCloudApi::getMusicInfo(const QString &hash, int type)
     call.insert(QStringLiteral("arg"), arg);
     call.insert(QStringLiteral("hash"), hash);
     call.insert(QStringLiteral("type"), type);
+    call.insert(QStringLiteral("_legacyPlaybackRequest"), playbackRequest);
     enqueue(QStringLiteral("getMusicInfo"), call);
 }
 

@@ -932,6 +932,15 @@ if(BUILD_TESTING)
         TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     qt_add_executable(quemusic_legacy_queue_qml_test tests/tst_LegacyQueueQml.cpp)
+    qt_add_executable(quemusic_legacy_playback_requests_test tests/tst_LegacyPlaybackRequests.cpp)
+    target_compile_features(quemusic_legacy_playback_requests_test PRIVATE cxx_std_17)
+    target_include_directories(quemusic_legacy_playback_requests_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/api")
+    target_compile_definitions(quemusic_legacy_playback_requests_test PRIVATE
+        QUEMUSIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(quemusic_legacy_playback_requests_test PRIVATE Qt6::Gui Qt6::Qml Qt6::Test)
+    add_test(NAME quemusic_legacy_playback_requests_test COMMAND quemusic_legacy_playback_requests_test)
+    set_tests_properties(quemusic_legacy_playback_requests_test PROPERTIES
+        TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     target_compile_features(quemusic_legacy_queue_qml_test PRIVATE cxx_std_17)
     qt_add_resources(quemusic_legacy_queue_qml_test
         "quemusic_legacy_queue_qml_test_qml"

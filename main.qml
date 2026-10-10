@@ -27,7 +27,12 @@ Window {
     onSourceLyricsModeChanged: {
         if (window.sourceLyricsMode) colorExtractor.extractColorsFromUrl(window.currentCover);
     }
-    onSecurePlaybackCurrentChanged: if (securePlaybackCurrent) sourceLyricsMode = true
+    onSecurePlaybackCurrentChanged: {
+        if (securePlaybackCurrent) {
+            MusicApi.invalidateLegacyPlayback();
+            sourceLyricsMode = true;
+        }
+    }
     property var lyricsAdapter: playbackLyrics
     readonly property string currentCover: playbackLyrics.cover
     onCurrentCoverChanged: {
@@ -133,6 +138,7 @@ Window {
     function syncSecureCurrent() {
         if (!securePlaybackCurrent)
             return;
+        MusicApi.invalidateLegacyPlayback();
         window.sourceLyricsMode = true;
         mainMedia.stop();
         // Source presentation stays in the adapter; these mutable fields are
@@ -871,29 +877,35 @@ Window {
 
     Connections {
         target: MusicApi
-        function onUrlplay(playurl,title,artist,cover,solve,hash,source) {
+        function onUrlplay(playurl,title,artist,cover,solve,hash,source,token) {
+            if (!MusicApi.legacyPlaybackRequestIsCurrent(token)) return;
             playbackCoordinator.stop();
+            // stop() may synchronously start a new Source or Legacy intent.
+            if (!MusicApi.legacyPlaybackRequestIsCurrent(token)) return;
             window.sourceLyricsMode = false;
             mainMedia.urlLocal = false;
             mainMedia.source = playurl;
             mainMedia.noTitle = title;
             window.musicTitle = title;
             window.musicArtist = artist;
-            console.log("url:", playurl);
             mainMedia.urlStr = cover;
+            if (!MusicApi.legacyPlaybackRequestIsCurrent(token)) return;
             mainMedia.play();
+            if (!MusicApi.legacyPlaybackRequestIsCurrent(token)) return;
             colorExtractor.extractColorsFromUrl(solve);
             console.log("---正在提取封面颜色");
             var listIndex = -1;
             for(var i = 0;i < playListModel.count;i++) {
                 var forUrl = playListModel.get(i).path;
-                if(forUrl === hash) {
+                if(forUrl === hash && playListModel.get(i).source === source) {
                     listIndex = i;
                 }
             }
             //var listIndex = listfile.findIndexByValue(playListModel, "path", playurl);
+            if (!MusicApi.legacyPlaybackRequestIsCurrent(token)) return;
             if (listIndex == -1) {
                 playListModel.append({ name: title, path: hash, songer: artist, source: source });
+                if (!MusicApi.legacyPlaybackRequestIsCurrent(token)) return;
                 playListModel.playListIndex = playListModel.count - 1;
             } else {
                 playListModel.playListIndex = listIndex;
