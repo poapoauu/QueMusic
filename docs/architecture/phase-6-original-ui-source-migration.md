@@ -350,6 +350,14 @@ ctest --test-dir build-phase3 --output-on-failure
 - 主程序及相关 QML 资源重建，前述 9 项加 OriginalUiLocalDirectories 共 10 项联合回归通过。实际页面/容器测试覆盖 Source 切换、导航失效、Adapter 替换/移除、延后销毁、父页面恢复、嵌套纯文本标题、动画中重新打开与正常关闭。尚无真实服务器或原生视觉验收，SDK v2 / Source 插件 ABI / Plugin UI API 未改。
 - 下一检查点扩大为全目标构建/回归，再推进私人漫游/雷达的明确能力契约与入口边界；其 Legacy 实现和平台登录 UI 仍未完成插件迁移，Phase 6 未整体完成。
 
+### 首页歌单与详情迁移后的全量检查点（2026-10-10）
+
+代码基线 `b017ac5` 完成现有 macOS / Qt 6.11.1 `build-phase3` 全目标增量构建；全部 71 项 CTest 通过（114.89 秒），测试后工作树无意外改动。相关页面及共享 AnimatorWindow 资源在全目标中重新生成，包含原播放/操作/本地目录 UI 的回归；SDK v2、独立 Plugin UI、实例/设置/路由、Core/Coordinator、Local、Navidrome 及 macOS 包/增量同步/移动后包测试也通过。
+
+本轮闭合的是首页旧热门歌单入口与 Source 详情容器边界，不是全首页或 Phase 6 的整体插件化。私人漫游/雷达需要明确的、可选且可验证的 Source 能力契约；普通 Random 不足以声明该业务，也不能让不识别过滤器的旧 Provider 返回随机曲目后冒充成功。后续先明确兼容行为、声明与查询的验收条件，再迁移卡片和详情，不改变既有 v2 虚接口来“强制所有插件支持”。
+
+全量增量回归不替代从零构建、跨 OS/ABI 矩阵、真实服务器/物理音频或原生视觉。平台账号 UI 和最终 Legacy 删除仍按既定阶段推进。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
