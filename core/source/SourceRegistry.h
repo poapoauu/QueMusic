@@ -43,6 +43,11 @@ public:
 
     PluginManager *pluginManager() const;
     QList<SourceInstanceDescriptorV2> enabledInstances() const;
+    // Host-only presentation snapshots. Never create sessions or invoke plugin
+    // code from getters; execution must still revalidate live capabilities.
+    std::optional<SourceInstanceDescriptorV2> presentationInstance(const MediaRefV2 &media) const;
+    ActionAvailabilityV2 presentationAction(const MediaRefV2 &media, SourceActionV2 action,
+                                          const ActionAvailabilityV2 &mediaAction) const;
     // Borrowed pointer. The registry owns every returned session and its plugin lease.
     IMusicSourceSessionV2 *sessionFor(const QString &sourceInstanceId);
     bool enableInstance(const QString &sourceInstanceId);
@@ -67,6 +72,10 @@ private:
         QObject *sessionIdentity = nullptr;
         PluginLease lease;
         QString packageId;
+        SourceSessionStateV2 presentationState = SourceSessionStateV2::Closed;
+        QHash<SourceActionV2, ActionAvailabilityV2> presentationActions;
+        quint64 presentationRevision = 0;
+        bool presentationReading = false;
         QSet<QUuid> activeRequests;
         QPointer<SourceContentEventsV1> contentEvents;
         QMetaObject::Connection contentChangedConnection;
@@ -92,6 +101,7 @@ private:
     void invalidateInstanceCreation(const QString &sourceInstanceId);
     void handleExternalDestruction(const QString &sourceInstanceId, QObject *session);
     bool closeEntry(const QString &sourceInstanceId, bool notify);
+    void refreshPresentationCapabilities(const QString &sourceInstanceId, QObject *session);
     void bindContentEvents(const QString &sourceInstanceId, IMusicSourceSessionV2 *session);
     bool contentBindingIsCurrent(const QString &sourceInstanceId, QObject *session,
                                  SourceContentEventsV1 *events) const;

@@ -2,16 +2,36 @@
 
 #include "SourceAccountStore.h"
 #include "v2/IMusicSourcePluginV2.h"
+#include "v2/ISourceProvidersV2.h"
 #include "extensions/content-events/v1/ISourceContentEventsProviderV1.h"
 #include "extensions/content-events/v1/SourceContentEventsV1.h"
 
 #include <QVariantMap>
+#include <QRegularExpression>
+#include <QScopeGuard>
 
 #include <algorithm>
 #include <memory>
 #include <utility>
 
 namespace {
+
+ActionAvailabilityV2 ownedPresentationAction(const ActionAvailabilityV2 &value)
+{
+    auto result = intersectActionAvailabilityV2({value});
+    static const QRegularExpression reasonPattern(QStringLiteral("^[A-Za-z][A-Za-z0-9_.-]{0,127}$"));
+    result.reasonKey = reasonPattern.match(result.reasonKey).hasMatch()
+        ? QString(result.reasonKey.constData(), result.reasonKey.size()) : QString{};
+    // Normalization admits only built-in scalar constraints. Do not retain
+    // QStringLiteral keys or custom QVariant metatypes from unloadable code.
+    QVariantMap constraints;
+    if (result.constraints.contains(QStringLiteral("sameSourceOnly")))
+        constraints.insert(QStringLiteral("sameSourceOnly"), result.constraints.value(QStringLiteral("sameSourceOnly")).toBool());
+    if (result.constraints.contains(QStringLiteral("maxBitrate")))
+        constraints.insert(QStringLiteral("maxBitrate"), result.constraints.value(QStringLiteral("maxBitrate")).toDouble());
+    result.constraints = std::move(constraints);
+    return result;
+}
 
 bool sessionOwnsEvents(QObject *session, SourceContentEventsV1 *events)
 {
@@ -179,6 +199,9 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
         lease = {};
         return nullptr;
     }
+    // Session ownership may be retired by any later plugin/snapshot callback.
+    // Keep the creation call stack and its plugin-backed temporaries callable.
+    const PluginLease callLease = lease;
 
     plugin = qobject_cast<IMusicSourcePluginV2 *>(m_plugins->pluginInstance(packageId));
     if (plugin == nullptr || !reservation->isCurrent()) {
@@ -241,6 +264,9 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
     QObject *const sessionIdentity = session.data();
     connect(session, &IMusicSourceSessionV2::capabilitiesChanged, this,
             [this, instanceId, sessionIdentity](const CapabilitySetV2 &) {
+                const QPointer<SourceRegistry> guard(this);
+                refreshPresentationCapabilities(instanceId, sessionIdentity);
+                if (!guard) return;
                 bool active = false;
                 {
                     const auto current = m_sessions.constFind(instanceId);
@@ -281,13 +307,26 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
         handleExternalDestruction(instanceId, sessionIdentity);
     });
     connect(session, &IMusicSourceSessionV2::stateChanged, this,
-            [this, instanceId, sessionIdentity](SourceSessionStateV2) {
+            [this, instanceId, sessionIdentity](SourceSessionStateV2 state) {
+                const QPointer<SourceRegistry> guard(this);
                 bool active = false;
                 {
-                    const auto current = m_sessions.constFind(instanceId);
-                    active = current != m_sessions.cend()
+                    auto current = m_sessions.find(instanceId);
+                    active = current != m_sessions.end() && current->session
                         && current->sessionIdentity == sessionIdentity;
+                    if (active) {
+                        ++current->presentationRevision;
+                        current->presentationActions.clear();
+                        current->presentationState = state;
+                    }
                 }
+                if (!active) return;
+                // A downgrade invalidates immediately, without querying the
+                // plugin again. A Ready notification seeds fresh capabilities.
+                if (state == SourceSessionStateV2::Ready) refreshPresentationCapabilities(instanceId, sessionIdentity);
+                if (!guard) return;
+                const auto current = m_sessions.constFind(instanceId);
+                active = current != m_sessions.cend() && current->session && current->sessionIdentity == sessionIdentity;
                 if (active) {
                     emit instanceChanged(instanceId);
                 }
@@ -312,11 +351,119 @@ IMusicSourceSessionV2 *SourceRegistry::sessionFor(const QString &instanceId)
         closeEntry(instanceId, true);
         return nullptr;
     }
+    // Some valid v2 plugins open synchronously without a state/capability
+    // notification. Seed their snapshot before publishing the new instance.
+    refreshPresentationCapabilities(instanceId, sessionIdentity);
+    if (!registryGuard || !session || !reservation->isCurrent()) return nullptr;
     emit instanceChanged(instanceId);
     if (registryGuard == nullptr || !reservation->isCurrent()) {
         return nullptr;
     }
     return session.data();
+}
+
+void SourceRegistry::refreshPresentationCapabilities(const QString &instanceId, QObject *identity)
+{
+    const QPointer<SourceRegistry> guard(this);
+    const QPointer<PluginManager> plugins(m_plugins);
+    QPointer<IMusicSourceSessionV2> session;
+    PluginLease keepCode;
+    QString package;
+    quint64 revision = 0;
+    {
+        auto entry = m_sessions.find(instanceId);
+        if (entry == m_sessions.end() || entry->sessionIdentity != identity || !entry->session) return;
+        session = entry->session;
+        keepCode = entry->lease; // Outlives reentrant close/destruction and plugin temporaries.
+        package = entry->packageId;
+        revision = ++entry->presentationRevision;
+        entry->presentationActions.clear();
+        entry->presentationState = SourceSessionStateV2::Closed;
+        // v2 providers may emit capabilitiesChanged while answering a read.
+        // Invalidate the outer revision, but do not recursively call them or
+        // schedule an endless retry loop. A later independent event can seed.
+        if (entry->presentationReading) return;
+        entry->presentationReading = true;
+    }
+    const auto readingGuard = qScopeGuard([guard, session, instanceId, identity] {
+        if (!guard || !session) return;
+        auto entry = guard->m_sessions.find(instanceId);
+        if (entry != guard->m_sessions.end() && entry->session == session && entry->sessionIdentity == identity)
+            entry->presentationReading = false;
+    });
+    const auto current = [&] {
+        if (!guard || !plugins || !session || !keepCode.isValid() || session->parent() != guard) return false;
+        const auto entry = guard->m_sessions.constFind(instanceId);
+        return entry != guard->m_sessions.cend() && entry->sessionIdentity == identity
+            && entry->session == session && entry->presentationRevision == revision;
+    };
+    if (!current()) return;
+    const auto state = session->state();
+    if (!current()) return;
+    m_sessions[instanceId].presentationState = state;
+    if (state != SourceSessionStateV2::Ready) return;
+    const auto account = accountForInstance(instanceId);
+    if (!account || !account->enabled || (!account->pluginPackageId.isEmpty() && account->pluginPackageId != package)) return;
+    const auto owner = session->identity();
+    if (!current() || owner.sourcePluginId != account->sourceId
+        || owner.sourceInstanceId != instanceId || owner.accountId != account->accountId) return;
+    const QPointer<QObject> root(plugins->pluginInstance(package));
+    auto *plugin = qobject_cast<IMusicSourcePluginV2 *>(root.data());
+    if (!plugin) return;
+    const auto descriptor = plugin->descriptor();
+    if (!current() || !root || plugins->pluginInstance(package) != root
+        || descriptor.sourceId != account->sourceId || descriptor.pluginPackageId != package) return;
+    const auto capabilities = session->capabilities();
+    if (!current()) return;
+    QHash<SourceActionV2, ActionAvailabilityV2> actions;
+    for (int i = 0; i <= int(SourceActionV2::DeleteBookmark); ++i) {
+        const auto action = SourceActionV2(i);
+        auto effective = intersectActionAvailabilityV2({descriptor.declaredActions.value(action),
+            capabilities.serverAction(action), capabilities.accountAction(action)});
+        const bool provider = action == SourceActionV2::Play ? bool(qobject_cast<IPlaybackProviderV2 *>(session.data()))
+            : action == SourceActionV2::Favorite || action == SourceActionV2::Unfavorite ? bool(qobject_cast<IFavoriteProviderV2 *>(session.data()))
+            : action == SourceActionV2::Download ? bool(qobject_cast<IDownloadProviderV2 *>(session.data())) : true;
+        if (!provider) effective = intersectActionAvailabilityV2({effective, {AvailabilityV2::Unsupported, {}, {}}});
+        actions.insert(action, ownedPresentationAction(effective));
+    }
+    if (current()) m_sessions[instanceId].presentationActions = std::move(actions);
+}
+
+std::optional<SourceInstanceDescriptorV2> SourceRegistry::presentationInstance(const MediaRefV2 &media) const
+{
+    const auto account = accountForInstance(media.sourceInstanceId);
+    if (!account || account->sourceId != media.sourcePluginId || account->accountId != media.accountId) return std::nullopt;
+    SourceInstanceDescriptorV2 result;
+    result.pluginPackageId = packageIdForSource(account->sourceId);
+    result.sourceId = account->sourceId;
+    result.sourceInstanceId = media.sourceInstanceId;
+    result.accountId = account->accountId;
+    result.displayName = account->displayName;
+    result.enabled = account->enabled;
+    const auto entry = m_sessions.constFind(media.sourceInstanceId);
+    if (m_plugins && entry != m_sessions.cend() && entry->session && entry->session->parent() == this
+        && entry->lease.isValid() && entry->packageId == result.pluginPackageId
+        && (account->pluginPackageId.isEmpty() || account->pluginPackageId == entry->packageId))
+        result.state = entry->presentationState;
+    return result;
+}
+
+ActionAvailabilityV2 SourceRegistry::presentationAction(const MediaRefV2 &media, SourceActionV2 action,
+                                                       const ActionAvailabilityV2 &mediaAction) const
+{
+    ActionAvailabilityV2 source{AvailabilityV2::Unavailable, QStringLiteral("music.actionUnavailable"), {}};
+    const auto owner = presentationInstance(media);
+    const auto entry = m_sessions.constFind(media.sourceInstanceId);
+    if (owner && owner->enabled && owner->state == SourceSessionStateV2::Ready && entry != m_sessions.cend())
+        source = entry->presentationActions.value(action, source);
+    auto result = ownedPresentationAction(intersectActionAvailabilityV2({source, mediaAction}));
+    // The current Core/Router cannot enforce bitrate restrictions. Presentation
+    // must not advertise an action that its live execution will reject.
+    if (result.state == AvailabilityV2::Available && result.constraints.contains(QStringLiteral("maxBitrate"))) {
+        result.state = AvailabilityV2::Unavailable;
+        result.reasonKey = QStringLiteral("music.actionConstraintsUnsupported");
+    }
+    return result;
 }
 
 bool SourceRegistry::enableInstance(const QString &instanceId)

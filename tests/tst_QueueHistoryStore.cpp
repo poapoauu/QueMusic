@@ -66,6 +66,27 @@ static bool writeBytes(const QString &path, const QByteArray &bytes) {
 class QueueHistoryStoreTest : public QObject {
     Q_OBJECT
 private slots:
+    void historyReplayTracksLiveRightsWithoutChangingTrustedKeys() {
+        Harness h; QVERIFY(h.init()); auto *session=h.registry.sessionFor("task12c/home"); QVERIFY(session);
+        auto entry=occurrence("task12c","task12c/home","42"); entry.ref.accountId="home";
+        QueueHistorySnapshot snapshot; snapshot.queue={entry};
+        snapshot.history={{entry.occurrenceId,entry.ref,"Track",{"Artist"},"Album",10000,QDateTime::currentDateTimeUtc()}};
+        auto bytes=QueueHistoryCodec::encode(snapshot); QVERIFY(bytes); QVERIFY(writeBytes(h.path(),*bytes));
+        QueueHistoryStore store(&h.coordinator,h.path()); QVERIFY(store.loadAndAttach());
+        const auto key=store.entries().first().toMap().value("key").toString();
+        QVERIFY(store.entries().first().toMap().value("replayable").toBool());
+        QSignalSpy changed(&store,&QueueHistoryStore::historyChanged);
+        session->setProperty("missingAccount",true); emit session->capabilitiesChanged({});
+        QVERIFY(!store.entries().first().toMap().value("replayable").toBool());
+        QVERIFY(!store.playEntry(key)); QVERIFY(!store.playLatest()); QCOMPARE(h.sink.plays,0);
+        QTRY_VERIFY(!changed.isEmpty());
+        QCOMPARE(store.entries().first().toMap().value("key").toString(),key);
+        session->setProperty("missingAccount",false); emit session->capabilitiesChanged({});
+        QVERIFY(store.entries().first().toMap().value("replayable").toBool());
+        QVERIFY(store.playEntry(key)); QTRY_COMPARE(h.sink.plays,1);
+        QCOMPARE(h.coordinator.currentOccurrence(),entry.occurrenceId);
+        QTRY_COMPARE(store.history().size(),2);
+    }
     void replayRevalidatesTrustedQueueAfterStopMutation() {
         for (int mutation = 0; mutation < 3; ++mutation) {
             Harness h; QVERIFY(h.init());

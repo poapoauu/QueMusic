@@ -134,8 +134,15 @@ struct PlaybackCoordinator::Active {
 PlaybackCoordinator::PlaybackCoordinator(SourceRegistry *sources,PlaybackSink *sink,QObject *parent)
     :QObject(parent),m_sources(sources),m_sink(sink) {
     if(sink)connect(sink,&QObject::destroyed,this,[this] { if(auto a=m_active)end(a,QStringLiteral("music.playbackUnavailable")); });
-    if(sources)connect(sources,&QObject::destroyed,this,[this] { if(auto a=m_active)end(a,QStringLiteral("music.playbackUnavailable")); });
+    if(sources)connect(sources,&QObject::destroyed,this,[this] {
+        const QPointer<PlaybackCoordinator> guard(this);
+        if(auto a=m_active)end(a,QStringLiteral("music.playbackUnavailable"));
+        if(guard)QTimer::singleShot(0,this,[this] { emit queueChanged(); });
+    });
     if(sources)connect(sources,&SourceRegistry::instanceChanged,this,[this](const QString &) {
+        QTimer::singleShot(0,this,[this] { emit queueChanged(); });
+    });
+    if(sources)connect(sources,&SourceRegistry::instanceCapabilitiesChanged,this,[this](const QString &) {
         QTimer::singleShot(0,this,[this] { emit queueChanged(); });
     });
 }
@@ -149,24 +156,15 @@ QVariantMap PlaybackCoordinator::publicEntry(const std::shared_ptr<Entry> &entry
     QString label=entry->ref.sourcePluginId;
     bool available=false;
     if(m_sources) {
-        int matches=0;
-        for(const auto &source:m_sources->enabledInstances()) {
-            if(source.sourceInstanceId!=entry->ref.sourceInstanceId)continue;
-            ++matches;
-            if(source.sourceId==entry->ref.sourcePluginId && source.accountId==entry->ref.accountId
-                && !source.displayName.isEmpty())label=source.displayName;
-            if(source.sourceId==entry->ref.sourcePluginId && source.accountId==entry->ref.accountId
-                && source.enabled && source.state==SourceSessionStateV2::Ready) {
-                available=true;
-            }
-        }
-        if(matches!=1)available=false;
+        const auto source=m_sources->presentationInstance(entry->ref);
+        if(source&&!source->displayName.isEmpty())label=source->displayName;
+        available=m_sources->presentationAction(entry->ref,SourceActionV2::Play,
+            entry->actions.value(SourceActionV2::Play)).state==AvailabilityV2::Available;
     }
     out.insert("sourceLabel",label);
     // Presentation only: avoid invoking plugin capability code from a QML
     // property read. allowed() rechecks current rights before resolving media.
-    out.insert("unavailable",!available
-        || entry->actions.value(SourceActionV2::Play).state!=AvailabilityV2::Available);
+    out.insert("unavailable",!available);
     return out;
 }
 QVariantList PlaybackCoordinator::queue() const { QVariantList out; for(const auto &e:m_queue)out.append(publicEntry(e)); return out; }

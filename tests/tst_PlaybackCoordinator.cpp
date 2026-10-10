@@ -13,7 +13,8 @@ public:
     SourceIdentityV2 identity() const override {
         return {"task12c", config.sourceInstanceId, property("wrongIdentity").toBool() ? "foreign" : config.accountId, {}};
     }
-    SourceSessionStateV2 state() const override { return status; }
+    SourceSessionStateV2 state() const override { emit const_cast<PlaybackSession *>(this)->stateRead(); return status; }
+    Q_INVOKABLE void setStatus(int state) { status=SourceSessionStateV2(state); emit stateChanged(status); }
     CapabilitySetV2 capabilities() const override {
         CapabilitySetV2 c;
         for (auto a : {SourceActionV2::Play, SourceActionV2::Scrobble}) {
@@ -21,7 +22,10 @@ public:
             if (!property("missingAccount").toBool()) c.accountActions[a] = {AvailabilityV2::Available, {}, {}};
         }
         if (property("denyScrobble").toBool()) c.accountActions[SourceActionV2::Scrobble] = {AvailabilityV2::Forbidden, {}, {}};
+        const bool revoke=property("revokeDuringRead").toBool();
+        QPointer<PlaybackSession> guard(const_cast<PlaybackSession *>(this));
         emit const_cast<PlaybackSession *>(this)->capabilitiesRead();
+        if(guard&&revoke)emit guard->capabilitiesChanged({});
         return c;
     }
     QUuid open() override { auto id=QUuid::createUuid(); emit requestStarted(id); emit actionCompleted(id,{}); return id; }
@@ -46,6 +50,7 @@ public:
     }
 signals:
     void capabilitiesRead();
+    void stateRead();
 };
 class ScrobbleSession : public PlaybackSession, public IScrobbleProviderV2 {
     Q_OBJECT
@@ -152,9 +157,107 @@ static QueueOccurrence savedItem(QString account="home") {
     out.playableAtEnqueue=true;
     return out;
 }
+class SnapshotReadObserver : public QObject {
+    Q_OBJECT
+public:
+    std::function<void()> callback;
+public slots:
+    void onRead() { const auto copy=callback; if(copy)copy(); }
+};
 class PlaybackCoordinatorTest : public QObject {
     Q_OBJECT
 private slots:
+    void queuePresentationUsesLiveLayerSnapshotsWithoutPluginCalls() {
+        Harness h; QVERIFY(h.init()); auto *home=h.session(), *bare=h.session("bare");
+        QVERIFY(home&&bare);
+        auto first=savedItem(), second=savedItem("bare"), denied=first;
+        denied.occurrenceId=QUuid::createUuid(); denied.playableAtEnqueue=false;
+        QVERIFY(h.coordinator.restoreQueue({first,second,denied}));
+        QSignalSpy capabilityReads(home,SIGNAL(capabilitiesRead()));
+        QSignalSpy stateReads(home,SIGNAL(stateRead()));
+        QSignalSpy descriptorReads(h.root(),SIGNAL(descriptorRead()));
+        QSignalSpy changed(&h.coordinator,&PlaybackCoordinator::queueChanged);
+        const auto unavailable=[&](int index) { return h.coordinator.queue().at(index).toMap().value("unavailable").toBool(); };
+        QVERIFY(!unavailable(0)); QVERIFY(!unavailable(1)); QVERIFY(unavailable(2));
+        QCOMPARE(capabilityReads.size(),0); QCOMPARE(stateReads.size(),0); QCOMPARE(descriptorReads.size(),0);
+        for(const auto *property:{"missingServer","missingAccount"}) {
+            home->setProperty(property,true); emit home->capabilitiesChanged({});
+            QVERIFY(unavailable(0)); QVERIFY(!unavailable(1)); QVERIFY(unavailable(2));
+            home->setProperty(property,false); emit home->capabilitiesChanged({});
+            QVERIFY(!unavailable(0));
+        }
+        h.root()->setProperty("missingPlay",true); emit home->capabilitiesChanged({});
+        QVERIFY(unavailable(0)); QVERIFY(!unavailable(1)); // Other snapshot is not spuriously overwritten.
+        emit bare->capabilitiesChanged({}); QVERIFY(unavailable(1));
+        h.root()->setProperty("missingPlay",false); emit home->capabilitiesChanged({}); emit bare->capabilitiesChanged({});
+        for(const QVariantMap &constraints:{QVariantMap{{"unknown",true}},QVariantMap{{"maxBitrate",128}}}) {
+            home->setProperty("constraints",constraints); emit home->capabilitiesChanged({});
+            QVERIFY(unavailable(0)); QVERIFY(!unavailable(1));
+        }
+        home->setProperty("constraints",QVariantMap{}); emit home->capabilitiesChanged({});
+        QVERIFY(!unavailable(0)); QVERIFY(unavailable(2));
+        QVERIFY(QMetaObject::invokeMethod(home,"setStatus",Q_ARG(int,int(SourceSessionStateV2::Connecting))));
+        QVERIFY(unavailable(0));
+        QVERIFY(QMetaObject::invokeMethod(home,"setStatus",Q_ARG(int,int(SourceSessionStateV2::Ready))));
+        QVERIFY(!unavailable(0));
+        const auto reads=capabilityReads.size(), states=stateReads.size(), descriptors=descriptorReads.size();
+        for(int i=0;i<10;++i) { h.coordinator.queue(); h.coordinator.currentItem(); }
+        QCOMPARE(capabilityReads.size(),reads); QCOMPARE(stateReads.size(),states); QCOMPARE(descriptorReads.size(),descriptors);
+        QTRY_VERIFY(!changed.isEmpty()); QCOMPARE(h.sink.plays,0);
+        QCOMPARE(home->property("resolutions").toInt(),0);
+        QCOMPARE(h.coordinator.exportQueue().first().occurrenceId,first.occurrenceId);
+        QVERIFY(h.coordinator.exportQueue().first().playableAtEnqueue);
+    }
+    void snapshotRevisionRejectsReentrantOlderGrant() {
+        Harness h; QVERIFY(h.init()); auto *session=h.session(); QVERIFY(session);
+        QVERIFY(h.coordinator.restoreQueue({savedItem()}));
+        SnapshotReadObserver observer;
+        QVERIFY(connect(session,SIGNAL(capabilitiesRead()),&observer,SLOT(onRead())));
+        observer.callback=[&] {
+            observer.callback={}; session->setProperty("missingAccount",true);
+            emit session->capabilitiesChanged({});
+        };
+        emit session->capabilitiesChanged({});
+        QVERIFY(h.coordinator.queue().first().toMap().value("unavailable").toBool());
+        session->setProperty("missingAccount",false); emit session->capabilitiesChanged({});
+        QVERIFY(!h.coordinator.queue().first().toMap().value("unavailable").toBool());
+    }
+    void notificationsDuringEveryCapabilityReadDoNotRecurseOrGrant() {
+        Harness h; QVERIFY(h.init()); auto *session=h.session(); QVERIFY(session);
+        QVERIFY(h.coordinator.restoreQueue({savedItem()}));
+        QSignalSpy reads(session,SIGNAL(capabilitiesRead()));
+        session->setProperty("revokeDuringRead",true); emit session->capabilitiesChanged({});
+        QCOMPARE(reads.size(),1);
+        QVERIFY(h.coordinator.queue().first().toMap().value("unavailable").toBool());
+        QCoreApplication::processEvents(); QCOMPARE(reads.size(),1); // No runaway deferred retries either.
+        session->setProperty("revokeDuringRead",false); emit session->capabilitiesChanged({});
+        QCOMPARE(reads.size(),2);
+        QVERIFY(!h.coordinator.queue().first().toMap().value("unavailable").toBool());
+    }
+    void snapshotReadKeepsCodeAliveAcrossCloseOrOwnerDestruction() {
+        for(bool destroyOwner:{false,true}) {
+            Harness h; QVERIFY(h.init());
+            auto registry=std::make_unique<SourceRegistry>(&h.plugins,&h.accounts);
+            QPointer<IMusicSourceSessionV2> session=registry->sessionFor("task12c/home"); QVERIFY(session);
+            PlaybackCoordinator coordinator(registry.get(),&h.sink);
+            QVERIFY(coordinator.restoreQueue({savedItem()}));
+            QSignalSpy changed(&coordinator,&PlaybackCoordinator::queueChanged);
+            QCoreApplication::processEvents(); changed.clear();
+            SnapshotReadObserver observer; PluginOperationResult unload=PluginOperationResult::Success;
+            QVERIFY(connect(session,SIGNAL(capabilitiesRead()),&observer,SLOT(onRead())));
+            observer.callback=[&] {
+                observer.callback={};
+                if(destroyOwner)registry.reset(); else QVERIFY(registry->closeInstance("task12c/home"));
+                unload=h.plugins.unload("org.quemusic.source.task12c");
+            };
+            emit session->capabilitiesChanged({});
+            QVERIFY(!session); QCOMPARE(unload,PluginOperationResult::Busy);
+            QVERIFY(coordinator.queue().first().toMap().value("unavailable").toBool());
+            QTRY_VERIFY(!changed.isEmpty());
+            QCOMPARE(h.plugins.plugin("org.quemusic.source.task12c").activeLeases,0);
+            QCOMPARE(h.plugins.unload("org.quemusic.source.task12c"),PluginOperationResult::Success);
+        }
+    }
     void restoresDuplicateOccurrencesAndRemovesById() {
         Harness h; QVERIFY(h.init());
         auto first=savedItem(), second=savedItem();
