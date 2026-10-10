@@ -255,7 +255,11 @@ QUuid PlaybackCoordinator::playQueueEntry(int index) {
     if(m_destroying||index<0||index>=m_queue.size())return {};
     const auto entry=m_queue[index]; const QPointer<PlaybackCoordinator> guard(this);
     stop(); if(!guard||m_active)return {}; // A sink stop may have started a newer play.
-    auto a=std::make_shared<Active>(); a->entry=entry; a->index=index; a->registry=m_sources; a->sink=m_sink;
+    // stop() invokes arbitrary sink/provider callbacks. The selected occurrence
+    // may have been removed, replaced, or shifted; never reuse the old slot.
+    const int currentIndex=m_queue.indexOf(entry);
+    if(currentIndex<0)return {};
+    auto a=std::make_shared<Active>(); a->entry=entry; a->index=currentIndex; a->registry=m_sources; a->sink=m_sink;
     m_active=a; const auto id=a->generation; notifyCurrent();
     resolve(a);
     return id;

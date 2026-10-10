@@ -389,6 +389,56 @@ private slots:
         QVERIFY(reopened.isNull()); QCOMPARE(s->property("resolutions").toInt(),1);
         QTRY_COMPARE(h.plugins.plugin("org.quemusic.source.task12c").activeLeases,1);
     }
+    void switchingRevalidatesOccurrenceAfterStopCallbacks() {
+        for (int mutation=0;mutation<3;++mutation) {
+            Harness h; QVERIFY(h.init());
+            auto first=savedItem(), selected=savedItem(), last=savedItem("bare");
+            QVERIFY(h.coordinator.restoreQueue({first,selected,last}));
+            QVERIFY(!h.coordinator.playQueueEntry(0).isNull()); QTRY_COMPARE(h.sink.plays,1);
+            h.sink.onStop=[&] {
+                h.sink.onStop={};
+                if(mutation==0) QVERIFY(h.coordinator.removeOccurrence(first.occurrenceId));
+                else if(mutation==1) QVERIFY(h.coordinator.removeOccurrence(selected.occurrenceId));
+                else {
+                    auto replacement=selected; replacement.ref=last.ref;
+                    QVERIFY(h.coordinator.restoreQueue({first,replacement,last}));
+                }
+            };
+            const auto generation=h.coordinator.playQueueEntry(1);
+            if(mutation==0) {
+                QVERIFY(!generation.isNull()); QTRY_COMPARE(h.sink.plays,2);
+                QCOMPARE(h.coordinator.currentOccurrence(),selected.occurrenceId);
+                QCOMPARE(h.coordinator.currentIndex(),0);
+            } else {
+                QVERIFY(generation.isNull()); QVERIFY(h.coordinator.currentGeneration().isNull());
+                QCoreApplication::processEvents(); QCOMPARE(h.sink.plays,1);
+                QCOMPARE(h.session()->property("resolutions").toInt(),1);
+                QCOMPARE(h.session("bare")->property("resolutions").toInt(),0);
+            }
+        }
+    }
+    void newerPlaybackFromStopWinsOverTheOldSelection() {
+        Harness h; QVERIFY(h.init());
+        auto first=savedItem(), selected=savedItem();
+        QVERIFY(h.coordinator.restoreQueue({first,selected}));
+        QVERIFY(!h.coordinator.playQueueEntry(0).isNull()); QTRY_COMPARE(h.sink.plays,1);
+        QUuid newer;
+        h.sink.onStop=[&] { h.sink.onStop={}; newer=h.coordinator.playQueueEntry(0); };
+        QVERIFY(h.coordinator.playQueueEntry(1).isNull()); QVERIFY(!newer.isNull());
+        QTRY_COMPARE(h.sink.plays,2);
+        QCOMPARE(h.coordinator.currentGeneration(),newer);
+        QCOMPARE(h.coordinator.currentOccurrence(),first.occurrenceId);
+    }
+    void deletionFromStopRejectsThePendingSwitch() {
+        Harness h; QVERIFY(h.init());
+        auto coordinator=std::make_unique<PlaybackCoordinator>(&h.registry,&h.sink);
+        QVERIFY(coordinator->restoreQueue({savedItem(),savedItem()}));
+        QVERIFY(!coordinator->playQueueEntry(0).isNull()); QTRY_COMPARE(h.sink.plays,1);
+        h.sink.onStop=[&] { h.sink.onStop={}; coordinator.reset(); };
+        auto *const original=coordinator.get();
+        QVERIFY(original->playQueueEntry(1).isNull()); QVERIFY(!coordinator);
+        QCoreApplication::processEvents(); QCOMPARE(h.sink.plays,1);
+    }
 };
 QTEST_GUILESS_MAIN(PlaybackCoordinatorTest)
 #endif

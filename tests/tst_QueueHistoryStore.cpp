@@ -18,9 +18,10 @@
 class StoreSink final : public PlaybackSink {
 public:
     int plays = 0;
+    std::function<void()> onStop;
     bool prepare(StreamDescriptorV2, QUuid) override { return true; }
     void play(QUuid) override { ++plays; }
-    void stop(QUuid) override {}
+    void stop(QUuid) override { const auto callback = onStop; if (callback) callback(); }
 };
 class StoreSecrets final : public ISecretStore {
 public:
@@ -65,6 +66,42 @@ static bool writeBytes(const QString &path, const QByteArray &bytes) {
 class QueueHistoryStoreTest : public QObject {
     Q_OBJECT
 private slots:
+    void replayRevalidatesTrustedQueueAfterStopMutation() {
+        for (int mutation = 0; mutation < 3; ++mutation) {
+            Harness h; QVERIFY(h.init());
+            auto first = occurrence("task12c", "task12c/home", "first"); first.ref.accountId = "home";
+            auto selected = first; selected.occurrenceId = QUuid::createUuid(); selected.ref.entityId = "selected";
+            QueueHistorySnapshot snapshot; snapshot.queue = {first, selected};
+            snapshot.history = {{selected.occurrenceId, selected.ref, "Selected", {"Artist"}, "Album",
+                                 10000, QDateTime::currentDateTimeUtc()}};
+            const auto bytes = QueueHistoryCodec::encode(snapshot); QVERIFY(bytes); QVERIFY(writeBytes(h.path(), *bytes));
+            QueueHistoryStore store(&h.coordinator, h.path()); QVERIFY(store.loadAndAttach());
+            const auto key = store.entries().first().toMap().value("key").toString();
+            QVERIFY(!h.coordinator.playQueueEntry(0).isNull()); QTRY_COMPARE(h.sink.plays, 1);
+            QTRY_COMPARE(store.history().size(), 2);
+            h.sink.onStop = [&] {
+                h.sink.onStop = {};
+                if (mutation == 0) QVERIFY(h.coordinator.removeOccurrence(first.occurrenceId));
+                else if (mutation == 1) QVERIFY(h.coordinator.removeOccurrence(selected.occurrenceId));
+                else {
+                    auto replacement = selected; replacement.ref.entityId = "replacement";
+                    QVERIFY(h.coordinator.restoreQueue({first, replacement}));
+                }
+            };
+            QCOMPARE(store.playEntry(key), mutation == 0);
+            if (mutation == 0) {
+                QTRY_COMPARE(h.sink.plays, 2);
+                QCOMPARE(h.coordinator.currentOccurrence(), selected.occurrenceId);
+                QCOMPARE(h.coordinator.currentIndex(), 0);
+                QTRY_COMPARE(store.history().size(), 3);
+                QCOMPARE(store.history().first().ref, selected.ref);
+            } else {
+                QCoreApplication::processEvents(); QCOMPARE(h.sink.plays, 1);
+                QCOMPARE(store.history().size(), 2);
+                QVERIFY(!store.playEntry(key));
+            }
+        }
+    }
     void safeHistoryKeysReplayOnlyMatchingTrustedOccurrences() {
         Harness h; QVERIFY(h.init());
         auto *session = h.registry.sessionFor("task12c/home"); QVERIFY(session);
