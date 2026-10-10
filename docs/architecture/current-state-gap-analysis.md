@@ -4,6 +4,8 @@
 > 原始审计日期：2026-09-17；进展复核：2026-10-03
 > 设计基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 
+最新复核（2026-10-10）：Phase 6 动态 Source UI 阶段代码出口完成，全目标增量构建、75/75 CTest、真应用隔离空配置 Cocoa smoke 通过；范围及仍未验收项见[Phase 6 出口报告](phase-6-exit-report.md)。以下早期状态与推荐阶段编号保留为历史快照，后续阶段以最终方案 Phase 7 酷狗、Phase 8 网易、Phase 9 Legacy 删除为准；不能将代码出口等同于真实服务/实际音频/跨平台发布验收。
+
 当前进展说明：本文件第 1–4 节的分支拓扑和 40/40 测试数是 **2026-09-17 的历史快照**，不再代表当前开发分支。`codex/plugin-ui-api-v1` 在原有 v2 上完成 Plugin UI API、Plugin Settings、Local Source Plugin，以及 Phase 4 的不透明身份、统一队列/历史持久化和恢复。2026-10-03 本机 Debug 全量构建及 CTest **69/69** 通过；Phase 4 证据见[验收记录](phase-4-queue-history-identity-record.md)。Phase 5/6、其余平台迁移及跨平台发行验证仍未完成，不能将此视为最终架构完成。
 
 ## 1. 结论摘要
@@ -704,6 +706,14 @@ Coordinator 新测试覆盖移位与清理的播放／解析／通知保持和�
 生产函数测试覆盖三类切歌、末项回绕、随机合法目标、非法索引／队列、缺依赖、停止后的 Source、模式标记迟到及 Legacy 行为，并检查桌面控件转发。首次联合回归中旧源码 guard 字面量断言已改为新分支／共用 guard／occurrence 接线断言，运行行为断言保留。全目标增量构建、专项目标重建、五项联合复跑及全部 74 项 CTest 通过（62.41 秒）。
 
 Source SDK v2／Source 插件 ABI／Plugin UI API／磁盘 schema 不变；下一项为 Phase 6 全量出口扫描及 UI smoke。真实服务、物理音频、原生视觉和跨平台 ABI 验收、Phase 7／8 平台插件及 Phase 9 Legacy 删除仍未完成。
+
+### 后续增量：Phase 6 阶段代码出口与真应用 smoke
+
+搜索加载改为 Host searchLoading，QLoadSign 去除 MusicApi 监听；File 去 Legacy 名称高亮；Source 停播队列保持 sticky 模式。实际 Cocoa/Metal 应用启动暴露的 Host ThemeBinding 私有类型导入及 SearchCard 字体属性错误已修复，未增加插件对私有 QML 的依赖。
+
+新增生产页面无平台分派回归、加载生命周期测试、测试构建专用窗口 driver 与隔离守卫。全目标增量构建和最终 75/75 CTest 通过；真应用空配置生成 9 帧、errors 为空，本地目录标签经真实窗口鼠标事件验证。Source SDK v2/Source 插件 ABI/Plugin UI API/磁盘 schema 不变，新增 Host 属性需 C++/QML 同步构建。
+
+最终方案 Phase 6 的动态 UI 代码出口已完成，详见[报告](phase-6-exit-report.md)和[运行说明](phase-6-ui-smoke.md)。此结果不包含真实服务、实际音频、完整原生业务流程和跨平台发布认证；酷狗/网易账号业务插件化及 Legacy 删除仍按最终方案 Phase 7–9 执行。
 
 ## 10. 当前工作树注意事项
 

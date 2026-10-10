@@ -71,6 +71,7 @@ private:
 
 class FakeAdapter final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool searchLoading MEMBER searchLoading NOTIFY searchStatusChanged)
     Q_PROPERTY(QObject *favoriteSongs READ favoriteSongs CONSTANT)
     Q_PROPERTY(QObject *favoriteLists READ favoriteLists CONSTANT)
     Q_PROPERTY(QObject *favoriteArtists READ favoriteArtists CONSTANT)
@@ -87,6 +88,7 @@ class FakeAdapter final : public QObject {
     Q_PROPERTY(QString selectedSourceInstanceId READ selectedSourceInstanceId
                WRITE setSelectedSourceInstanceId NOTIFY selectedSourceInstanceIdChanged)
 public:
+    bool searchLoading = false;
     FakeAdapter()
         : songs(QVariantList{row(QStringLiteral("Song"), QStringLiteral("favorite-songs")),
                              row(QStringLiteral("Unavailable"), QStringLiteral("favorite-songs"),
@@ -264,6 +266,7 @@ signals:
     void sectionDispatched(int page, QString section, bool retry);
     void favoriteStatusChanged();
     void categoryNavigationChanged();
+    void searchStatusChanged();
     void browseRequested();
     void selectedSourceInstanceIdChanged();
     void sourceOptionsChanged();
@@ -616,6 +619,26 @@ private slots:
         QVERIFY(unsupportedTool0.toString().isEmpty());
         QVERIFY(unsupportedTool1.toString().isEmpty());
         QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
+    }
+
+    void searchIndicatorUsesOnlyHostSearchState()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeAdapter adapter; QmlDiagnosticCapture diagnostics; QString error;
+        auto page=load(engine,QStringLiteral("pages/SearchPage.qml"),&adapter,&error);
+        QVERIFY2(page,qPrintable(error));
+        auto *indicator=page->findChild<QObject *>("searchLoadingIndicator"); QVERIFY(indicator);
+        QVERIFY(!indicator->property("loader").toBool());
+        adapter.searchLoading=true; emit adapter.searchStatusChanged();
+        QTRY_VERIFY(indicator->property("loader").toBool());
+        QVERIFY(indicator->property("visible").toBool());
+        adapter.searchLoading=false; emit adapter.searchStatusChanged();
+        adapter.searchLoading=true; emit adapter.searchStatusChanged();
+        QTest::qWait(300); QVERIFY(indicator->property("visible").toBool());
+        QVERIFY(page->setProperty("musicAdapter",QVariant::fromValue<QObject *>(nullptr)));
+        QTRY_VERIFY(!indicator->property("loader").toBool());
+        QTRY_VERIFY(!indicator->property("visible").toBool());
+        QCOMPARE(context.musicApi.legacySearches,0);
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(),qPrintable(diagnostics.runtimeErrors()));
     }
 
     void searchUsesAdapterScopeAndNeverFallsBackToLegacy()

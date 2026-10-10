@@ -218,6 +218,8 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
     connect(m_hub->favorites(), &MusicPageModel::errorChanged,
             this, &OriginalUiMusicAdapter::favoriteStatusChanged);
     observe(m_hub->searchResults());
+    connect(m_hub->searchResults(), &MusicPageModel::stateChanged,
+            this, &OriginalUiMusicAdapter::searchStatusChanged);
     connect(m_hub->directoryLibrary(), &DirectoryLibraryController::changed,
             this, [this] { rebuildDirectories(); emit directoryChanged(); });
     connect(m_hub, &MusicHub::sourceOptionsChanged, this, &OriginalUiMusicAdapter::sourceOptionsChanged);
@@ -234,6 +236,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         clearPresentationState();
         emit discoveryStatusChanged();
         emit categoryStatusChanged();
+        emit searchStatusChanged();
         emit categoryNavigationChanged();
         emit directoryChanged();
         emit sourceOptionsChanged();
@@ -523,6 +526,10 @@ QString OriginalUiMusicAdapter::categoryState() const
     case PageLoadStateV2::Idle: case PageLoadStateV2::Empty: return QStringLiteral("empty");
     }
     return QStringLiteral("empty");
+}
+bool OriginalUiMusicAdapter::searchLoading() const
+{
+    return m_hub && m_hub->searchResults()->state() == PageLoadStateV2::Loading;
 }
 bool OriginalUiMusicAdapter::categoryCanNavigateBack() const
 {

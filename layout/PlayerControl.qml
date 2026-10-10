@@ -10,6 +10,7 @@ import 'qrc:/QueMusic/components'
 //底部控制栏
 Rectangle {
     id: musicControlMin
+    objectName: "originalPlayerControl"
     y: parent.height - 78 + controlMaxLoader.hideHeight
     height: 78
     color: Style.themes.primaryBlurColor
@@ -800,8 +801,9 @@ Rectangle {
 
     PlayList {
         id: playList
+        objectName: "originalPlaybackQueue"
         model: playListModel
-        secureMode: window.securePlaybackActive || playList.showRestoredQueue
+        secureMode: window.sourceLyricsMode || window.securePlaybackActive || playList.showRestoredQueue
         secureAvailable: window.secureQueueAvailable
         secureModel: playbackCoordinator ? playbackCoordinator.queue : []
     }

@@ -86,6 +86,8 @@ Item {
                 color: Style.themes.fontColor
                 QLoadSign {
                     id: searchLoad
+                    objectName: "searchLoadingIndicator"
+                    loader: !!(searchPage.musicAdapter && searchPage.musicAdapter.searchLoading)
                     x: parent.width
                     y: 2
                 }

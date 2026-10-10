@@ -1,4 +1,6 @@
 import QtQuick
+// Host-only bridge: the adapter and original Style are private Host types.
+import QueMusic 1.0
 import QueMusic.PluginUI 1.0
 
 Item {

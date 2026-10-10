@@ -7,6 +7,7 @@ import 'qrc:/QueMusic/pages'
 // 主体内容区域
 Rectangle {
     id: mainContent
+    objectName: "originalMainContent"
     property var musicAdapter: null
     property var playbackAdapter: null
     property var historyAdapter: null

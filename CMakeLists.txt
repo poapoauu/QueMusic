@@ -1631,6 +1631,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE quemusic_legacy_local_folder_migra
 
 if(BUILD_TESTING)
     add_executable(quemusic_queue_history_codec_test tests/tst_QueueHistoryCodec.cpp)
+    target_sources(${PROJECT_NAME} PRIVATE tests/Phase6UiSmoke.h tests/Phase6UiSmoke.cpp)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE QUEMUSIC_PHASE6_UI_SMOKE=1)
+    add_test(NAME quemusic_phase6_ui_smoke_guard_test
+        COMMAND ${CMAKE_COMMAND} "-Dsmoke_app=$<TARGET_FILE:${PROJECT_NAME}>"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/Phase6UiSmokeGuard.cmake)
     target_include_directories(quemusic_queue_history_codec_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(quemusic_queue_history_codec_test PRIVATE quemusic_queue_history_codec Qt6::Test)
     add_test(NAME quemusic_queue_history_codec_test COMMAND quemusic_queue_history_codec_test)

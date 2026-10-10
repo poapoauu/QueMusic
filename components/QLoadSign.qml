@@ -18,15 +18,12 @@ Item {
         loadAnime.running = false;
         finishAnime.running = true;
     }
-    Connections {
-        target: MusicApi
-        function onFinished() {
-            root.finish()
-        }
-        function onLoaded() {
-            root.loadAction()
-        }
+    onLoaderChanged: {
+        loadAnime.stop();
+        finishAnime.stop();
+        if (loader) loadAction(); else finish();
     }
+    Component.onCompleted: if (loader) loadAction()
 
     ParallelAnimation {
         id: loadAnime

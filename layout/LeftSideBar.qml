@@ -8,6 +8,7 @@ import 'qrc:/QueMusic/components'
 Rectangle {
     z: 1
     id: sidebar
+    objectName: "originalSidebar"
     width: 210
     property var musicAdapter: null
     property var playbackAdapter: null

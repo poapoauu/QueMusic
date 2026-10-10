@@ -11,6 +11,8 @@
 #include <QtQuick/QQuickWindow>
 #include <QSettings>
 #include <QFileInfo>
+#include <QDir>
+#include <QTimer>
 #include "core/source/SourceStartup.h"
 #include "core/logging/RuntimeLoggingPolicy.h"
 #include "core/media/MacKeychainSecretStore.h"
@@ -36,6 +38,9 @@
 
 #include <QtQml/QQmlExtensionPlugin>
 #include <memory>
+#ifdef QUEMUSIC_PHASE6_UI_SMOKE
+#include "tests/Phase6UiSmoke.h"
+#endif
 Q_IMPORT_QML_PLUGIN(MeshGradientItemPlugin)
 
 extern void qml_register_types_MeshGradientItem();
@@ -137,11 +142,25 @@ static void registerSmtcAppIdentity()
 int main(int argc, char *argv[])
 {
     RuntimeLoggingPolicy::install();
+    // 从Options.ini读取设置，设置一些高级项喵~
+    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+#ifdef QUEMUSIC_PHASE6_UI_SMOKE
+    bool phase6Smoke = false;
+    for(int i=1;i<argc;++i)phase6Smoke|=QByteArray(argv[i])=="--phase6-ui-smoke";
+    const QString smokeRoot=QString::fromUtf8(qgetenv("QUEMUSIC_PHASE6_SMOKE_ROOT"));
+    // Refuse before reading settings/accounts: run only a copied executable
+    // and a redirected macOS profile under a fresh, explicit smoke directory.
+    if(phase6Smoke && (smokeRoot.isEmpty()||!QFileInfo(smokeRoot).isDir()
+        ||!QDir::isAbsolutePath(smokeRoot)
+        ||!configPath.startsWith(smokeRoot+"/")
+        ||!QFileInfo(QString::fromLocal8Bit(argv[0])).absoluteFilePath().startsWith(smokeRoot+"/")
+        ||QFileInfo::exists(QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath()+"/Account.ini")))
+        return 64;
+#endif
+    // The test-only isolation guard must precede any platform identity writes.
 #if defined(Q_OS_WIN)
     registerSmtcAppIdentity();
 #endif
-    // 从Options.ini读取设置，设置一些高级项喵~
-    QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
     QSettings opt(configPath + QStringLiteral("/BroNekoX/QueMusic.ini"), QSettings::IniFormat);
     switch (opt.value(QStringLiteral("Options/gpuRenderMode"), 0).toInt()) {
         case 1: qputenv("QSG_RHI_BACKEND", "opengl"); break;
@@ -259,7 +278,14 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("$curveRenderingAvailable", true);
 
     QWK::registerTypes(&engine);
+#ifdef QUEMUSIC_PHASE6_UI_SMOKE
+    std::unique_ptr<Phase6UiSmoke> smoke;
+    if(phase6Smoke)smoke=std::make_unique<Phase6UiSmoke>(&engine,smokeRoot);
+#endif
     engine.load(QUrl(QStringLiteral("qrc:/QueMusic/main.qml")));
+#ifdef QUEMUSIC_PHASE6_UI_SMOKE
+    if(smoke)QTimer::singleShot(0,&engine,[&smoke] { smoke->start(); });
+#endif
     const int result = application.exec();
     sourceRegistry.closeAll();
     return result;

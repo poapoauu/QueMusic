@@ -1,6 +1,7 @@
 #include <QFile>
 #include <QString>
 #include <QTest>
+#include <QRegularExpression>
 
 class OriginalUiStructureTest final : public QObject
 {
@@ -26,6 +27,40 @@ private:
     }
 
 private slots:
+    void phase6SourcePagesDoNotDispatchByConcretePlatform()
+    {
+        const QRegularExpression platformBranch(
+            R"((?:songSource|source)\s*(?:===|==|!==|!=)\s*[01]\b|case\s*[01]\s*:.*(?:Kugou|Netease))");
+        for(const auto &path:{"pages/HomePage.qml","pages/SearchPage.qml","pages/PlaylistPage.qml",
+                             "pages/FavouritePage.qml","pages/FilePage.qml","pages/DownloadPage.qml",
+                             "layout/PlayerControl.qml","components/PlayList.qml",
+                             "components/PlaybackLyricsAdapter.qml"}) {
+            const auto source=readSource(path); QVERIFY2(!source.isEmpty(),path);
+            QVERIFY2(!platformBranch.match(source).hasMatch(),path);
+            QVERIFY2(!source.contains("songSource"),path);
+            QVERIFY2(!source.contains("KugouApi")&&!source.contains("NeteaseApi"),path);
+            QVERIFY2(!source.contains("酷狗音乐")&&!source.contains("网易云音乐"),path);
+        }
+        const auto file=readSource("pages/FilePage.qml");
+        QVERIFY(!file.contains("mainMedia")); QVERIFY(!file.contains("MusicApi"));
+        const auto sign=readSource("components/QLoadSign.qml");
+        QVERIFY(!sign.contains("MusicApi")); QVERIFY(sign.contains("onLoaderChanged:"));
+        const auto search=readSource("pages/SearchPage.qml");
+        QVERIFY(search.contains("searchPage.musicAdapter.searchLoading"));
+        const auto theme=readSource("core/plugin-ui/PluginThemeBinding.qml");
+        QVERIFY(theme.contains("import QueMusic 1.0"));
+        QVERIFY(theme.contains("import QueMusic.PluginUI 1.0"));
+        const auto history=readSource("components/SearchCard.qml");
+        QVERIFY(!history.contains("Style.themes.textTip"));
+        const auto player=readSource("layout/PlayerControl.qml");
+        QVERIFY(player.contains("secureMode: window.sourceLyricsMode || window.securePlaybackActive || playList.showRestoredQueue"));
+        // The unreferenced old window is intentionally left for Phase 9, but
+        // no migrated production page may instantiate it again.
+        for(const auto &path:{"pages/HomePage.qml","pages/SearchPage.qml","pages/PlaylistPage.qml",
+                             "pages/FavouritePage.qml","pages/FilePage.qml"})
+            QVERIFY2(!readSource(path).contains("PlayListWindow"),path);
+    }
+
     void historyProjectionIsInjectedThroughTheOriginalHostShell()
     {
         const auto main = readSource("main.qml");

@@ -1162,6 +1162,27 @@ private slots:
         QCOMPARE(adapter.categorySongs()->sectionId(), QStringLiteral("tracks"));
     }
 
+    void searchLoadingTracksTheHostAndClearsOnDestruction()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QSettings settings(dir.filePath("settings.ini"),QSettings::IniFormat);
+        SourceScopeStore scope(&settings);
+        auto hub=std::make_unique<MusicHub>(nullptr,&scope,&settings);
+        OriginalUiMusicAdapter adapter(hub.get(),nullptr);
+        QSignalSpy changed(&adapter,&OriginalUiMusicAdapter::searchStatusChanged);
+        QVERIFY(!adapter.searchLoading());
+        auto *model=hub->searchResults();
+        auto generation=model->beginRequest();
+        QVERIFY(adapter.searchLoading()); QVERIFY(changed.count()>0);
+        PageSectionV2 section; section.kind=PageSectionKindV2::Tracks; section.sectionId="tracks";
+        QVERIFY(model->applyQueryFailure(generation,section,{SourceErrorKindV2::Unsupported}));
+        QVERIFY(model->finishGeneration(generation,1));
+        QVERIFY(!adapter.searchLoading());
+        generation=model->beginRequest(); QVERIFY(adapter.searchLoading());
+        const int before=changed.count();
+        hub.reset(); QVERIFY(!adapter.searchLoading()); QVERIFY(changed.count()>before);
+    }
+
     void categoryStatusDistinguishesUnsupportedAndNetworkFailure()
     {
         QTemporaryDir dir; QVERIFY(dir.isValid());

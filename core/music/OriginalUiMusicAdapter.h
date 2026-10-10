@@ -41,6 +41,7 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(OnlineListModel *searchLists READ searchLists CONSTANT)
     Q_PROPERTY(OnlineListModel *searchAlbums READ searchAlbums CONSTANT)
     Q_PROPERTY(OnlineListModel *searchLyrics READ searchLyrics CONSTANT)
+    Q_PROPERTY(bool searchLoading READ searchLoading NOTIFY searchStatusChanged)
     Q_PROPERTY(OnlineListModel *directoryItems READ directoryItems CONSTANT)
     Q_PROPERTY(QString directoryState READ directoryState NOTIFY directoryChanged)
     Q_PROPERTY(QString directoryContextToken READ directoryContextToken NOTIFY directoryChanged)
@@ -98,6 +99,7 @@ public:
     OnlineListModel *searchLists() const;
     OnlineListModel *searchAlbums() const;
     OnlineListModel *searchLyrics() const;
+    bool searchLoading() const;
     OnlineListModel *directoryItems() const;
     QString directoryState() const;
     QString directoryContextToken() const;
@@ -130,6 +132,7 @@ public:
     Q_INVOKABLE bool pluginAvailable(const QString &packageId) const;
 
 signals:
+    void searchStatusChanged();
     void favoriteStatusChanged();
     void discoveryStatusChanged();
     void categoryStatusChanged();

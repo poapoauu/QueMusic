@@ -714,7 +714,8 @@ Item {
                     height: 60
                     width: fileView.width - 16
                     radius: Style.settings.labelRadius
-                    color: mainMedia.noTitle == model.name ? Style.themes.containColor : "transparent"
+                    // Legacy names are not an identity for the active Source.
+                    color: "transparent"
 
                     Behavior on color { ColorAnimation { duration: 120 } }
 

@@ -2,6 +2,8 @@
 
 设计基线：[最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md)。原则是保留原页面视觉和主要交互，让页面只使用 SourceInstance ID、Adapter 展示模型和 Capability 驱动动作；不把平台特例放回 Host，也不更改 Source SDK v2。
 
+最新状态（2026-10-10）：Phase 6 动态 Source UI **阶段代码出口完成**，75/75 CTest 与真应用 Cocoa 空态窗口 smoke 通过。详见[出口报告](phase-6-exit-report.md)。下文逐切片的“未完成”是当时的历史状态；真实服务/实际音频/完整设备与跨平台发布验收仍未通过，不因代码出口完成而关闭。
+
 ## 当前切片：搜索页
 
 `main.qml` 的搜索框回车、搜索按钮、搜索历史三个入口统一调用 `OriginalUiMusicAdapter.search()`，不再回退 `MusicApi.searchSongs()`。`SearchPage.qml` 保留四个结果标签、列表布局和插件结果详情层；来源下拉框使用 `sourceOptions` 与 `selectedSourceInstanceId`，不再内置酷狗/网易等固定选项或按平台序号着色。搜索结果、翻页、重试、浏览、播放、入队和收藏都通过 Adapter；动作前读取对应行的 Capability。无 Adapter 时不伪造平台列表或发起旧 API 请求。
@@ -492,7 +494,17 @@ ctest --test-dir build-phase3 --output-on-failure
 - 首次联合回归仅旧 guard 字面量断言失败，更新为三入口的模式分支、共用 guard 和 occurrence 接线检查；行为测试未放宽。全目标增量构建、测试目标重建、五项联合复跑及全部 74 项 CTest 通过（62.41 秒）。
 - SDK v2／Source 插件 ABI／Plugin UI API／持久化格式不变。下一项为 Phase 6 全量出口扫描及 UI smoke；真实服务／物理音频／原生视觉／跨平台 ABI 尚未验收，平台插件化与 Legacy 删除继续按原顺序。
 
+### Phase 6 出口：加载状态、停播队列与原生主题
+
+- 搜索加载指示使用 Host searchLoading；共享 QLoadSign 删除旧 MusicApi 信号监听，快速加载重启与 Hub 销毁有自动回归。
+- File 不按 Legacy 曲目名称标识当前 Source；停播 Source 队列保持 sticky Source 模式，不借旧队列。
+- 真应用 smoke 发现并修复 Host ThemeBinding 的模块导入和 SearchCard 的字体属性；插件无需依赖 Host 私有 QML，SDK v2/Plugin UI API/持久化格式不变。
+- 新增生产页面平台分派约束、测试构建隔离守卫与真应用窗口 driver。全目标增量构建及最终 75/75 CTest 通过；隔离空配置 Cocoa 窗口生成 9 帧，errors 为空，实际鼠标点击验证本地目录标签。
+- 按最终方案“新增插件不修改这些页面的 source switch/case”关闭阶段代码出口；真实服务、实际音频、完整原生业务流程和跨平台发行条件继续保留。详见[出口报告](phase-6-exit-report.md)及[复现说明](phase-6-ui-smoke.md)。
+
 ## 后续顺序与验收
+
+本节以下列表保留为出口完成前的历史实施顺序。当前阶段状态以出口报告为准；下一开发阶段是最终方案 Phase 7 酷狗插件与 QR Management UI，随后 Phase 8 网易、Phase 9 Legacy 删除。真实服务/实际音频及完整原生流程应继续单独验收。
 
 最新自动验证以本文件最后的阶段记录为准；目录批次、过渡播放边界、Queue occurrence／清理及 Player／桌面切歌依赖保护完成全目标增量构建及全部 74 项 CTest。仍未执行真实服务器音频或手工视觉验收。
 
