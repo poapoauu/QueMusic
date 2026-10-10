@@ -10,6 +10,8 @@ Item {
     id: filePage
 
     property var musicAdapter: null
+    property int directoryAdapterRevision: 0
+    onMusicAdapterChanged: directoryAdapterRevision++
     property var legacyMigrationCandidates: []
     property var legacyMigrationPreview: ({})
     function legacySongStatus(folderId, songId) {
@@ -23,7 +25,8 @@ Item {
     signal requestPluginSettings(string packageId, string instanceId)
     function directoryRow(view, index) {
         return view && view.model && typeof view.model.get === "function"
-                && index >= 0 && index < view.model.count ? view.model.get(index) : null;
+                && Number.isInteger(index) && index >= 0 && index < view.model.count
+                ? view.model.get(index) : null;
     }
     function directoryCapabilities(row) {
         return musicAdapter && row && typeof musicAdapter.capabilities === "function"
@@ -31,18 +34,30 @@ Item {
     }
     function requestDirectorySections(retry) {
         if (!musicAdapter || musicAdapter.directoryState === "loading") return;
-        var rows = musicAdapter.directoryItems;
+        const adapter = musicAdapter;
+        const revision = directoryAdapterRevision;
+        const token = adapter.directoryContextToken;
+        if (typeof token !== "string" || !token) return;
+        var rows = adapter.directoryItems;
         if (!rows) return;
         var ids = retry ? rows.retrySectionIds : rows.paginationSectionIds;
         var action = retry ? "retryDirectorySection" : "loadMoreDirectories";
-        if (ids === undefined || typeof musicAdapter[action] !== "function") return;
+        if (ids === undefined || typeof adapter[action] !== "function") return;
         // Requests can synchronously reset presentation rows and section state.
         var targets = Array.from(ids);
-        for (var id of targets)
-            if (id) musicAdapter[action](id);
+        for (var id of targets) {
+            // State updates within one context may continue the batch. Navigation,
+            // refresh or an adapter round-trip must not reuse its remaining IDs.
+            if (directoryAdapterRevision !== revision || musicAdapter !== adapter
+                    || adapter.directoryItems !== rows || adapter.directoryContextToken !== token) return;
+            if (id) adapter[action](id);
+        }
         // A whole-page failure has no section origin to retry.
         if (retry && targets.length === 0 && Object.keys(rows.error || {}).length === 0
-                && musicAdapter.directoryState === "failed") musicAdapter.refreshDirectories();
+                && directoryAdapterRevision === revision && musicAdapter === adapter
+                && adapter.directoryItems === rows && adapter.directoryContextToken === token
+                && adapter.directoryState === "failed"
+                && typeof adapter.refreshDirectories === "function") adapter.refreshDirectories();
     }
     function directoryHasError() {
         var rows = musicAdapter ? musicAdapter.directoryItems : null;

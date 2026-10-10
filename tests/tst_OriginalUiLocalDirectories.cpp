@@ -24,6 +24,8 @@ private slots:
         SourceScopeStore scope(&settings);
         MusicHub hub(nullptr, &scope, &settings);
         OriginalUiMusicAdapter adapter(&hub, nullptr);
+        QCOMPARE(adapter.directoryContextToken(), hub.directoryLibrary()->contextToken());
+        QCOMPARE(adapter.property("directoryContextToken").toString(), adapter.directoryContextToken());
         auto *model = hub.directoryLibrary()->model();
         const auto generation = model->beginRequest();
         PageResultV2 result;
@@ -51,8 +53,10 @@ private slots:
             QVERIFY(error.isEmpty() || error == QVariantMap({{"failed", true}}));
         }
         QVERIFY(model->beginSectionRequest(generation, "exhausted"));
+        const auto token = adapter.directoryContextToken();
         QVERIFY(model->applySectionFailure(generation, "exhausted", {SourceErrorKindV2::Network, "network", "private details"}));
         QCOMPARE(view->get(0).value("error").toMap(), QVariantMap({{"failed", true}}));
+        QCOMPARE(adapter.directoryContextToken(), token);
         QVERIFY(model->beginSectionRequest(generation, "empty-next"));
         QVERIFY(view->paginationSectionIds().isEmpty());
         QVERIFY(view->loadingMore());

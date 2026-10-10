@@ -46,6 +46,7 @@ DirectoryLibraryController::DirectoryLibraryController(SourceRegistry *sources,
                     if (!m_activated || (!m_stack.isEmpty()
                         && m_stack.last().value("ref").toMap().value("sourceInstanceId") != source)) return;
                     const auto oldGeneration = m_generation;
+                    ++m_contextRevision;
                     const auto revision = ++m_generation;
                     m_origins.clear();
                     const auto ids = m_pending.keys();
@@ -76,6 +77,7 @@ DirectoryLibraryController::DirectoryLibraryController(SourceRegistry *sources,
         }
         connect(m_sources, &QObject::destroyed, this, [this] {
             m_sources = nullptr;
+            ++m_contextRevision;
             cancelPending();
         });
     }
@@ -84,6 +86,7 @@ DirectoryLibraryController::DirectoryLibraryController(SourceRegistry *sources,
 DirectoryLibraryController::~DirectoryLibraryController() { cancelPending(); }
 MusicPageModel *DirectoryLibraryController::model() const { return m_model; }
 bool DirectoryLibraryController::canNavigateBack() const { return !m_stack.isEmpty(); }
+QString DirectoryLibraryController::contextToken() const { return QString::number(m_contextRevision); }
 
 void DirectoryLibraryController::cancelPending()
 {
@@ -102,6 +105,8 @@ void DirectoryLibraryController::activate()
 void DirectoryLibraryController::refresh()
 {
     if (!m_activated) return;
+    // Invalidate before cancellation/reset can synchronously call back into UI.
+    ++m_contextRevision;
     cancelPending();
     m_origins.clear();
     if (m_generation) m_model->resetGeneration(m_generation);
@@ -215,6 +220,7 @@ bool DirectoryLibraryController::browse(const QVariantMap &fullItem)
             found |= m_model->itemAt(section, item) == fullItem;
     if (!found) return false;
     m_stack.append(fullItem);
+    ++m_contextRevision;
     emit changed();
     refresh();
     return true;
@@ -224,6 +230,7 @@ bool DirectoryLibraryController::navigateBack()
 {
     if (m_stack.isEmpty()) return false;
     m_stack.removeLast();
+    ++m_contextRevision;
     emit changed();
     refresh();
     return true;

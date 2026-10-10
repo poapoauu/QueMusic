@@ -665,6 +665,14 @@ Source SDK v2、Source 插件 ABI、Plugin UI API、持久化格式与布局不�
 
 全目标增量构建成功；Adapter 专项与随后全部 73 项 CTest 通过（67.38 秒），含现有 Local／Navidrome、原 UI、外部契约、打包与移动回归。该切片不宣称整体计划完成。
 
+### 后续增量：File 目录批次的上下文保护
+
+已有 Local Source 目录接入保留；补齐 QML 分区 ID 快照在同步刷新／导航／Adapter 替换后的过期批次保护。Host 独立 context token 在上下文变化前推进，普通分区状态变化仍允许批次继续，Adapter 只转发不透明字符串。新增非法行索引拒绝，原布局、整页恢复和零 Legacy 回退保持。
+
+Controller／Adapter／QML 验收覆盖相关与无关实例权限通知、分页／重试、刷新／导航往返、Adapter 替换／移除／往返及小数／字符串／非有限索引。全目标增量构建、四项联合回归与全部 73 项 CTest 通过（75.43 秒）；SDK v2／Source 插件 ABI／Plugin UI API／磁盘格式不变，仅 Host QML 属性同步更新。
+
+审计发现旧 `MusicApi.urlplay` 仍能无条件停止 Coordinator，下一切片补请求身份／跨模式失效；Download Source 完成记录未发现路径直播放，仍在使用的兼容下载与旧平台播放不可一次性删除。Phase 6、平台插件化、原生／真实服务验收及最终 Legacy 删除未完成。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

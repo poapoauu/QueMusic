@@ -23,6 +23,8 @@ public:
     void loadMore(const QString &sectionId);
     void retry(const QString &sectionId);
     bool canNavigateBack() const;
+    // Host-only context identity; section state changes do not advance it.
+    QString contextToken() const;
     QVariantMap settingsTarget(const QVariantMap &fullItem) const;
 signals:
     void changed();
@@ -46,6 +48,7 @@ private:
     QHash<QString, PluginState> m_pluginStates;
     QList<QVariantMap> m_stack;
     quint64 m_generation = 0;
+    quint64 m_contextRevision = 0;
     int m_expected = 0;
     bool m_activated = false;
 };

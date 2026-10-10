@@ -573,6 +573,10 @@ bool OriginalUiMusicAdapter::directoryCanNavigateBack() const
 {
     return m_hub && m_hub->directoryLibrary() && m_hub->directoryLibrary()->canNavigateBack();
 }
+QString OriginalUiMusicAdapter::directoryContextToken() const
+{
+    return m_hub && m_hub->directoryLibrary() ? m_hub->directoryLibrary()->contextToken() : QString{};
+}
 QVariantList OriginalUiMusicAdapter::sourceOptions() const { return m_hub ? m_hub->sourceOptions() : QVariantList{}; }
 QString OriginalUiMusicAdapter::selectedSourceInstanceId() const
 {

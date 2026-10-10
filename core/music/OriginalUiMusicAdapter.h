@@ -43,6 +43,7 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(OnlineListModel *searchLyrics READ searchLyrics CONSTANT)
     Q_PROPERTY(OnlineListModel *directoryItems READ directoryItems CONSTANT)
     Q_PROPERTY(QString directoryState READ directoryState NOTIFY directoryChanged)
+    Q_PROPERTY(QString directoryContextToken READ directoryContextToken NOTIFY directoryChanged)
     Q_PROPERTY(QVariantList currentLyrics READ currentLyrics NOTIFY currentLyricsChanged)
     Q_PROPERTY(QString currentLyricsState READ currentLyricsState NOTIFY currentLyricsChanged)
     Q_PROPERTY(QUrl currentCover READ currentCover NOTIFY currentCoverChanged)
@@ -99,6 +100,7 @@ public:
     OnlineListModel *searchLyrics() const;
     OnlineListModel *directoryItems() const;
     QString directoryState() const;
+    QString directoryContextToken() const;
     bool directoryCanNavigateBack() const;
     QVariantList sourceOptions() const;
     QString selectedSourceInstanceId() const;

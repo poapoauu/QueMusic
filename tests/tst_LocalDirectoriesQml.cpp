@@ -7,11 +7,13 @@
 #include <QSignalSpy>
 #include <QSet>
 #include <QTest>
+#include <functional>
 
 class DirectoryQmlApi final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *directoryItems READ directoryItems CONSTANT)
     Q_PROPERTY(QString directoryState READ directoryState NOTIFY directoryChanged)
+    Q_PROPERTY(QString directoryContextToken MEMBER contextToken NOTIFY directoryChanged)
     Q_PROPERTY(bool directoryCanNavigateBack READ directoryCanNavigateBack NOTIFY directoryChanged)
 public:
     DirectoryQmlApi() {
@@ -54,16 +56,22 @@ public:
         retriedSections.append(id);
         // Simulate synchronous state changes while QML walks its snapshot.
         rows.setPresentationState({{"error", QVariantMap{{"failed", QVariantMap{{"failed", true}}}}}});
+        const auto callback = onSectionRequest;
+        if (callback) callback();
     }
     Q_INVOKABLE void loadMoreDirectories(const QString &sectionId) {
         if (!requestedSections.contains(sectionId)) {
             requestedSections.insert(sectionId);
             ++more;
         }
+        const auto callback = onSectionRequest;
+        if (callback) callback();
     }
     Q_INVOKABLE bool pluginAvailable(const QString &) const { return installed; }
     OnlineListModel rows;
     QString state = "ready";
+    QString contextToken = "initial";
+    std::function<void()> onSectionRequest;
     bool canBack = false;
     bool installed = true;
     QSet<QString> requestedSections;
@@ -272,6 +280,70 @@ private slots:
         QCOMPARE(adapter.plays, 1); QCOMPARE(adapter.enqueues, 1);
         QVERIFY(filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&adapter)));
         QCOMPARE(window.legacyPlays, 0);
+        // Both directory views share this batch dispatcher. A synchronous first
+        // request must not deliver the second old ID into a replacement context.
+        DirectoryQmlApi replacement;
+        for (bool retryBatch : {false, true}) {
+            for (int mutation = 0; mutation < 6; ++mutation) {
+                adapter.more = 0;
+                adapter.requestedSections.clear();
+                adapter.retriedSections.clear();
+                adapter.rows.setPresentationState({
+                    {"paginationSectionIds", QStringList{"old/a", "old/b"}},
+                    {"retrySectionIds", QStringList{"old/a", "old/b"}}});
+                int callbacks = 0;
+                adapter.onSectionRequest = [&] {
+                    if (++callbacks != 1) return;
+                    switch (mutation) {
+                    case 0: // Normal section state updates keep the context.
+                        adapter.rows.setPresentationState({});
+                        emit adapter.directoryChanged();
+                        break;
+                    case 1: // Refresh/navigation, even if the row IDs recur.
+                        adapter.contextToken += "-next";
+                        emit adapter.directoryChanged();
+                        break;
+                    case 2:
+                        filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&replacement));
+                        break;
+                    case 3: // Replacement followed by restoration is still stale.
+                        filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&replacement));
+                        filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&adapter));
+                        break;
+                    case 4:
+                        filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(nullptr));
+                        break;
+                    case 5: // Browse/back round-trip has a new context token.
+                        adapter.contextToken += "-browse";
+                        emit adapter.directoryChanged();
+                        adapter.contextToken += "-back";
+                        emit adapter.directoryChanged();
+                        break;
+                    }
+                };
+                QVERIFY(QMetaObject::invokeMethod(filePage, "requestDirectorySections",
+                    Q_ARG(QVariant, QVariant(retryBatch))));
+                QCOMPARE(callbacks, mutation == 0 ? 2 : 1);
+                if (retryBatch)
+                    QCOMPARE(adapter.retriedSections, mutation == 0
+                        ? QStringList({"old/a", "old/b"}) : QStringList({"old/a"}));
+                else QCOMPARE(adapter.more, mutation == 0 ? 2 : 1);
+                QCOMPARE(replacement.more, 0);
+                QVERIFY(replacement.retriedSections.isEmpty());
+                adapter.onSectionRequest = {};
+                QVERIFY(filePage->setProperty("musicAdapter", QVariant::fromValue<QObject *>(&adapter)));
+            }
+        }
+        // Fractional, string, non-finite and out-of-range indices cannot choose
+        // a different row through implicit QML/C++ integer conversion.
+        adapter.rows.setItems({QVariantMap{{"title", "Song"}, {"entityType", 0}}});
+        for (const QVariant &invalid : {QVariant(0.5), QVariant(-1), QVariant("0"),
+                                       QVariant(qQNaN()), QVariant(qInf()), QVariant(1)}) {
+            QVERIFY(QMetaObject::invokeMethod(contents, "activateRow", Q_ARG(QVariant, invalid)));
+            QVERIFY(QMetaObject::invokeMethod(contents, "enqueueRow", Q_ARG(QVariant, invalid)));
+        }
+        QCOMPARE(adapter.plays, 1); QCOMPARE(adapter.enqueues, 1);
+        adapter.rows.setPresentationState({});
         myFolders.setItems({QVariantMap{{"name", "Personal collection"}}});
         QCOMPARE(myFolders.rowCount(), 1);
         adapter.rows.setItems({});

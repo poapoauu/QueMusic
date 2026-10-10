@@ -448,6 +448,15 @@ ctest --test-dir build-phase3 --output-on-failure
 - SDK v2 / Source 插件 ABI / Plugin UI API / 磁盘 schema 不变，Host 私有 API 同步重编译。下一项转入 File / Download / Queue / Player 与桌面歌词的剩余直接音源分支及路径队列写入审计；Phase 6、真实平台插件与最终 Legacy 删除尚未完成。
 - 全目标增量构建成功；新增及既有 Adapter 专项通过，随后全部 73 项 CTest 通过（67.38 秒），包含 Local / Navidrome、目录、播放、原 UI、安装后外部契约与 macOS 打包／移动回归。自动测试不替代真实平台服务、物理播放、原生视觉或跨平台 ABI 验收。
 
+### File：目录分区批次绑定 Host 上下文
+
+- 审计确认目录列表已使用标准插件／独立 Controller，没有重做 Local Plugin。缺口是 QML 虽复制分区 ID，却未在首请求同步刷新／导航／替换 Adapter 后停止旧批次。
+- Controller 提供只含 Host 修订号字符串的 context token，刷新、导航、受影响权限失效及 Registry 销毁前推进；普通分页／重试状态不推进。Adapter 只读转发，不暴露目录路径、身份、游标或插件业务 DTO。File 同时核验 token、模型与 Adapter 修订，替换再恢复也拒绝旧批次；普通分区状态变化仍继续全部合法目标。
+- 目录行入口拒绝小数、字符串、NaN、无穷及越界索引，避免隐式整数转换误操作。无 Adapter／能力／无行安全行为、整页失败刷新和无 Legacy 回退保持。
+- 测试覆盖分页／重试两类批次的普通状态变化、刷新／导航往返、Adapter 替换／移除／往返；真实 Controller 验证分页／重试不换 token、导航／刷新／相关能力通知换 token、无关嵌套实例通知不换 token。Host QML 属性为新增契约，需同步更新；Source SDK v2、Source 插件 ABI、Plugin UI API 和持久化格式不变。
+- 全目标增量构建、四项联合回归及全部 73 项 CTest 通过（75.43 秒）。不是原生视觉、真实服务器、物理音频或跨平台 ABI 验收。
+- 下一切片处理审计发现的旧 MusicApi 异步播放结果抢占 Source：当前 `onUrlplay` 无条件 stop Coordinator。Download Source 完成记录没有路径直播放，兼容下载列表不因此删除；Queue／Player 与桌面歌词仍继续审计。
+
 ## 后续顺序与验收
 
 最新自动验证以本文件最后的阶段记录为准；Host 快照、队列／历史权利与普通页面动作投影完成全目标增量构建及全部 73 项 CTest。仍未执行真实服务器音频或手工视觉验收。

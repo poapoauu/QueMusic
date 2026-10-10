@@ -40,10 +40,13 @@ private slots:
         }
         QVERIFY(!root.isEmpty()); QVERIFY(directories->browse(root));
         QTRY_COMPARE(model->state(),PageLoadStateV2::Ready);
+        const auto nestedToken = directories->contextToken();
         const auto before=home->property("requests").toList().size();
         emit office->capabilitiesChanged({}); QCoreApplication::processEvents();
+        QCOMPARE(directories->contextToken(), nestedToken);
         QCOMPARE(home->property("requests").toList().size(),before); QVERIFY(model->rowCount()>0);
         home->setProperty("hold",true); emit home->capabilitiesChanged({});
+        QVERIFY(directories->contextToken() != nestedToken);
         QCOMPARE(model->rowCount(),0);
         QTRY_COMPARE(home->property("requests").toList().size(),before+1);
         const auto stale=home->property("requests").toList().last().toMap().value("id").toUuid();
@@ -130,18 +133,23 @@ private slots:
         QCOMPARE(model->section(officeRow).items.size(), 1);
         QCOMPARE(resets.count(), 0);
         QCOMPARE(home->property("requests").toList().size(), healthyRequests);
+        const auto rootToken = directories->contextToken();
         QVERIFY(directories->browse(model->itemAt(officeRow, 0)));
+        QVERIFY(directories->contextToken() != rootToken);
         QTRY_COMPARE(model->state(), PageLoadStateV2::Ready);
+        const auto contentToken = directories->contextToken();
         QVERIFY(model->section(0).hasMore);
         office->setProperty("fail", true);
         directories->loadMore("directory/content");
         QTRY_VERIFY(!model->data(model->index(0), MusicPageModel::ErrorRole).toMap().isEmpty());
+        QCOMPARE(directories->contextToken(), contentToken);
         const auto afterFailure = office->property("requests").toList().size();
         directories->loadMore("directory/content"); // Failed cursor must go through retry.
         QCOMPARE(office->property("requests").toList().size(), afterFailure);
         office->setProperty("fail", false);
         directories->retry("directory/content");
         QTRY_VERIFY(model->data(model->index(0), MusicPageModel::ErrorRole).toMap().isEmpty());
+        QCOMPARE(directories->contextToken(), contentToken);
         QCOMPARE(model->section(0).items.size(), 1); // Replace only this section from page one.
         QCOMPARE(office->property("requests").toList().last().toMap().value("cursor").toString(), QString{});
         office->setProperty("unsupported", true);
@@ -152,14 +160,17 @@ private slots:
         QCOMPARE(office->property("requests").toList().size(), unsupportedRequests);
         office->setProperty("unsupported", false); office->setProperty("fail", true);
         directories->refresh();
+        QVERIFY(directories->contextToken() != contentToken);
         QTRY_COMPARE(model->state(), PageLoadStateV2::Failed);
         office->setProperty("fail", false); office->setProperty("hold", true);
         const auto beforeStaleRetry = office->property("requests").toList().size();
         directories->retry("directory/content");
         QTRY_COMPARE(office->property("requests").toList().size(), beforeStaleRetry + 1);
         const auto staleId = office->property("requests").toList().last().toMap().value("id").toUuid();
+        const auto beforeBackToken = directories->contextToken();
         office->setProperty("hold", false);
         QVERIFY(directories->navigateBack());
+        QVERIFY(directories->contextToken() != beforeBackToken);
         QTRY_COMPARE(model->state(), PageLoadStateV2::Ready);
         QCOMPARE(model->rowCount(), 2);
         emit office->requestFailed(staleId, {SourceErrorKindV2::Network});
