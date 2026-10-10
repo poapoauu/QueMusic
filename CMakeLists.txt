@@ -230,6 +230,10 @@ install(DIRECTORY sdk/source/extensions/item-lookup/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/item-lookup/v1
     COMPONENT PluginSdk
     FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY sdk/source/extensions/discovery/v1/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/discovery/v1
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY sdk/plugin-ui/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/plugin-ui/v1
     COMPONENT PluginSdk
@@ -713,6 +717,18 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME quemusic_source_v2_contract_test COMMAND quemusic_source_v2_contract_test)
+
+    qt_add_executable(quemusic_source_discovery_contract_test
+        tests/external-source-discovery/main.cpp)
+    target_link_libraries(quemusic_source_discovery_contract_test PRIVATE quemusic_source_sdk Qt6::Test)
+    add_test(NAME quemusic_source_discovery_contract_test COMMAND quemusic_source_discovery_contract_test)
+    add_test(NAME quemusic_source_discovery_external_test
+        COMMAND ${CMAKE_COMMAND}
+            "-Dbuild_dir=${CMAKE_BINARY_DIR}"
+            "-Dfixture_dir=${CMAKE_CURRENT_SOURCE_DIR}/tests/external-source-discovery"
+            "-Dqt_dir=${Qt6_DIR}"
+            "-Dbuild_config=$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyExternalSourceContentEvents.cmake")
 
     qt_add_executable(quemusic_source_content_events_contract_test
         tests/tst_SourceContentEventsContract.cpp

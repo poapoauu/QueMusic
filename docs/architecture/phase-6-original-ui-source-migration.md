@@ -358,6 +358,13 @@ ctest --test-dir build-phase3 --output-on-failure
 
 全量增量回归不替代从零构建、跨 OS/ABI 矩阵、真实服务器/物理音频或原生视觉。平台账号 UI 和最终 Legacy 删除仍按既定阶段推进。
 
+### 私人发现：独立可选契约与请求边界（2026-10-10）
+
+- 新增独立 DiscoveryProvider/1.0 Session 扩展，明确 PersonalRadio / PersonalRadar 及逐账号 Availability；不修改 v2 枚举、结构或虚表，不归入 Plugin UI API。契约、安装方式及后续验收见 `source-discovery-v1.md`。
+- PageRepository 严格解析 Host 私有 selector；旧 Provider 零私人调用，不回退 Random；非法组合提前拒绝。Available 才进入新 fetchDiscovery，清除 selector 后仍用 v2 请求/取消/结果信号；只接受单 Tracks 分区及匹配实例/音源/账号的 Track，私人页面不持久缓存，续页重新检查权限，单实例保留推荐顺序。
+- 分发持有独立 callable lease 并检查重入后的存活/代次，覆盖权限检查中关闭会话时卸载 Busy；不再依赖可能在回调中释放的 Registry session lease。
+- 新扩展/安装后外部编译、v2 契约、PageRepository、AggregateComposer 共 5 项联合回归通过。测试替身不等于真实私人算法或服务器支持；Home 卡片、Host 模型与权限变化后结果失效仍在下一切片接入，现有平台插件化与 Phase 6 未整体完成。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。

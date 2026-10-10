@@ -575,6 +575,12 @@ Source 已不再复制标题/歌手到 main 的兼容字段，关闭时也不读
 
 已完成首页旧热门歌单的通用数据/动作迁移和 Source 详情上下文边界；尚未完成私人漫游/雷达、平台账号 UI 及 Phase 6 整体迁移。下一步先明确私人发现能力的可选声明、查询及旧 Provider 不支持行为，避免将 Random 或未知过滤器被忽略后的普通列表冒充私人业务，再迁移相关入口。真实服务器/音频/视觉、从零及跨平台 ABI 验收仍待完成。
 
+### 后续增量：私人发现可选扩展与旧插件兼容边界（2026-10-10）
+
+已新增独立版本的 Session `IDiscoveryProviderV1`，区分私人漫游/雷达与普通 Random，并由 PageRepository 在逐账号 Availability 允许时分发。Host selector 非法组合被拒绝，绝不进入旧 fetchPage；结果仅接受该实例/音源/账号的 Track 分区，私人页面不持久缓存，续页重验权限，调用期持独立插件租约。Source SDK v2 / Plugin UI API 的现有 ABI 未变，新增公共扩展头随 PluginSdk 安装。
+
+v2/新扩展契约、安装后外部编译、PageRepository 与 AggregateComposer 共 5 项联合回归通过；详见 `source-discovery-v1.md`。下一步接入 Host 私有发现模型、展示状态与原 Home 卡片/详情，验证范围、权限、卸载和代次；尚无真实平台插件实现私人服务，不能把契约测试宣称为服务完成。平台登录迁移、Phase 6 整体及最终 Legacy 删除仍未完成。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

@@ -1,6 +1,7 @@
 #if defined(QUEMUSIC_PAGE_FIXTURE)
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
+#include "extensions/discovery/v1/IDiscoveryProviderV1.h"
 
 class PageFixtureSession : public IMusicSourceSessionV2, public IPageProviderV2,
                            public IPlaybackProviderV2 {
@@ -63,6 +64,37 @@ public:
         return id;
     }
 };
+class DiscoveryFixtureSession : public PageFixtureSession, public IDiscoveryProviderV1 {
+    Q_OBJECT
+    Q_INTERFACES(IDiscoveryProviderV1)
+public:
+    using PageFixtureSession::PageFixtureSession;
+    AvailabilityV2 discoveryAvailability(DiscoveryKindV1 kind) const override
+    {
+        const auto key=kind==DiscoveryKindV1::PersonalRadio ? "radioAvailability" : "radarAvailability";
+        const auto value=property(key);
+        const auto result=value.isValid() ? AvailabilityV2(value.toInt()) : AvailabilityV2::Available;
+        if (property("closeOnCheck").toBool()) {
+            auto *self=const_cast<DiscoveryFixtureSession *>(this);
+            self->setProperty("closeOnCheck",false);
+            emit self->capabilitiesChanged({});
+        }
+        return result;
+    }
+    QUuid fetchDiscovery(DiscoveryKindV1 kind,const PageQueryV2 &query) override
+    {
+        const auto id=QUuid::createUuid();
+        setProperty("lastDiscoveryRequest",id);
+        setProperty("discoveryCalls",property("discoveryCalls").toInt()+1);
+        setProperty("discoveryKind",int(kind));
+        setProperty("discoveryScope",query.scope.sourceInstanceId);
+        setProperty("discoveryFilters",query.filters);
+        setProperty("discoveryCursor",query.cursor);
+        emit requestStarted(id);
+        if (property("inline").toBool()) emit pageReady(id,sample(query));
+        return property("badId").toBool() ? QUuid::createUuid() : id;
+    }
+};
 class PageFixturePlugin : public QObject, public IMusicSourcePluginV2 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID QUEMUSIC_MUSIC_SOURCE_PLUGIN_V2_IID)
@@ -71,12 +103,17 @@ class PageFixturePlugin : public QObject, public IMusicSourcePluginV2 {
 public:
     int sourceSdkAbi() const { return 2; }
     SourceDescriptorV2 descriptor() const override { return {"org.quemusic.source.task5", "task5", "Task5", "2.0.0", 2, {}}; }
-    IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &c, QObject *p) override { return new PageFixtureSession(c,p); }
+    IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &c, QObject *p) override
+    {
+        if (c.accountId=="personal") return new DiscoveryFixtureSession(c,p);
+        return new PageFixtureSession(c,p);
+    }
 };
 #else
 #include "PageRepository.h"
 #include "MusicPageModel.h"
 #include "SourceAccountStore.h"
+#include "extensions/discovery/v1/IDiscoveryProviderV1.h"
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -134,6 +171,148 @@ static PageSectionV2 favoriteSection(QString source, PageSectionKindV2 kind, QSt
 class PageRepositoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void personalDiscoveryNeverCallsOldPageProviders()
+    {
+        PageHarness h; QVERIFY(h.init());
+        auto *home=h.session("home"); auto *office=h.session("office");
+        QVERIFY(!qobject_cast<IDiscoveryProviderV1 *>(home));
+        QSignalSpy failed(&h.repo,&PageRepository::pageFailed),ready(&h.repo,&PageRepository::pageReady);
+        for (const auto kind:{DiscoveryKindV1::PersonalRadio,DiscoveryKindV1::PersonalRadar}) {
+            const auto before=failed.count();
+            h.repo.requestPage(discoveryQueryV1(kind),1);
+            QTRY_COMPARE(failed.count(),before+1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::Unsupported);
+        }
+        QCOMPARE(home->property("calls").toInt(),0); QCOMPARE(office->property("calls").toInt(),0);
+        QCOMPARE(ready.count(),0);
+        home->setProperty("inline",true);
+        PageQueryV2 ordinary; ordinary.section=PageSectionKindV2::Random; ordinary.scope={"task5/home"};
+        h.repo.requestPage(ordinary,2);
+        QTRY_COMPARE(ready.count(),1);
+        QCOMPARE(home->property("calls").toInt(),1);
+    }
+    void personalDiscoveryChecksEachAccountAndReturnsSafeTypedTracks()
+    {
+        PageHarness h; QVERIFY(h.init());
+        QVERIFY(h.accounts.saveResolvedV2({"task5","personal","Personal",{},{}}));
+        auto *session=h.session("personal"); QVERIFY(qobject_cast<IDiscoveryProviderV1 *>(session));
+        session->setProperty("inline",true);
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady),failed(&h.repo,&PageRepository::pageFailed);
+        auto query=discoveryQueryV1(DiscoveryKindV1::PersonalRadio,{"task5/personal"});
+        h.repo.requestPage(query,7);
+        QTRY_COMPARE(ready.count(),1);
+        QCOMPARE(session->property("discoveryKind").toInt(),int(DiscoveryKindV1::PersonalRadio));
+        QCOMPARE(session->property("discoveryScope").toString(),QString("task5/personal"));
+        QVERIFY(session->property("discoveryFilters").toMap().isEmpty());
+        QCOMPARE(session->property("calls").toInt(),0);
+        QVERIFY(!qvariant_cast<PageResultV2>(ready[0][2]).cached);
+        for (const auto state:{AvailabilityV2::Unsupported,AvailabilityV2::Unavailable,AvailabilityV2::Forbidden}) {
+            session->setProperty("radarAvailability",int(state));
+            const auto before=failed.count();
+            h.repo.requestPage(discoveryQueryV1(DiscoveryKindV1::PersonalRadar,{"task5/personal"}),8);
+            QTRY_COMPARE(failed.count(),before+1);
+            const auto expected=state==AvailabilityV2::Unsupported ? SourceErrorKindV2::Unsupported
+                : state==AvailabilityV2::Forbidden ? SourceErrorKindV2::Authorization : SourceErrorKindV2::Unavailable;
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,expected);
+            QCOMPARE(session->property("discoveryCalls").toInt(),1);
+        }
+        session->setProperty("radarAvailability",int(AvailabilityV2::Available));
+        h.repo.requestPage(discoveryQueryV1(DiscoveryKindV1::PersonalRadar),9);
+        QTRY_COMPARE(ready.count(),2);
+        const auto result=qvariant_cast<PageResultV2>(ready.last()[2]);
+        QCOMPARE(result.sections.size(),1); QCOMPARE(result.sections[0].kind,PageSectionKindV2::Tracks);
+        QCOMPARE(result.sections[0].items.size(),1);
+        QCOMPARE(result.sourceStates["task5/home"].error->kind,SourceErrorKindV2::Unsupported);
+        QCOMPARE(result.sourceStates["task5/office"].error->kind,SourceErrorKindV2::Unsupported);
+        QCOMPARE(h.session("home")->property("calls").toInt(),0);
+    }
+    void malformedDiscoverySelectorsFailBeforeDispatch()
+    {
+        PageHarness h; QVERIFY(h.init()); auto *session=h.session("home");
+        const auto good=discoveryQueryV1(DiscoveryKindV1::PersonalRadio,{"task5/home"});
+        QList<PageQueryV2> invalid;
+        auto q=good; q.filters[discoveryFilterKeyV1()]=QString("random"); invalid.append(q);
+        q=good; q.filters[discoveryFilterKeyV1()]=true; invalid.append(q);
+        q=good; q.filters["genre"]=QString("Rock"); invalid.append(q);
+        q=good; q.section=PageSectionKindV2::Random; invalid.append(q);
+        q=good; q.page=MusicPageKindV2::Search; invalid.append(q);
+        q=good; q.searchText="test"; invalid.append(q);
+        QSignalSpy failed(&h.repo,&PageRepository::pageFailed);
+        for (const auto &query:invalid) {
+            const auto before=failed.count(); h.repo.requestPage(query,1);
+            QTRY_COMPARE(failed.count(),before+1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::InvalidRequest);
+        }
+        QCOMPARE(session->property("calls").toInt(),0);
+    }
+    void discoveryRejectsWrongSectionsEntitiesAndRequestIds()
+    {
+        PageHarness h; QVERIFY(h.init());
+        QVERIFY(h.accounts.saveResolvedV2({"task5","personal","Personal",{},{}}));
+        auto *session=h.session("personal");
+        QSignalSpy failed(&h.repo,&PageRepository::pageFailed),ready(&h.repo,&PageRepository::pageReady);
+        const auto query=discoveryQueryV1(DiscoveryKindV1::PersonalRadio,{"task5/personal"});
+        auto tracks=sample("personal"); tracks.sections[0].kind=PageSectionKindV2::Tracks;
+        QList<PageResultV2> invalid;
+        invalid.append(sample("personal"));
+        auto page=tracks; page.sections[0].items[0].ref.entityType=MediaEntityTypeV2::Playlist; invalid.append(page);
+        page=tracks; page.sections[0].items[0].ref.sourceInstanceId="task5/home"; invalid.append(page);
+        page=tracks; page.sections[0].items[0].ref.sourcePluginId="other"; invalid.append(page);
+        page=tracks; page.sections[0].items[0].ref.accountId="other"; invalid.append(page);
+        page=tracks; page.sections[0].items[0].ref.entityId=" "; invalid.append(page);
+        page=tracks; page.sections.append(page.sections[0]); invalid.append(page);
+        page=tracks; page.sections[0].hasMore=true; invalid.append(page);
+        page=tracks; page.cached=true; invalid.append(page);
+        for (const auto &result:invalid) {
+            const int calls=session->property("discoveryCalls").toInt(),before=failed.count();
+            h.repo.requestPage(query,1); QTRY_COMPARE(session->property("discoveryCalls").toInt(),calls+1);
+            emit session->pageReady(session->property("lastDiscoveryRequest").toUuid(),result);
+            QTRY_COMPARE(failed.count(),before+1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::InvalidRequest);
+        }
+        session->setProperty("badId",true); const auto before=failed.count();
+        h.repo.requestPage(query,1); QTRY_COMPARE(failed.count(),before+1);
+        QCOMPARE(ready.count(),0); QCOMPARE(session->property("calls").toInt(),0);
+    }
+    void discoveryCursorRechecksAvailabilityAndKeepsProviderOrder()
+    {
+        PageHarness h; QVERIFY(h.init());
+        QVERIFY(h.accounts.saveResolvedV2({"task5","personal","Personal",{},{}}));
+        auto *session=h.session("personal");
+        auto query=discoveryQueryV1(DiscoveryKindV1::PersonalRadio,{"task5/personal"},2);
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady),failed(&h.repo,&PageRepository::pageFailed);
+        h.repo.requestPage(query,1); QTRY_COMPARE(session->property("discoveryCalls").toInt(),1);
+        auto page=sample("personal",{"z","a"},true); page.sections[0].kind=PageSectionKindV2::Tracks;
+        emit session->pageReady(session->property("lastDiscoveryRequest").toUuid(),page);
+        QTRY_COMPARE(ready.count(),1);
+        auto result=qvariant_cast<PageResultV2>(ready.last()[2]);
+        QCOMPARE(result.sections[0].items[0].ref.entityId,QString("z"));
+        query.cursor=result.sections[0].nextCursor; QVERIFY(!query.cursor.isEmpty());
+        session->setProperty("radioAvailability",int(AvailabilityV2::Forbidden));
+        h.repo.requestPage(query,2); QTRY_COMPARE(failed.count(),1);
+        QCOMPARE(session->property("discoveryCalls").toInt(),1);
+        session->setProperty("radioAvailability",int(AvailabilityV2::Available));
+        h.repo.requestPage(query,3); QTRY_COMPARE(session->property("discoveryCalls").toInt(),2);
+        QCOMPARE(session->property("discoveryCursor").toString(),QString("private-next"));
+        emit session->pageReady(session->property("lastDiscoveryRequest").toUuid(),{{}, {}, false, true});
+        QTRY_COMPARE(failed.count(),2); // A feed must explicitly return one Tracks section, even if empty.
+    }
+    void discoveryAvailabilityMayCloseSessionWithoutDispatching()
+    {
+        PageHarness h; QVERIFY(h.init());
+        QVERIFY(h.accounts.saveResolvedV2({"task5","personal","Personal",{},{}}));
+        QPointer<IMusicSourceSessionV2> session=h.session("personal");
+        session->setProperty("closeOnCheck",true);
+        auto unload=PluginOperationResult::Success;
+        connect(session,&IMusicSourceSessionV2::capabilitiesChanged,&h.repo,[&] {
+            h.registry.closeInstance("task5/personal");
+            unload=h.plugins.unload("org.quemusic.source.task5");
+        });
+        QSignalSpy failed(&h.repo,&PageRepository::pageFailed);
+        h.repo.requestPage(discoveryQueryV1(DiscoveryKindV1::PersonalRadio,{"task5/personal"}),1);
+        QTRY_COMPARE(failed.count(),1); QVERIFY(session.isNull());
+        QCOMPARE(unload,PluginOperationResult::Busy);
+    }
     void contentRefreshInvalidatesOnlyMatchingInstance()
     {
         PageHarness h; QVERIFY(h.init());

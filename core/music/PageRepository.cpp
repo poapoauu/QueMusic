@@ -1,5 +1,6 @@
 #include "PageRepository.h"
 #include "v2/ISourceProvidersV2.h"
+#include "extensions/discovery/v1/IDiscoveryProviderV1.h"
 #include <QFutureWatcher>
 #include <QTimer>
 #include <QtConcurrentRun>
@@ -25,6 +26,8 @@ void disconnectAll(QList<QMetaObject::Connection> &connections)
 }
 struct PageRepository::Request {
     QPointer<IMusicSourceSessionV2> session;
+    QString sourceId;
+    QString accountId;
     QUuid providerId;
     QList<QMetaObject::Connection> connections;
     bool invoking=false;
@@ -80,8 +83,10 @@ void PageRepository::begin(const QUuid &id)
         || int(q.section)<0 || int(q.section)>int(PageSectionKindV2::SearchResults)) {
         fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
     }
-    g->sourceOrdered=q.filters.contains(QStringLiteral("playlistId"));
-    if (g->sourceOrdered && q.scope.isAggregate()) {
+    const bool discovery=q.filters.contains(discoveryFilterKeyV1());
+    if (discovery && !discoveryKindV1(q)) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
+    g->sourceOrdered=q.filters.contains(QStringLiteral("playlistId")) || (discovery && !q.scope.isAggregate());
+    if (q.filters.contains(QStringLiteral("playlistId")) && q.scope.isAggregate()) {
         fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
     }
     for (auto it=q.filters.begin();it!=q.filters.end();++it) {
@@ -118,6 +123,7 @@ void PageRepository::begin(const QUuid &id)
 }
 void PageRepository::fanOut(const QUuid &id)
 {
+    const QPointer<PageRepository> guard(this);
     auto g=m_groups.value(id); if (!g) return;
     g->fannedOut=true;
     // Populate every source before invoking a potentially inline provider.
@@ -136,17 +142,28 @@ void PageRepository::fanOut(const QUuid &id)
     for (const auto &source:g->key.sourceInstanceIds) {
         if (!m_groups.contains(id)) return;
         if (!g->requests[source]->done) dispatch(id,source);
+        if (!guard) return;
     }
     finish(id);
 }
 void PageRepository::dispatch(const QUuid &id,const QString &source)
 {
+    const QPointer<PageRepository> guard(this);
     auto g=m_groups.value(id); if (!g) return;
     auto req=g->requests.value(source); if (!req || req->done || req->dispatched) return;
     if (!eligible(m_sources,source)) { receive(id,source,{},error(SourceErrorKindV2::Unavailable)); return; }
+    // A callback may close the registry's session lease. Keep plugin code loaded
+    // until every virtual invocation and inline response below has unwound.
+    QString package;
+    for (const auto &d:m_sources->enabledInstances())
+        if (d.sourceInstanceId==source) { package=d.pluginPackageId; req->sourceId=d.sourceId; req->accountId=d.accountId; }
+    const auto callLease=m_sources->pluginManager()->acquire(package);
+    if (!guard) return;
+    if (req->done || !m_groups.contains(id)) return;
+    if (!callLease.isValid()) { receive(id,source,{},error(SourceErrorKindV2::Unavailable)); return; }
     if (!req->session) {
         req->session=m_sources->sessionFor(source); // borrowed; NEVER delete/reparent
-        if (!m_groups.contains(id) || req->done) return;
+        if (!guard || !m_groups.contains(id) || req->done) return;
         if (!req->session) { receive(id,source,{},error(SourceErrorKindV2::Unavailable)); return; }
         auto session=req->session;
         req->connections.append(connect(session,&QObject::destroyed,this,[this,id,source] { receive(id,source,{},error(SourceErrorKindV2::Unavailable)); }));
@@ -155,10 +172,24 @@ void PageRepository::dispatch(const QUuid &id,const QString &source)
             else if (!liveState(state)) receive(id,source,{},error(SourceErrorKindV2::Unavailable));
         }));
     }
-    if (!liveState(req->session->state())) { receive(id,source,{},error(SourceErrorKindV2::Unavailable)); return; }
-    if (req->session->state()==SourceSessionStateV2::Connecting) return;
+    const auto state=req->session->state();
+    if (!guard || req->done || !m_groups.contains(id)) return;
+    if (!req->session || !liveState(state)) { receive(id,source,{},error(SourceErrorKindV2::Unavailable)); return; }
+    if (state==SourceSessionStateV2::Connecting) return;
+    const auto discovery=discoveryKindV1(g->key.query);
+    auto discoveryProvider=qobject_cast<IDiscoveryProviderV1 *>(req->session.data());
     auto provider=qobject_cast<IPageProviderV2 *>(req->session.data());
-    if (!provider) { receive(id,source,{},error(SourceErrorKindV2::Unsupported)); return; }
+    if (discovery) {
+        if (!discoveryProvider) { receive(id,source,{},error(SourceErrorKindV2::Unsupported)); return; }
+        const auto availability=discoveryProvider->discoveryAvailability(*discovery);
+        if (!guard || req->done || !m_groups.contains(id)) return;
+        if (!req->session) { receive(id,source,{},error(SourceErrorKindV2::Unavailable)); return; }
+        if (availability!=AvailabilityV2::Available) {
+            receive(id,source,{},error(availability==AvailabilityV2::Unsupported ? SourceErrorKindV2::Unsupported
+                : availability==AvailabilityV2::Forbidden ? SourceErrorKindV2::Authorization
+                : SourceErrorKindV2::Unavailable)); return;
+        }
+    } else if (!provider) { receive(id,source,{},error(SourceErrorKindV2::Unsupported)); return; }
     req->connections.append(connect(req->session,&IMusicSourceSessionV2::requestStarted,this,[req](QUuid pid) {
         if (req->invoking && req->providerId.isNull()) req->providerId=pid;
     }));
@@ -171,8 +202,10 @@ void PageRepository::dispatch(const QUuid &id,const QString &source)
     auto query=g->key.query; query.scope.sourceInstanceId=source;
     query.cursor=g->continuation?g->continuation->sourceCursors.value(source):QString{};
     req->dispatched=true; req->invoking=true;
-    const auto returned=provider->fetchPage(query);
+    if (discovery) query.filters.clear();
+    const auto returned=discovery ? discoveryProvider->fetchDiscovery(*discovery,query) : provider->fetchPage(query);
     req->invoking=false;
+    if (!guard) return;
     if (!req->done && m_groups.contains(id) && (returned.isNull() || returned!=req->providerId))
         receive(id,source,{},error(SourceErrorKindV2::InvalidRequest));
 }
@@ -184,6 +217,9 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
     // One terminal counts as one query even when the initial response contains
     // multiple standard sections. Ruling12 continuations are section-specific.
     if (!failure && (!page.complete || page.cached)) failure=error(SourceErrorKindV2::InvalidRequest);
+    const bool discovery=discoveryKindV1(g->key.query).has_value();
+    if (!failure && discovery && (page.sections.size()!=1 || page.sections.first().kind!=PageSectionKindV2::Tracks))
+        failure=error(SourceErrorKindV2::InvalidRequest);
     QSet<PageSectionKindV2> kinds;
     if (!failure) for (const auto &s:page.sections) {
         if (int(s.kind)<0 || int(s.kind)>int(PageSectionKindV2::SearchResults)
@@ -191,7 +227,10 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
             || (!g->key.query.cursor.isEmpty() && s.kind!=g->key.query.section))
             failure=error(SourceErrorKindV2::InvalidRequest);
         kinds.insert(s.kind);
-        for (const auto &i:s.items) if (i.ref.sourceInstanceId!=source) failure=error(SourceErrorKindV2::InvalidRequest);
+        for (const auto &i:s.items) if (i.ref.sourceInstanceId!=source
+            || (discovery && (i.ref.entityType!=MediaEntityTypeV2::Track
+                || i.ref.sourcePluginId!=req->sourceId || i.ref.accountId!=req->accountId
+                || i.ref.entityId.trimmed().isEmpty()))) failure=error(SourceErrorKindV2::InvalidRequest);
     }
     req->done=true; disconnectAll(req->connections);
     req->result.error=failure;
