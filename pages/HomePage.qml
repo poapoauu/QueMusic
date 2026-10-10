@@ -95,16 +95,68 @@ Item {
         if (!targets) return
         for (const section of Array.from(targets)) musicAdapter[action](1, section)
     }
+    function discoveryState(kind) {
+        if (!musicAdapter) return "unsupported"
+        return (kind === 0 ? musicAdapter.personalRadioState : musicAdapter.personalRadarState) || "unsupported"
+    }
+    function openPersonalDiscovery(kind) {
+        if ((kind !== 0 && kind !== 1) || !musicAdapter
+                || typeof musicAdapter.refreshDiscovery !== "function") return false
+        const adapter = musicAdapter
+        const scope = adapter.selectedSourceInstanceId
+        if (personalWindow.visible && personalWindow.discoveryKind === kind && discoveryState(kind) === "loading")
+            return false
+        if (personalWindow.visible && personalWindow.discoveryKind !== kind
+                && typeof musicAdapter.closeDiscovery === "function")
+            musicAdapter.closeDiscovery(personalWindow.discoveryKind)
+        if (musicAdapter !== adapter || adapter.selectedSourceInstanceId !== scope) return false
+        personalWindow.discoveryKind = kind
+        personalWindow.opening = true
+        window.exitIndex = 1
+        personalWindow.opened(kind === 0 ? "私人漫游" : "私人雷达", "qrc:/QueMusic/resources/app/rainbowMusicIcon.png")
+        if (musicAdapter !== adapter || adapter.selectedSourceInstanceId !== scope || !personalWindow.visible) {
+            personalWindow.opening = false
+            return false
+        }
+        adapter.refreshDiscovery(kind)
+        personalWindow.opening = false
+        return musicAdapter === adapter && adapter.selectedSourceInstanceId === scope && personalWindow.visible
+    }
+    function requestPersonalSections(retry) {
+        const adapter = musicAdapter
+        const kind = personalWindow.discoveryKind
+        const model = personalWindow.currentModel
+        if (!personalWindow.visible || personalWindow.opening || !adapter || !model || discoveryState(kind) === "loading") return
+        const action = retry ? "retryDiscovery" : "loadMoreDiscovery"
+        if (typeof adapter[action] !== "function") return
+        const targets = retry ? model.retrySectionIds : model.paginationSectionIds
+        if (!targets) return
+        const scope = adapter.selectedSourceInstanceId
+        for (const section of Array.from(targets)) {
+            if (musicAdapter !== adapter || personalWindow.discoveryKind !== kind
+                    || personalWindow.currentModel !== model || !personalWindow.visible
+                    || adapter.selectedSourceInstanceId !== scope) return
+            if (section) adapter[action](kind, section)
+        }
+    }
     function resetSourceDiscoveryViews() {
         changingDiscoveryContext = true
         dailyRecomWindow.resetView()
         recommendWindow.resetView()
+        personalWindow.resetView()
         changingDiscoveryContext = false
     }
     Connections {
         target: homePage.musicAdapter
         ignoreUnknownSignals: true
-        function onSelectedSourceInstanceIdChanged() { homePage.resetSourceDiscoveryViews() }
+        function onSelectedSourceInstanceIdChanged() {
+            const adapter = homePage.musicAdapter
+            homePage.resetSourceDiscoveryViews()
+            if (adapter && homePage.musicAdapter === adapter && typeof adapter.closeDiscovery === "function") {
+                adapter.closeDiscovery(0)
+                if (homePage.musicAdapter === adapter) adapter.closeDiscovery(1)
+            }
+        }
         function onCategoryNavigationChanged() {
             if (!recommendWindow.visible || homePage.changingDiscoveryContext) return
             if (homePage.musicAdapter && homePage.musicAdapter.categoryCanNavigateBack === true) {
@@ -596,6 +648,7 @@ Item {
                     QFloatCard {
                         x: parent.leftWidth + 16
                         y: 0
+                        objectName: "homePersonalRadioCard"
                         width: parent.rightWidth
                         height: 82
                         Text {
@@ -623,21 +676,16 @@ Item {
                             x: 70
                             y: 42
                             height: 20
-                            text: "全网播放量最高的热门单曲合集"
+                            text: "来自音源账号的个性化推荐"
                             color: Style.themes.textColor
                             font.pixelSize: Style.settings.text
                             verticalAlignment: Text.AlignVCenter
                         }
                         onClicked: {
-                            MusicApi.personalFm.clear();
-                            personalWindow.page = 1;
-                            personalWindow.mode = "fm";
-                            MusicApi.getPersonalFm(1, 20, MusicApi.songSource);
-                            personalWindow.currentModel = MusicApi.personalFm;
-                            personalWindow.opened("私人漫游", "qrc:/QueMusic/resources/app/rainbowMusicIcon.png");
-                            window.exitIndex = 1;
+                            homePage.openPersonalDiscovery(0)
                         }
                         controlItem: SButton {
+                            objectName: "homePersonalRadioOpen"
                             x: parent.width - 50
                             y: 23
                             iconCharacter: "\uf0e7"
@@ -646,12 +694,13 @@ Item {
                             radius: 18
                             buttonColor: "transparent"
                             shadowEnabled: false
-                            onClicked: parent.clicked()
+                            onClicked: homePage.openPersonalDiscovery(0)
                         }
                     }
                     QFloatCard {
                         x: parent.leftWidth + 16
                         y: 98
+                        objectName: "homePersonalRadarCard"
                         width: parent.rightWidth
                         height: 82
                         Text {
@@ -679,21 +728,16 @@ Item {
                             x: 70
                             y: 42
                             height: 20
-                            text: "最新发行高赞潮流流行歌曲"
+                            text: "来自音源账号的私人发现"
                             color: Style.themes.textColor
                             font.pixelSize: Style.settings.text
                             verticalAlignment: Text.AlignVCenter
                         }
                         onClicked: {
-                            MusicApi.personalRadar.clear();
-                            personalWindow.page = 1;
-                            personalWindow.mode = "radar";
-                            MusicApi.getPersonalRadar(1, 20, MusicApi.songSource);
-                            personalWindow.currentModel = MusicApi.personalRadar;
-                            personalWindow.opened("私人雷达", "qrc:/QueMusic/resources/app/rainbowMusicIcon.png");
-                            window.exitIndex = 1;
+                            homePage.openPersonalDiscovery(1)
                         }
                         controlItem: SButton {
+                            objectName: "homePersonalRadarOpen"
                             x: parent.width - 50
                             y: 23
                             iconCharacter: "\uf0e7"
@@ -702,7 +746,7 @@ Item {
                             radius: 18
                             buttonColor: "transparent"
                             shadowEnabled: false
-                            onClicked: parent.clicked()
+                            onClicked: homePage.openPersonalDiscovery(1)
                         }
                     }
                 }
@@ -914,15 +958,30 @@ Item {
     // 私人漫游 / 私人雷达
     AnimatorWindow {
         id: personalWindow
+        objectName: "personalDiscoveryWindow"
         mainTarget: homeMain
         haveControl: false
-        property var currentModel: MusicApi.personalFm
-        property string mode: "fm"   // "fm" 私人漫游 / "radar" 私人雷达
-        property int page: 1         // 当前页码
-        property int pageSize: 20    // 每页数量
+        property int discoveryKind: 0
+        property bool opening: false
+        readonly property var currentModel: !musicAdapter ? null
+            : discoveryKind === 0 ? musicAdapter.personalRadio || null : musicAdapter.personalRadar || null
+        readonly property string discoveryState: homePage.discoveryState(discoveryKind)
+        readonly property string statusMessage: {
+            if (discoveryState === "loading") return "正在加载私人内容…"
+            if (discoveryState === "unsupported") return "当前范围暂无支持此功能的音源"
+            if (discoveryState === "forbidden") return "当前音源账号无权使用此功能，请在插件管理中检查"
+            if (discoveryState === "failed") return "私人内容加载失败，可重试"
+            return "当前范围暂无私人推荐曲目"
+        }
+        onVisibleChanged: {
+            if (!visible && !homePage.changingDiscoveryContext && musicAdapter
+                    && typeof musicAdapter.closeDiscovery === "function")
+                musicAdapter.closeDiscovery(discoveryKind)
+        }
         content: Item {
             QListView {
                 id: personalView
+                objectName: "homePersonalDiscoveryList"
                 x: 24
                 y: 128
                 width: personalWindow.width - 32
@@ -931,60 +990,52 @@ Item {
                 clip: true
                 topMargin: 8
                 bottomMargin: 24
+                sourcePaging: true
+                menuModel: []
+                toolText0: ""
+                toolText1: ""
+                toolText0ForRow: function(index) {
+                    return homePage.capabilitiesFor(homePage.rowFor(personalView, index)).canEnqueue ? "\uf095" : ""
+                }
+                toolText1ForRow: function(index) {
+                    return homePage.capabilitiesFor(homePage.rowFor(personalView, index)).canFavorite ? "\uf0c8" : ""
+                }
+                retryAction: function() { homePage.requestPersonalSections(true) }
 
                 onClicked: (index) => {
-                    if(Options.settings.soundQuality === 0) {
-                        MusicApi.getMusicInfo(model.get(index).hash);
-                    } else if(Options.settings.soundQuality === 1) {
-                        MusicApi.getMusicInfo(model.get(index).hashhq);
-                    } else {
-                        MusicApi.getMusicInfo(model.get(index).hashsq);
-                    }
+                    const row = homePage.rowFor(personalView, index)
+                    if (homePage.capabilitiesFor(row).canPlay) musicAdapter.play(row)
                 }
 
                 onToolClicked: (index,tool) => {
-                    switch(tool) {
-                    case 0:
-                        var listIndex = -1;
-                        var indexHash = model.get(index).hash;
-                        for(var i = 0;i < playListModel.count;i++) {
-                            var forUrl = playListModel.get(i).path;
-                            if(forUrl === indexHash) {
-                                listIndex = i;
-                            }
-                        }
-                        if (listIndex == -1) {
-                            playListModel.append({ name: model.get(index).title, path: model.get(index).hash, songer: model.get(index).artist, source: MusicApi.songSource });
-                            mainWarn.tiped("成功加入播放列表",1);
-                        }
-                        break;
-                    case 1:
-                        if (favoritesSong.isFavorite(model.get(index).hash, "song")) {
-                            favoritesSong.removeFavorite(model.get(index).hash, "song");
-                            mainWarn.tiped("取消收藏",0);
-                        } else {
-                            favoritesSong.addFavorite(model.get(index).hash, model.get(index).title, model.get(index).artist, model.get(index).cover, MusicApi.songSource, model.get(index).duration, "song");
-                            mainWarn.tiped("成功收藏",1);
-                        }
-                        break;
-                    }
+                    const row = homePage.rowFor(personalView, index)
+                    const caps = homePage.capabilitiesFor(row)
+                    if (tool === 0 && caps.canEnqueue) musicAdapter.enqueue(row)
+                    else if (tool === 1 && caps.canFavorite) musicAdapter.setFavorite(row, true)
                 }
 
-                onEnded: {
-                    if(personalWindow.currentModel.count % personalWindow.pageSize === 0 && MusicApi.playlistSong.count !== 0) {
-                        personalWindow.page += 1;
-                        if(personalWindow.mode === "fm") {
-                            MusicApi.getPersonalFm(personalWindow.page, personalWindow.pageSize, MusicApi.songSource);
-                        } else {
-                            MusicApi.getPersonalRadar(personalWindow.page, personalWindow.pageSize, MusicApi.songSource);
-                        }
-                        isEnd = false;
-                    } else {
-                        if(MusicApi.playlistSong.count !== 0) {
-                            isEnd = true;
-                        }
-                    }
-                }
+                onEnded: homePage.requestPersonalSections(false)
+            }
+            Text {
+                objectName: "homePersonalDiscoveryStatus"
+                x: 24; y: 168
+                width: parent.width - 48
+                text: personalWindow.statusMessage
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                color: Style.themes.textColor
+                font.pixelSize: Style.settings.text
+                visible: personalView.count === 0
+            }
+            QButton {
+                objectName: "homePersonalDiscoveryRetry"
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: 224; width: 120; height: 40; radius: 20
+                text: "重试"
+                visible: personalView.count === 0 && (personalWindow.discoveryState === "failed" || personalWindow.discoveryState === "forbidden")
+                enabled: !!personalWindow.currentModel && personalWindow.currentModel.retrySectionIds
+                    && personalWindow.currentModel.retrySectionIds.length > 0
+                onClicked: homePage.requestPersonalSections(true)
             }
         }
     }

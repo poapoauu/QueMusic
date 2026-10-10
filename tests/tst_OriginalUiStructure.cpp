@@ -119,6 +119,14 @@ private slots:
         QVERIFY(!home.contains(QStringLiteral("MusicApi.getPlaylistSongs(")));
         QVERIFY(!home.contains(QStringLiteral("hotlistsWindow")));
         QVERIFY(!home.contains(QStringLiteral("PlayListWindow")));
+        QVERIFY(!home.contains(QStringLiteral("MusicApi")));
+        QVERIFY(!home.contains(QStringLiteral("playListModel")));
+        QVERIFY(!home.contains(QStringLiteral("favoritesSong")));
+        QVERIFY(!home.contains(QStringLiteral("soundQuality")));
+        QVERIFY(home.contains(QStringLiteral("objectName: \"personalDiscoveryWindow\"")));
+        QVERIFY(home.contains(QStringLiteral("adapter.refreshDiscovery(kind)")));
+        QVERIFY(home.contains(QStringLiteral("musicAdapter.personalRadio || null")));
+        QVERIFY(home.contains(QStringLiteral("musicAdapter.personalRadar || null")));
         const auto animator = readSource(QStringLiteral("components/AnimatorWindow.qml"));
         QVERIFY(!animator.contains(QStringLiteral("MusicApi")));
         QVERIFY(!animator.contains(QStringLiteral("songSource")));

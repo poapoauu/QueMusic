@@ -19,6 +19,35 @@ public:
 class DirectoryLibraryControllerTest final : public QObject {
     Q_OBJECT
 private slots:
+    void callableLeaseAndBusyNotificationsDoNotRestartDirectoryRequests()
+    {
+        QTemporaryDir files; QVERIFY(files.isValid());
+        QSettings settings(files.filePath("settings.ini"), QSettings::IniFormat);
+        settings.setValue("MusicHub/cacheDirectory", files.filePath("cache"));
+        DirectorySecrets secrets; SourceAccountStore accounts(&settings, &secrets);
+        PluginManager plugins; plugins.addSearchPath(QUEMUSIC_TASK7_PACKAGES);
+        QCOMPARE(plugins.discover(),1); QVERIFY(plugins.load("org.quemusic.source.task7"));
+        QVERIFY(accounts.saveResolvedV2({"task7","home","Home",{}, {}}));
+        SourceRegistry registry(&plugins,&accounts); SourceScopeStore scope(&settings);
+        MusicHub hub(&registry,&scope,&settings); auto *directories=hub.directoryLibrary();
+        directories->activate(); QTRY_COMPARE(directories->model()->state(),PageLoadStateV2::Ready);
+        auto *session=registry.sessionFor("task7/home"); QVERIFY(session);
+        QSignalSpy resets(directories->model(),&QAbstractItemModel::modelReset);
+        const auto requests=session->property("requests").toList().size();
+        {
+            const auto lease=plugins.acquire("org.quemusic.source.task7"); QVERIFY(lease.isValid());
+            QCOMPARE(plugins.unload("org.quemusic.source.task7"),PluginOperationResult::Busy);
+            QCOMPARE(resets.count(),0);
+        }
+        QTest::qWait(20);
+        QCOMPARE(resets.count(),0);
+        QCOMPARE(session->property("requests").toList().size(),requests);
+        // Actual package availability still invalidates the projection.
+        QVERIFY(registry.closeInstance("task7/home"));
+        QVERIFY(plugins.failLoadedPlugin("org.quemusic.source.task7","test failure"));
+        QTRY_COMPARE(directories->model()->state(),PageLoadStateV2::Failed);
+        QVERIFY(resets.count()>0);
+    }
     void retriesOnlyFailedSectionAndRejectsDuplicateRequests()
     {
         QTemporaryDir files; QVERIFY(files.isValid());

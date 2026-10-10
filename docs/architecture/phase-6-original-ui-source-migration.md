@@ -372,12 +372,22 @@ ctest --test-dir build-phase3 --output-on-failure
 - OriginalUiMusicAdapter 增加 personalRadio / personalRadar 安全投影及 idle/loading/ready/empty/unsupported/forbidden/failed 状态；动作仍恢复私有完整项后经 Coordinator / Router。私人行的错误也只展示 Host 分区状态，不输出逐账号诊断/身份字段。部分实例不支持不阻塞支持实例续页，成功空结果不误标为不支持，真正失败保留重试。
 - 主程序构建及 v2/发现契约、外部安装编译、MusicHub、Adapter、PageRepository、Registry 共 7 项联合回归通过。覆盖独立模型、真实请求与动作链、混合实例、权限失效、取消/迟到、会话替换、Hub 销毁和 Registry 当前会话通知；尚未迁移生产 Home 私人入口，也未验收真实平台服务。下一切片迁移原卡片与详情，不宣称私人插件或 Phase 6 整体完成。
 
+### 私人发现：原 Home 卡片与详情迁移（2026-10-10）
+
+- 原私人漫游/雷达卡片及详情的布局和动画保留，统一使用 personalRadio / personalRadar；移除 Home 的最后一组 MusicApi、hash/path 队列写入、soundQuality 分支和 Legacy 收藏处理。描述不再声称普通列表是全网热门/最新私人算法。
+- 点击、播放、入队和收藏只用安全投影与当前能力；更多/重试只分发当前模型可操作的分区 ID，不猜页码。缺扩展、缺 Adapter、加载、空、无权限和失败均有明确通用状态，不回退 Random 或旧平台。原箭头按钮的 parent.clicked 参数不匹配一并修正，直接复用同一入口。
+- 重复加载不重复提交；正常关闭停止当前发现，Source 范围变化失效所有详情并关闭私人模型。Adapter 替换/移除或同步回调中切换上下文不继续旧请求，也不误清替换 Adapter 的私人模型；原父页面与退出层级恢复。
+- 生产 QML 回归覆盖两个原卡片/按钮、安全动作/能力拒绝、非法索引、六种状态、空行重试、混合分区游标、终态、重复点击、范围变化、延后销毁、替换/移除和回调重入；结构测试约束 Home 不得回流上述 Legacy 引用。
+- 全量检查首次暴露目录控制器将 PluginManager 的租约计数通知视作内容变化，导致调用期 lease 反复取消自身请求；控制器改为只响应包加载状态变化，调用期卸载保护保留。新增 lease / Busy 通知不重启、真实包失效仍刷新测试，不能通过删安全 lease 或放宽验收掩盖回归。
+- 修复后现有 macOS / Qt 6.11.1 build-phase3 全目标增量构建成功；全部 73 项 CTest 通过（123.13 秒），包括目录、安装后发现扩展外部编译、全部原 UI 和 macOS 包/增量/移动后包测试。此前两项目录失败已在完整重跑中消除；不等同从零构建、跨 OS/ABI、真实私人服务器/物理音频/原生视觉验收。
+- 不修改 Source SDK v2 / Source 插件 ABI / Plugin UI API；真实 Local / Navidrome 没有私人扩展实现，明确显示不支持。Kugou / Netease 私人服务、其余平台账号 UI 和 Phase 6 整体仍未完成，下一切片补齐收藏页关注歌手的既有 v2 投影与入口。
+
 ## 后续顺序与验收
 
 本轮分区状态修正已通过主程序构建与六个相关套件：MusicHub、OriginalUiMusicAdapter、MusicHubQml、OriginalUiRecommendationQml、OriginalUiActionsQml、OriginalUiStructure；未执行真实服务器音频或手工视觉验收。
 
-1. Home 剩余旧卡片：为私人漫游/雷达与热门歌单建立通用展示/动作来源后再删除对应 `MusicApi` 分支，保持原卡片视觉；未来若要从已移出队列的历史记录重新播放，应增加可信插件媒体项查找能力，不能猜造动作。
-2. Playlist/Category：逐页删除旧平台枚举及路径队列写入；用 Adapter 页面模型、动作和详情导航替代。收藏页已完成页面级去回退，但关注歌手、历史占位与更广泛实例失效验收仍待补齐。测试分页、错误/空态、收藏/取消收藏及实例失效。
+1. Home 原卡片已完成 Source 数据与动作接入，私人服务由后续真实平台插件实现扩展后验收；不能以 Host 替身代替实际算法。未来若要从已移出队列的历史记录重新播放，应增加可信插件媒体项查找能力，不能猜造动作。
+2. 收藏/Playlist/Category：收藏关注歌手、历史占位与更广泛实例失效验收仍待补齐，优先复用既有 v2 分区/详情能力。继续审计其余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。
 3. File/Download、Queue、Player 和桌面歌词：清理剩余直接音源分支，确保实际播放只由 Coordinator 发起；保留原控件和布局。验证来源标签、切歌、停播、恢复和卸载后的展示状态。
 4. 全量扫描及 UI smoke：页面新增一个 Source Plugin 不需要改 source switch/case；无权限动作不显示或不可触发；完整构建、CTest 和 macOS 手工视觉/音频检查通过。
 

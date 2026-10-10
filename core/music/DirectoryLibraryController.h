@@ -43,6 +43,7 @@ private:
     MusicPageModel *m_model;
     QHash<QUuid, Pending> m_pending;
     QHash<QString, PageQueryV2> m_origins;
+    QHash<QString, PluginState> m_pluginStates;
     QList<QVariantMap> m_stack;
     quint64 m_generation = 0;
     int m_expected = 0;

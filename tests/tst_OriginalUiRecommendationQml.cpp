@@ -94,6 +94,10 @@ private:
 class FakeOriginalUiMusic final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QObject *recommendSongs READ recommendSongs CONSTANT)
+    Q_PROPERTY(QObject *personalRadio READ personalRadio CONSTANT)
+    Q_PROPERTY(QObject *personalRadar READ personalRadar CONSTANT)
+    Q_PROPERTY(QString personalRadioState MEMBER personalRadioState NOTIFY discoveryStatusChanged)
+    Q_PROPERTY(QString personalRadarState MEMBER personalRadarState NOTIFY discoveryStatusChanged)
     Q_PROPERTY(QObject *categoryItems READ categoryItems CONSTANT)
     Q_PROPERTY(QObject *categorySongs READ categorySongs CONSTANT)
     Q_PROPERTY(QObject *categoryArtists READ categoryArtists CONSTANT)
@@ -131,6 +135,8 @@ public:
     }
 
     QObject *recommendSongs() { return &recommend; }
+    QObject *personalRadio() { return &radio; }
+    QObject *personalRadar() { return &radar; }
     QObject *categoryItems() { return &category; }
     QObject *categorySongs() { return &songs; }
     QObject *categoryArtists() { return &artists; }
@@ -174,6 +180,12 @@ public:
     }
     Q_INVOKABLE void closeCategoryBrowse() { ++closedBrowses; navigation.clear(); emit categoryNavigationChanged(); }
     Q_INVOKABLE void retry(int page, const QString &section) { retries << qMakePair(page, section); }
+    Q_INVOKABLE void refreshDiscovery(int kind) { discoveryRefreshes << kind; }
+    Q_INVOKABLE void closeDiscovery(int kind) { discoveryCloses << kind; emit discoveryClosed(kind); }
+    Q_INVOKABLE void loadMoreDiscovery(int kind,const QString &section) {
+        discoveryMore << qMakePair(kind,section); emit discoveryMoreRequested(kind,section);
+    }
+    Q_INVOKABLE void retryDiscovery(int kind,const QString &section) { discoveryRetries << qMakePair(kind,section); }
     Q_INVOKABLE void play(const QVariantMap &row) { playedRows << row; }
     Q_INVOKABLE void enqueue(const QVariantMap &row) { enqueuedRows << row; }
     Q_INVOKABLE void setFavorite(const QVariantMap &row, bool favorite) { favoriteRows << qMakePair(row, favorite); }
@@ -187,6 +199,10 @@ public:
     }
 
     FakeListModel recommend;
+    FakeListModel radio,radar;
+    QString personalRadioState="ready",personalRadarState="ready";
+    QList<int> discoveryRefreshes,discoveryCloses;
+    QList<QPair<int,QString>> discoveryMore,discoveryRetries;
     int closedBrowses = 0;
     FakeListModel category;
     FakeListModel songs;
@@ -208,6 +224,9 @@ public:
     QVariantList customSourceOptions;
 
 signals:
+    void discoveryStatusChanged();
+    void discoveryClosed(int kind);
+    void discoveryMoreRequested(int kind,QString section);
     void categoryStatusChanged();
     void categoryNavigationChanged();
     void selectedSourceInstanceIdChanged();
@@ -320,7 +339,7 @@ public:
     QObject *getHotlistMenu() { return &lists; } QObject *hotPlayLists() { ++hotPlaylistReads; return &lists; }
     QObject *allPlaylistMenu() { return &lists; } QObject *musicPlaylists() { return &lists; }
     QObject *recommendSongs() { return &lists; } QObject *playlistSong() { return &lists; }
-    QObject *personalFm() { return &lists; } QObject *personalRadar() { return &lists; }
+    QObject *personalFm() { ++personalReads; return &lists; } QObject *personalRadar() { ++personalReads; return &lists; }
     QObject *newSongs() { return &lists; } QObject *toplistList() { return &lists; }
     QObject *singerList() { return &lists; }
     Q_INVOKABLE void getHotPlaylistMenu(int) {} Q_INVOKABLE void getHotPlaylists(int) { ++hotPlaylistCalls; }
@@ -328,7 +347,7 @@ public:
     Q_INVOKABLE void getAllToplist() {} Q_INVOKABLE void getRecommendSongs(int, int, int = 0) { ++recommendMoreCalls; }
     Q_INVOKABLE void getMusicPlaylists(int, int, int) { ++musicPlaylistsMoreCalls; } Q_INVOKABLE void getMenuInfo(int) {}
     Q_INVOKABLE void getMusicInfo(const QString &, int = 0, int = 0) { ++musicInfoCalls; }
-    Q_INVOKABLE void getPersonalFm(int, int, int) {} Q_INVOKABLE void getPersonalRadar(int, int, int) {}
+    Q_INVOKABLE void getPersonalFm(int, int, int) { ++personalCalls; } Q_INVOKABLE void getPersonalRadar(int, int, int) { ++personalCalls; }
     Q_INVOKABLE void getPlaylistSongs(const QString &, int, int) { ++playlistSongCalls; }
     Q_INVOKABLE void getHotSingers(int, int, int) {} Q_INVOKABLE void getSingerCategory(int, int, int, int) {}
     Q_INVOKABLE void getSingerSongs(const QString &, int, int, int) {}
@@ -346,6 +365,7 @@ public:
     int hotPlaylistReads = 0;
     int hotPlaylistCalls = 0;
     int playlistSongCalls = 0;
+    int personalReads = 0,personalCalls = 0;
     FakeListModel *listModel() { return &lists; }
 signals:
     void songSourceChanged(); void nowIndexChanged(); void globalidChanged(); void globaltagidChanged(); void loadStateChanged();
@@ -449,6 +469,155 @@ std::unique_ptr<QObject> loadPage(QQmlEngine &engine, const QString &page, QObje
 class OriginalUiRecommendationQmlTest final : public QObject {
     Q_OBJECT
 private slots:
+    void homePersonalCardsUseSourceModelsAndOnlySafeActions()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto radio=mixedCategoryRows().last().toMap(); radio["title"]="<b>Personal radio</b>";
+        auto radar=radio; radar["title"]="Personal radar";
+        adapter.radio.setRows({radio}); adapter.radar.setRows({radar});
+        auto home=loadPage(engine,"pages/HomePage.qml",&adapter,&error); QVERIFY2(home,qPrintable(error));
+        auto *radioCard=home->findChild<QObject *>("homePersonalRadioCard"); QVERIFY(radioCard);
+        auto *radioButton=home->findChild<QObject *>("homePersonalRadioOpen"); QVERIFY(radioButton);
+        auto *radarCard=home->findChild<QObject *>("homePersonalRadarCard"); QVERIFY(radarCard);
+        auto *detail=home->findChild<QObject *>("personalDiscoveryWindow"); QVERIFY(detail);
+        QVERIFY(QMetaObject::invokeMethod(radioButton,"clicked"));
+        QCOMPARE(adapter.discoveryRefreshes,QList<int>{0});
+        QCOMPARE(detail->property("title").toString(),QString("私人漫游"));
+        auto *list=home->findChild<QObject *>("homePersonalDiscoveryList"); QVERIFY(list);
+        QCOMPARE(list->property("model").value<QObject *>(),adapter.personalRadio());
+        QVERIFY(list->property("sourcePaging").toBool()); QVERIFY(!list->property("useLegacyLoadingState").toBool());
+        QVERIFY(list->property("menuModel").toStringList().isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(list,"clicked",Q_ARG(int,0)));
+        QVERIFY(QMetaObject::invokeMethod(list,"toolClicked",Q_ARG(int,0),Q_ARG(int,0)));
+        QVERIFY(QMetaObject::invokeMethod(list,"toolClicked",Q_ARG(int,0),Q_ARG(int,1)));
+        QCOMPARE(adapter.playedRows,QList<QVariantMap>{radio}); QCOMPARE(adapter.enqueuedRows,QList<QVariantMap>{radio});
+        QCOMPARE(adapter.favoriteRows,(QList<QPair<QVariantMap,bool>>{{radio,true}}));
+        radio["canPlay"]=false; radio["canEnqueue"]=false; radio["canFavorite"]=false;
+        adapter.radio.updateRow(0,radio);
+        for (int index:{0,-1,1}) {
+            QVERIFY(QMetaObject::invokeMethod(list,"clicked",Q_ARG(int,index)));
+            QVERIFY(QMetaObject::invokeMethod(list,"toolClicked",Q_ARG(int,index),Q_ARG(int,0)));
+            QVERIFY(QMetaObject::invokeMethod(list,"toolClicked",Q_ARG(int,index),Q_ARG(int,1)));
+        }
+        QCOMPARE(adapter.playedRows.size(),1); QCOMPARE(adapter.enqueuedRows.size(),1); QCOMPARE(adapter.favoriteRows.size(),1);
+        QVERIFY(QMetaObject::invokeMethod(radarCard,"clicked"));
+        QCOMPARE(adapter.discoveryRefreshes,(QList<int>{0,1})); QCOMPARE(adapter.discoveryCloses,QList<int>{0});
+        QCOMPARE(detail->property("title").toString(),QString("私人雷达"));
+        QCOMPARE(list->property("model").value<QObject *>(),adapter.personalRadar());
+        QVERIFY(QMetaObject::invokeMethod(list,"clicked",Q_ARG(int,0))); QCOMPARE(adapter.playedRows.last(),radar);
+        QVERIFY(QMetaObject::invokeMethod(detail,"closed",Q_ARG(QVariant,QVariant()),Q_ARG(QVariant,QVariant())));
+        QTRY_COMPARE(adapter.discoveryCloses,(QList<int>{0,1}));
+        QCOMPARE(context.legacyMusicApi()->personalReads,0); QCOMPARE(context.legacyMusicApi()->personalCalls,0);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls,0);
+        QCOMPARE(context.legacyLists()->favoriteQueries,0); QCOMPARE(context.legacyLists()->favoriteCalls,0);
+    }
+    void personalStatusAndPaginationUseExplicitFeedStatesAndCursors()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter; QString error;
+        auto home=loadPage(engine,"pages/HomePage.qml",&adapter,&error); QVERIFY2(home,qPrintable(error));
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_ARG(QVariant,QVariant(0))));
+        auto *status=home->findChild<QObject *>("homePersonalDiscoveryStatus"); QVERIFY(status);
+        auto *retry=home->findChild<QObject *>("homePersonalDiscoveryRetry"); QVERIFY(retry);
+        auto *list=home->findChild<QObject *>("homePersonalDiscoveryList"); QVERIFY(list);
+        const QList<QPair<QString,QString>> states{{"loading","正在加载私人内容…"},
+            {"unsupported","当前范围暂无支持此功能的音源"},
+            {"forbidden","当前音源账号无权使用此功能，请在插件管理中检查"},
+            {"failed","私人内容加载失败，可重试"},{"empty","当前范围暂无私人推荐曲目"}};
+        for (const auto &state:states) {
+            adapter.personalRadioState=state.first; emit adapter.discoveryStatusChanged();
+            QCOMPARE(status->property("text").toString(),state.second); QVERIFY(status->property("visible").toBool());
+            QCOMPARE(status->property("textFormat").toInt(),0);
+            QCOMPARE(retry->property("visible").toBool(),state.first=="forbidden" || state.first=="failed");
+        }
+        adapter.radio.retrySectionIds={"radio-failed"}; emit adapter.radio.presentationStateChanged();
+        adapter.personalRadioState="failed"; emit adapter.discoveryStatusChanged();
+        QVERIFY(retry->property("enabled").toBool()); QVERIFY(QMetaObject::invokeMethod(retry,"clicked"));
+        QCOMPARE(adapter.discoveryRetries,(QList<QPair<int,QString>>{{0,"radio-failed"}}));
+        adapter.radio.retrySectionIds.clear(); adapter.radio.paginationSectionIds={"radio-next-a","radio-next-b"};
+        adapter.radio.loadingMore=true; emit adapter.radio.presentationStateChanged();
+        adapter.personalRadioState="ready"; emit adapter.discoveryStatusChanged();
+        QVERIFY(QMetaObject::invokeMethod(list,"ended"));
+        QCOMPARE(adapter.discoveryMore,(QList<QPair<int,QString>>{{0,"radio-next-a"},{0,"radio-next-b"}}));
+        adapter.personalRadioState="loading"; emit adapter.discoveryStatusChanged();
+        const auto requests=adapter.discoveryRefreshes.size(); QVariant opened;
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_RETURN_ARG(QVariant,opened),Q_ARG(QVariant,QVariant(0))));
+        QVERIFY(!opened.toBool()); QCOMPARE(adapter.discoveryRefreshes.size(),requests);
+        QVERIFY(QMetaObject::invokeMethod(list,"ended")); QVERIFY(QMetaObject::invokeMethod(retry,"clicked"));
+        QCOMPARE(adapter.discoveryMore.size(),2); QCOMPARE(adapter.discoveryRetries.size(),1);
+        adapter.personalRadioState="ready"; emit adapter.discoveryStatusChanged();
+        adapter.radio.paginationSectionIds.clear(); emit adapter.radio.presentationStateChanged();
+        QVERIFY(QMetaObject::invokeMethod(list,"ended")); QCOMPARE(adapter.discoveryMore.size(),2);
+        adapter.radio.setRows({mixedCategoryRows().last()}); QVERIFY(!status->property("visible").toBool());
+        QCOMPARE(adapter.moreRequests.size(),0); QCOMPARE(adapter.retries.size(),0);
+        QCOMPARE(context.legacyMusicApi()->personalReads,0); QCOMPARE(context.legacyMusicApi()->personalCalls,0);
+    }
+    void personalDiscoveryResetsOnScopeOrAdapterChangesWithoutLegacyFallback()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter,replacement; QString error;
+        auto home=loadPage(engine,"pages/HomePage.qml",&adapter,&error); QVERIFY2(home,qPrintable(error));
+        auto *detail=home->findChild<QObject *>("personalDiscoveryWindow"); QVERIFY(detail);
+        auto *target=detail->property("mainTarget").value<QObject *>(); QVERIFY(target);
+        auto open=[&] { return QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_ARG(QVariant,QVariant(1))); };
+        QVERIFY(open()); QPointer<QObject> oldList(home->findChild<QObject *>("homePersonalDiscoveryList")); QVERIFY(oldList);
+        adapter.setSelectedSourceInstanceId("other/account");
+        QVERIFY(!detail->property("visible").toBool()); QTRY_VERIFY(!oldList);
+        QCOMPARE(detail->property("title").toString(),QString()); QCOMPARE(detail->property("image").toString(),QString());
+        QCOMPARE(adapter.discoveryCloses,(QList<int>{0,1}));
+        QVERIFY(target->property("visible").toBool()); QCOMPARE(context.windowObject()->exitIndex,0);
+        QVERIFY(open()); QPointer<QObject> previousList(home->findChild<QObject *>("homePersonalDiscoveryList")); QVERIFY(previousList);
+        QVERIFY(home->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&replacement)));
+        QVERIFY(!detail->property("visible").toBool()); QCOMPARE(replacement.discoveryCloses.size(),0);
+        QTRY_VERIFY(!previousList);
+        QVERIFY(open()); QPointer<QObject> replacedList(home->findChild<QObject *>("homePersonalDiscoveryList")); QVERIFY(replacedList);
+        QVERIFY(home->setProperty("musicAdapter",QVariant::fromValue<QObject *>(nullptr)));
+        QVERIFY(!detail->property("visible").toBool()); QTRY_VERIFY(!replacedList);
+        QVariant opened;
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_RETURN_ARG(QVariant,opened),Q_ARG(QVariant,QVariant(0))));
+        QVERIFY(!opened.toBool());
+        for (const auto invalid:{QVariant(-1),QVariant(2),QVariant("0")}) {
+            QVERIFY(home->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&adapter)));
+            QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_RETURN_ARG(QVariant,opened),Q_ARG(QVariant,invalid)));
+            QVERIFY(!opened.toBool());
+        }
+        FakeOriginalUiMusicNoPagination oldAdapter;
+        QVERIFY(home->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&oldAdapter)));
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_RETURN_ARG(QVariant,opened),Q_ARG(QVariant,QVariant(0))));
+        QVERIFY(!opened.toBool());
+        QCOMPARE(context.legacyMusicApi()->personalReads,0); QCOMPARE(context.legacyMusicApi()->personalCalls,0);
+        QCOMPARE(context.legacyMusicApi()->musicInfoCalls,0);
+    }
+    void personalRequestsStopWhenCallbacksReplaceTheirContext()
+    {
+        QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter,replacement; QString error;
+        auto home=loadPage(engine,"pages/HomePage.qml",&adapter,&error); QVERIFY2(home,qPrintable(error));
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_ARG(QVariant,QVariant(0))));
+        adapter.radio.paginationSectionIds={"first","must-not-dispatch"}; emit adapter.radio.presentationStateChanged();
+        connect(&adapter,&FakeOriginalUiMusic::discoveryMoreRequested,home.get(),[&] {
+            adapter.setSelectedSourceInstanceId("changed/account");
+        });
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"requestPersonalSections",Q_ARG(QVariant,QVariant(false))));
+        QCOMPARE(adapter.discoveryMore,(QList<QPair<int,QString>>{{0,"first"}}));
+        auto *detail=home->findChild<QObject *>("personalDiscoveryWindow"); QVERIFY(detail);
+        QVERIFY(!detail->property("visible").toBool());
+        QCoreApplication::processEvents();
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_ARG(QVariant,QVariant(0))));
+        connect(&adapter,&FakeOriginalUiMusic::discoveryClosed,home.get(),[&](int) {
+            home->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&replacement));
+        });
+        QVariant opened;
+        QVERIFY(QMetaObject::invokeMethod(home.get(),"openPersonalDiscovery",Q_RETURN_ARG(QVariant,opened),Q_ARG(QVariant,QVariant(1))));
+        QVERIFY(!opened.toBool()); QVERIFY(!detail->property("visible").toBool());
+        QCOMPARE(replacement.discoveryRefreshes.size(),0); QCOMPARE(replacement.discoveryCloses.size(),0);
+        // Scope cleanup must not close either feed on a replacement installed by close(0).
+        QVERIFY(home->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&adapter)));
+        const int closesBeforeScopeChange=adapter.discoveryCloses.size();
+        adapter.setSelectedSourceInstanceId("yet-another/account");
+        QCOMPARE(adapter.discoveryCloses.size(),closesBeforeScopeChange+1);
+        QCOMPARE(adapter.discoveryCloses.last(),0);
+        QCOMPARE(home->property("musicAdapter").value<QObject *>(),static_cast<QObject *>(&replacement));
+        QCOMPARE(replacement.discoveryCloses.size(),0);
+        QCOMPARE(context.legacyMusicApi()->personalCalls,0); QCOMPARE(context.legacyMusicApi()->personalReads,0);
+    }
     void sourceDiscoveryViewsInvalidateScopeAndAdapterWithoutResettingNewNavigation()
     {
         QQmlEngine engine; PageContext context(engine); FakeOriginalUiMusic adapter, replacement; QString error;

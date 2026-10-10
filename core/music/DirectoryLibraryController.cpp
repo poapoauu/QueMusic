@@ -40,9 +40,21 @@ DirectoryLibraryController::DirectoryLibraryController(SourceRegistry *sources,
                     if (m_stack.last().value("ref").toMap().value("sourceInstanceId") == source)
                         refresh();
                 });
-        if (m_sources->pluginManager())
-            connect(m_sources->pluginManager(), &PluginManager::pluginChanged, this,
-                    [this] { if (m_activated) refresh(); });
+        if (auto *plugins = m_sources->pluginManager()) {
+            for (const auto &value : plugins->plugins()) {
+                const auto packageId = value.toMap().value("id").toString();
+                m_pluginStates.insert(packageId, plugins->plugin(packageId).state);
+            }
+            connect(plugins, &PluginManager::pluginChanged, this, [this](const QString &packageId) {
+                if (!m_sources || !m_sources->pluginManager()) return;
+                const auto state = m_sources->pluginManager()->plugin(packageId).state;
+                // Callable/session leases and Busy diagnostics are not content
+                // changes. Restarting here cancels the request acquiring that lease.
+                if (m_pluginStates.contains(packageId) && m_pluginStates.value(packageId) == state) return;
+                m_pluginStates.insert(packageId, state);
+                if (m_activated) refresh();
+            });
+        }
         connect(m_sources, &QObject::destroyed, this, [this] {
             m_sources = nullptr;
             cancelPending();
