@@ -681,6 +681,14 @@ Controller／Adapter／QML 验收覆盖相关与无关实例权限通知、分�
 
 Host 内部播放信号新增 token 参数、平台方法新增可选参数，需 C++／QML 同步构建；冻结 Source SDK v2、Source 插件 ABI、Plugin UI API 与磁盘格式不变。这是删除前的过渡隔离，不替代 Phase 7／8 真插件迁移；下一切片检查队列桥接缺依赖回退与非法索引。
 
+### 后续增量：Source 队列缺依赖不回退 Legacy
+
+队列桥接在 Source 模式只接受专属队列／Coordinator，依赖缺失、空队列、畸形 count 和非法索引直接拒绝。弹窗 Source 点击不再提前停止 Legacy；不可用或缺权利快照拒绝，展示 getter 空行安全、不读 Legacy 模型，标题／歌手／来源以 PlainText 保留插件文本。明确的 Legacy 模式保留。
+
+新增桥接及抽取生产弹窗函数验收覆盖依赖缺失、空／畸形队列、类型／边界索引、Source 数组长度、拒绝零 Legacy 访问、缺权限快照与纯文本接线。全目标增量构建、五项联合回归及全部 74 项 CTest 通过（64.30 秒）；不代表完整弹窗原生视觉、真实音频或跨平台验收。SDK v2／Source 插件 ABI／Plugin UI API／磁盘格式不变。
+
+仍需按 occurrence 而非旧展示 index 定位弹窗目标，并补 Source“清空其他”的真实队列管理；Player／桌面歌词审计、Phase 6 完整出口、Phase 7／8 平台插件与 Phase 9 Legacy 删除继续保留为未完成任务。
+
 ## 10. 当前工作树注意事项
 
 审计时发现的未提交内容如下，均不应被本次文档工作覆盖：

@@ -4,6 +4,7 @@
 #include <QTest>
 
 #include <memory>
+#include <limits>
 
 class QueueModelDouble final : public QObject {
     Q_OBJECT
@@ -18,12 +19,19 @@ public:
     int refreshCalls = 0;
     Q_INVOKABLE void refreshLegacyMusicPlay() { ++refreshCalls; }
 };
+class QueueCoordinatorDouble final : public QObject {
+    Q_OBJECT
+public:
+    int calls = 0, lastIndex = -1;
+    Q_INVOKABLE void playQueueEntry(int index) { ++calls; lastIndex = index; }
+};
 
 class LegacyQueueQmlTest final : public QObject {
     Q_OBJECT
 private slots:
     void copiesOnlyLegacyQueueFields();
     void dispatchesOnlyValidIndexes();
+    void sourceDependenciesNeverFallBackAndIndicesStayTyped();
 };
 
 static std::unique_ptr<QObject> createController(QQmlEngine &engine,
@@ -83,6 +91,43 @@ void LegacyQueueQmlTest::dispatchesOnlyValidIndexes()
     QVERIFY(QMetaObject::invokeMethod(controller.get(), "playQueueEntry",
                                      Q_ARG(QVariant, 0)));
     QCOMPARE(player.refreshCalls, 1);
+}
+
+void LegacyQueueQmlTest::sourceDependenciesNeverFallBackAndIndicesStayTyped()
+{
+    QQmlEngine engine; QueueModelDouble queue; LegacyPlayerDouble player;
+    QueueCoordinatorDouble coordinator;
+    auto controller = createController(engine, &queue, &player);
+    QVERIFY(controller);
+    const auto play = [&](const QVariant &index) {
+        return QMetaObject::invokeMethod(controller.get(), "playQueueEntry", Q_ARG(QVariant, index));
+    };
+    const QVariantList invalid{0.5, -1, "0", false, QVariant{},
+        std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), 2};
+    for (const auto &index : invalid) QVERIFY(play(index));
+    QCOMPARE(player.refreshCalls, 0);
+    QVERIFY(controller->setProperty("useCoordinator", true));
+    QVERIFY(play(0)); // No Coordinator: no Legacy playback.
+    QVERIFY(controller->setProperty("playbackCoordinator", QVariant::fromValue<QObject *>(&coordinator)));
+    QVERIFY(play(0)); // No dedicated queue: do not borrow the one-row Legacy model.
+    QVERIFY(controller->setProperty("secureQueueModel", QVariantList{}));
+    QVERIFY(play(0)); // An empty Source queue is terminal.
+    QVERIFY(controller->setProperty("secureQueueModel", QVariantMap{{"count", 1.5}}));
+    QVERIFY(play(0)); // A malformed count must not be coerced either.
+    QCOMPARE(player.refreshCalls, 0); QCOMPARE(coordinator.calls, 0);
+    QVERIFY(controller->setProperty("secureQueueModel", QVariantList{QString("A"), QString("B")}));
+    for (const auto &index : invalid) QVERIFY(play(index));
+    QCOMPARE(coordinator.calls, 0);
+    QVERIFY(play(1)); // Source array length, not the unrelated Legacy count.
+    QCOMPARE(coordinator.calls, 1); QCOMPARE(coordinator.lastIndex, 1);
+    QVERIFY(controller->setProperty("playbackCoordinator", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(play(0));
+    QCOMPARE(player.refreshCalls, 0); QCOMPARE(coordinator.calls, 1);
+    QVERIFY(controller->setProperty("useCoordinator", false));
+    QVERIFY(play(0)); // Explicit Legacy selection still works without Coordinator.
+    QCOMPARE(player.refreshCalls, 1);
+    QVERIFY(controller->setProperty("legacyPlayer", QVariant::fromValue<QObject *>(nullptr)));
+    QVERIFY(play(0)); QCOMPARE(player.refreshCalls, 1);
 }
 
 QTEST_MAIN(LegacyQueueQmlTest)

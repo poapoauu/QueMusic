@@ -17,22 +17,38 @@ Popup {
     onClosed: showRestoredQueue = false
 
     function activeIndex() {
-        return secureMode ? playbackCoordinator.currentIndex : playListModel.playListIndex;
+        return secureMode ? (typeof playbackCoordinator !== "undefined" && playbackCoordinator
+                             ? playbackCoordinator.currentIndex : -1) : playListModel.playListIndex;
+    }
+
+    function queueRow(index) {
+        if (!Number.isInteger(index) || index < 0) return null;
+        if (secureMode) return secureModel && index < secureModel.length ? secureModel[index] : null;
+        return index < playListModel.count ? playListModel.get(index) : null;
+    }
+
+    function playSourceRow(index) {
+        if (!secureMode || typeof playbackCoordinator === "undefined" || !playbackCoordinator) return;
+        const value = queueRow(index);
+        if (!value || value.unavailable !== false) return;
+        // Coordinator validates the target before stopping/replacing playback.
+        playbackCoordinator.playQueueEntry(index);
     }
 
     function displayName(index) {
-        const value = secureMode ? secureModel[index] : playListModel.get(index);
-        return secureMode ? (value.title || "") : value.name;
+        const value = queueRow(index);
+        return !value ? "" : secureMode ? (value.title || "") : (value.name || "");
     }
 
     function displayArtist(index) {
-        const value = secureMode ? secureModel[index] : playListModel.get(index);
+        const value = queueRow(index);
+        if (!value) return "";
         return secureMode ? ((value.artists || []).join(", ")) : (value.songer || "");
     }
 
     function displaySource(index) {
-        const value = secureMode ? secureModel[index] : playListModel.get(index);
-        return secureMode ? (value.sourceLabel || "在线") : (value.source == -1 ? "本地" : "在线");
+        const value = queueRow(index);
+        return !value ? "" : secureMode ? (value.sourceLabel || "音源") : (value.source == -1 ? "本地" : "在线");
     }
 
     onSecureModeChanged: playListView.model = secureMode ? secureModel : playListModel
@@ -189,12 +205,13 @@ Popup {
 
                 Text {
                     x: 50
-                    y: model.songer ? 10 : 20
+                    y: playList.displayArtist(index) ? 10 : 20
                     z: 4
                     width: 200
                     height: 20
                     clip: true
                     text: playList.displayName(index)
+                    textFormat: Text.PlainText
                     elide: Text.ElideRight
                     color: Style.themes.fontColor
                     font.pixelSize: Style.settings.text
@@ -209,6 +226,7 @@ Popup {
                     height: 20
                     clip: true
                     text: playList.displayArtist(index)
+                    textFormat: Text.PlainText
                     color: Style.themes.textColor
                     elide: Text.ElideRight
                     font.pixelSize: Style.settings.textTip
@@ -231,6 +249,7 @@ Popup {
                         height: 40
                         color: Style.themes.textColor
                         text: playList.displaySource(index)
+                        textFormat: Text.PlainText
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         font.pixelSize: Style.settings.text
@@ -246,8 +265,7 @@ Popup {
                     onExited: listHover.opacity = 0
                     onClicked: {
                         if (playList.secureMode) {
-                            mainMedia.stop();
-                            playbackCoordinator.playQueueEntry(index);
+                            playList.playSourceRow(index);
                         } else {
                             playListModel.playListIndex = index;
                             window.playQueueEntry(index);

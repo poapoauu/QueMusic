@@ -20,16 +20,20 @@ QtObject {
     }
 
     function playQueueEntry(index) {
-        const activeQueue = useCoordinator && playbackCoordinator
-            ? (secureQueueModel || queueModel) : queueModel;
+        if (!Number.isInteger(index) || (useCoordinator && !playbackCoordinator)) return;
+        // A Source intent never borrows a Legacy queue or player when its
+        // dependencies disappear. Explicit Legacy mode remains independent.
+        const activeQueue = useCoordinator ? secureQueueModel : queueModel;
         const count = activeQueue && activeQueue.count !== undefined
             ? activeQueue.count : (activeQueue ? activeQueue.length : 0);
-        if (!activeQueue || index < 0 || index >= count)
+        if (!activeQueue || !Number.isInteger(count) || index < 0 || index >= count)
             return;
-        if (useCoordinator && playbackCoordinator) {
-            playbackCoordinator.playQueueEntry(index);
+        if (useCoordinator) {
+            if (typeof playbackCoordinator.playQueueEntry === "function")
+                playbackCoordinator.playQueueEntry(index);
             return;
         }
-        legacyPlayer.refreshLegacyMusicPlay();
+        if (legacyPlayer && typeof legacyPlayer.refreshLegacyMusicPlay === "function")
+            legacyPlayer.refreshLegacyMusicPlay();
     }
 }

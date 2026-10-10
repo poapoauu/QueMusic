@@ -466,13 +466,21 @@ ctest --test-dir build-phase3 --output-on-failure
 - 旧关闭边界夹具缺新增撤销接口，已注入并增加次数断言；原零 Legacy 持久化／停播断言保持。全目标增量构建、七项联合回归及新增后的全部 74 项 CTest 通过（61.39 秒）。
 - Host 内部 `MusicApi.urlplay` 信号新增 token 参数、平台内部方法新增可选参数，C++／QML 必须同步构建；Source SDK v2／Source 插件 ABI／Plugin UI API／磁盘格式不变。下一项收紧队列桥接的 Source 缺依赖回退与索引类型；真实服务／原生音频／视觉／跨平台验收仍待完成。
 
+### Queue：Source 缺依赖拒绝与安全弹窗展示
+
+- LegacyQueueController 的 Source 模式只使用专属队列和 Coordinator，依赖缺失、空队列或畸形 count 时拒绝，不借用 Legacy 队列／播放器。入口拒绝小数、字符串、布尔、空值、NaN、无穷及越界索引；明确的 Legacy 模式仍可独立工作。
+- PlayList 的 Source 点击经安全行 helper，缺有效权利快照或 unavailable 时不操作；移除提前 `mainMedia.stop()`，由 Coordinator 验证目标和处理 Source 播放，原 Host 同步点在成功接管后停止兼容播放器。显示 getter 对空行／越界安全，Source 不读 Legacy 模型；标题位置依据当前展示歌手，标题／歌手／来源均为 PlainText。缺来源标签使用“音源”，不把 Local 默认当在线来源。
+- 新桥接回归覆盖缺 Coordinator／专属队列、空队列、非法 count／索引、Source 数组长度和明确 Legacy 模式。抽取生产弹窗函数验证不触碰 Legacy 计数／播放、不可用与缺快照拒绝、失效 Adapter 依赖、空行安全和保留插件文本原样；源码检查实际文本控件为 PlainText。未把这些函数级验收当作完整弹窗原生视觉检查。
+- 全目标增量构建、五项联合回归和全部 74 项 CTest 通过（64.30 秒）。SDK v2／Source 插件 ABI／Plugin UI API／持久化格式不变，布局不重做。
+- 剩余：弹窗点击仍以展示 index 定位，应进一步绑定 occurrence，防止队列通知前索引移位；Source“清空其他”目前仍无操作，需要补真实队列管理而非 Legacy 写入。随后继续 Player／桌面歌词边界审计及 Phase 6 全量扫描，平台插件化和原生／真实服务验收仍未完成。
+
 ## 后续顺序与验收
 
-最新自动验证以本文件最后的阶段记录为准；目录批次与过渡播放边界完成全目标增量构建及全部 74 项 CTest。仍未执行真实服务器音频或手工视觉验收。
+最新自动验证以本文件最后的阶段记录为准；目录批次、过渡播放边界和 Queue 缺依赖／展示保护完成全目标增量构建及全部 74 项 CTest。仍未执行真实服务器音频或手工视觉验收。
 
 1. Home 原卡片已完成 Source 数据与动作接入，私人服务由后续真实平台插件实现扩展后验收；不能以 Host 替身代替实际算法。未来若要从已移出队列的历史记录重新播放，应增加可信插件媒体项查找能力，不能猜造动作。
 2. 收藏/Playlist/Category：关注歌手、安全历史列表、收藏嵌套详情、通用分区批次上下文、队列停播回调 occurrence 保护、普通页/目录能力通知失效、队列／历史实时权利及 Adapter 动作四层投影已补齐。历史只重放 Coordinator 中可信且可用的完整身份，不从脱离队列的快照猜造媒体项。后续跟随整体审计检查剩余旧平台枚举及路径队列写入；测试分页、错误/空态、收藏/取消收藏及实例失效。
-3. File/Download、Queue、Player 和桌面歌词：清理剩余直接音源分支，确保实际播放只由 Coordinator 发起；保留原控件和布局。验证来源标签、切歌、停播、恢复和卸载后的展示状态。
+3. File/Download、Queue、Player 和桌面歌词：目录批次、旧播放回调与 Source 队列缺依赖回退已收紧；下一项为按 occurrence 定位弹窗目标及 Source“清空其他”，随后继续审计剩余直接分支。确保 Source 播放只由 Coordinator 发起，保留原控件和布局；验证来源标签、切歌、停播、恢复和卸载后的展示状态。
 4. 全量扫描及 UI smoke：页面新增一个 Source Plugin 不需要改 source switch/case；无权限动作不显示或不可触发；完整构建、CTest 和 macOS 手工视觉/音频检查通过。
 
 Kugou、Netease 业务及账号/登录 UI 的插件化属于后续阶段。在其 Source Plugin 可用前，不用 Host 的旧平台 fallback 冒充动态 Source；其他页面的 legacy 分支按上述顺序逐项迁移，不能一次性删掉仍在使用的代码。

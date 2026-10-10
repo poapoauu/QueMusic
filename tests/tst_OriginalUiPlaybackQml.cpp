@@ -161,6 +161,7 @@ private slots:
     void remainingPlaybackCaptionsUseSafePresentation();
     void actualSettingsNavigationPreservesPluginAndInstanceSelection();
     void sourceShutdownDoesNotMixLegacyPersistence();
+    void sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemptLegacyOnRejection();
     void coverDialogUsesSafeCurrentLabelsAndFileNames();
     void coverSaveKeepsTheCapturedDestination();
     void coverSaveRejectsFailuresAndChangedImages();
@@ -1652,6 +1653,61 @@ Item {
     QVERIFY(QMetaObject::invokeMethod(bridge.get(), "saveDownload", Q_RETURN_ARG(QVariant, dispatched),
                                       Q_ARG(QVariant, target), Q_ARG(QVariant, "B")));
     QVERIFY(!dispatched.toBool()); QCOMPARE(music.downloadCalls, 1);
+}
+
+void OriginalUiPlaybackQmlTest::sourceQueuePopupUsesOnlySafeRowsAndDoesNotPreemptLegacyOnRejection()
+{
+    QQmlEngine engine; LegacyShutdownDouble legacy; CoordinatorDouble coordinator;
+    engine.rootContext()->setContextProperty("playListModel", &legacy);
+    engine.rootContext()->setContextProperty("mainMedia", &legacy);
+    engine.rootContext()->setContextProperty("playbackCoordinator", &coordinator);
+    QFile file(QStringLiteral(QUEMUSIC_SOURCE_DIR "/components/PlayList.qml"));
+    QVERIFY(file.open(QIODevice::ReadOnly)); const auto source = QString::fromUtf8(file.readAll());
+    QString functions;
+    for (const auto &name : {"queueRow", "playSourceRow", "displayName", "displayArtist", "displaySource"}) {
+        const auto function = capturedQmlBlock(source, source.indexOf(QString("function %1(").arg(name)));
+        QVERIFY(!function.isEmpty()); functions += function + '\n';
+    }
+    QQmlComponent component(&engine);
+    component.setData((QString("import QtQml\nQtObject { id: playList; "
+        "property bool secureMode: true; property var secureModel: [];\n") + functions + "}").toUtf8(), QUrl{});
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create()); QVERIFY(root);
+    const QVariantList rows{
+        QVariantMap{{"title", "<b>Song</b>"}, {"artists", QStringList{"<i>Artist</i>"}},
+                    {"sourceLabel", "<b>Local library</b>"}, {"unavailable", false}},
+        QVariantMap{{"title", "Unavailable"}, {"unavailable", true}},
+        QVariantMap{{"title", "No rights snapshot"}}};
+    QVERIFY(root->setProperty("secureModel", rows));
+    for (const auto &name : {"displayName", "displayArtist", "displaySource"}) {
+        QVariant returned;
+        QVERIFY(QMetaObject::invokeMethod(root.get(), name, Q_RETURN_ARG(QVariant, returned), Q_ARG(QVariant, 0)));
+        const auto expected = QString(name) == "displayName" ? "<b>Song</b>"
+            : QString(name) == "displayArtist" ? "<i>Artist</i>" : "<b>Local library</b>";
+        QCOMPARE(returned.toString(), QString(expected));
+        for (const QVariant &invalid : {QVariant(-1), QVariant(0.5), QVariant("0"), QVariant(3)}) {
+            QVERIFY(QMetaObject::invokeMethod(root.get(), name, Q_RETURN_ARG(QVariant, returned), Q_ARG(QVariant, invalid)));
+            QVERIFY(returned.toString().isEmpty());
+        }
+    }
+    for (const QVariant &rejected : {QVariant(-1), QVariant(0.5), QVariant("0"), QVariant(1), QVariant(2), QVariant(3)})
+        QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, rejected)));
+    QCOMPARE(coordinator.playQueueCalls, 0); QCOMPARE(legacy.stops, 0); QCOMPARE(legacy.reads, 0);
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
+    QCOMPARE(coordinator.playQueueCalls, 1); QCOMPARE(coordinator.lastIndex, 0);
+    QVERIFY(root->setProperty("secureModel", QVariantList{}));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
+    QVERIFY(root->setProperty("secureModel", rows));
+    engine.rootContext()->setContextProperty("playbackCoordinator", QVariant::fromValue<QObject *>(nullptr));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
+    QVERIFY(root->setProperty("secureMode", false));
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "playSourceRow", Q_ARG(QVariant, 0)));
+    QCOMPARE(coordinator.playQueueCalls, 1); QCOMPARE(legacy.stops, 0); QCOMPARE(legacy.reads, 0);
+    QVERIFY(!source.contains("mainMedia.stop()"));
+    for (const auto &caption : {"displayName", "displayArtist", "displaySource"}) {
+        const auto start = source.indexOf(QString("text: playList.%1(index)").arg(caption));
+        QVERIFY(start >= 0); QVERIFY(source.mid(start, 160).contains("textFormat: Text.PlainText"));
+    }
 }
 
 static std::unique_ptr<QObject> createQueueController(QQmlEngine &engine,
