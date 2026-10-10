@@ -8,6 +8,7 @@
 #include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
 #include <QtQml/qqml.h>
+#include <memory>
 
 class FakeListModel final : public QAbstractListModel {
     Q_OBJECT
@@ -178,8 +179,11 @@ public:
             pagingMutationModel->paginationSectionIds.clear();
             emit pagingMutationModel->presentationStateChanged();
         }
+        emit sectionDispatched(page, section, false);
     }
-    Q_INVOKABLE void retry(int page, const QString &section) { retries << qMakePair(page, section); }
+    Q_INVOKABLE void retry(int page, const QString &section) {
+        retries << qMakePair(page, section); emit sectionDispatched(page, section, true);
+    }
     FakeListModel *pagingMutationModel = nullptr;
     Q_INVOKABLE bool browse(const QVariantMap &value) {
         browsed << value; navigation << value; emit categoryNavigationChanged(); emit browseRequested(); return true;
@@ -256,6 +260,7 @@ public:
     QStringList dismissedDownloads;
     QStringList cancelledDownloads;
 signals:
+    void sectionDispatched(int page, QString section, bool retry);
     void favoriteStatusChanged();
     void categoryNavigationChanged();
     void browseRequested();
@@ -677,6 +682,59 @@ private slots:
             QCOMPARE(adapter.more.size(), before);
             QVERIFY2(diagnostics.runtimeErrors().isEmpty(), qPrintable(diagnostics.runtimeErrors()));
         }
+    }
+
+    void sharedPagingStopsWhenCallbacksInvalidateOrRoundTripTheContext()
+    {
+        for (bool retry:{false,true}) for (const QString mutation:{"scope","scope-round-trip","adapter","adapter-round-trip","model","model-round-trip","page","page-round-trip","paging"}) {
+            QQmlEngine engine; PageContext context(engine); FakeAdapter adapter,replacement; QmlDiagnosticCapture diagnostics; QString error;
+            auto page=load(engine,"pages/FavouritePage.qml",&adapter,&error); QVERIFY2(page,qPrintable(error));
+            auto *view=page->findChild<QObject *>("favoriteSongsList"); QVERIFY(view);
+            adapter.songs.paginationSectionIds={"old-a","old-b"}; adapter.songs.retrySectionIds={"old-a","old-b"};
+            emit adapter.songs.presentationStateChanged();
+            for (auto *model:{&replacement.songs,&replacement.lists,&replacement.artists}) {
+                model->paginationSectionIds.clear(); model->retrySectionIds.clear(); emit model->presentationStateChanged();
+            }
+            adapter.more.clear(); adapter.retries.clear(); replacement.more.clear(); replacement.retries.clear();
+            bool changed=false;
+            connect(&adapter,&FakeAdapter::sectionDispatched,page.get(),[&](int,QString,bool) {
+                if (changed) return; changed=true;
+                if (mutation.startsWith("scope")) {
+                    adapter.setSelectedSourceInstanceId("another/account");
+                    if (mutation.endsWith("round-trip")) adapter.setSelectedSourceInstanceId({});
+                } else if (mutation.startsWith("adapter")) {
+                    page->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&replacement));
+                    if (mutation.endsWith("round-trip")) page->setProperty("musicAdapter",QVariant::fromValue<QObject *>(&adapter));
+                } else if (mutation.startsWith("model")) {
+                    view->setProperty("model",QVariant::fromValue<QObject *>(&replacement.songs));
+                    if (mutation.endsWith("round-trip")) view->setProperty("model",QVariant::fromValue<QObject *>(&adapter.songs));
+                }
+                else if (mutation.startsWith("page")) {
+                    view->setProperty("sourcePageKind",3);
+                    if (mutation.endsWith("round-trip")) view->setProperty("sourcePageKind",2);
+                } else view->setProperty("sourcePaging",false);
+            });
+            QVERIFY(QMetaObject::invokeMethod(view,"requestSourceSections",Q_ARG(QVariant,QVariant(retry))));
+            QVERIFY2(changed,qPrintable(mutation));
+            const auto requests=retry ? adapter.retries : adapter.more;
+            QVERIFY2(requests==(QList<QPair<int,QString>>{{2,"old-a"}}),qPrintable(mutation));
+            QVERIFY(replacement.more.isEmpty()); QVERIFY(replacement.retries.isEmpty());
+            QCOMPARE(context.musicApi.legacyPlays,0); QCOMPARE(context.musicApi.legacySearches,0);
+            QVERIFY2(diagnostics.runtimeErrors().isEmpty(),qPrintable(diagnostics.runtimeErrors()));
+        }
+    }
+
+    void sharedPagingStopsWhenItsAdapterIsDestroyedByTheFirstCallback()
+    {
+        QQmlEngine engine; PageContext context(engine); auto adapter=std::make_unique<FakeAdapter>(); QmlDiagnosticCapture diagnostics; QString error;
+        auto page=load(engine,"pages/FavouritePage.qml",adapter.get(),&error); QVERIFY2(page,qPrintable(error));
+        auto *view=page->findChild<QObject *>("favoriteSongsList"); QVERIFY(view);
+        adapter->songs.paginationSectionIds={"first","must-not-dispatch"}; emit adapter->songs.presentationStateChanged();
+        int calls=0;
+        connect(adapter.get(),&FakeAdapter::sectionDispatched,page.get(),[&] { ++calls; adapter.reset(); });
+        QVERIFY(QMetaObject::invokeMethod(view,"requestSourceSections",Q_ARG(QVariant,QVariant(false))));
+        QCOMPARE(calls,1); QVERIFY(!adapter);
+        QVERIFY2(diagnostics.runtimeErrors().isEmpty(),qPrintable(diagnostics.runtimeErrors()));
     }
 
     void searchAndFavoriteDetailsUseCategorySectionScope()

@@ -28,6 +28,17 @@ ListView {
     property bool sourcePaging: false
     property var sourceAdapter: null
     property int sourcePageKind: -1
+    property int sourceContextRevision: 0
+    onSourceAdapterChanged: sourceContextRevision++
+    onSourcePageKindChanged: sourceContextRevision++
+    onSourcePagingChanged: sourceContextRevision++
+    onModelChanged: sourceContextRevision++
+    Connections {
+        target: view.sourceAdapter
+        ignoreUnknownSignals: true
+        function onSelectedSourceInstanceIdChanged() { view.sourceContextRevision++ }
+        function onDestroyed() { view.sourceContextRevision++ }
+    }
     property string sectionId: sourcePaging ? sourceSectionId() : ""
     property bool hasMore: sourcePaging ? !!sourceStateValue("hasMore") : true
     property bool loadingMore: sourcePaging ? !!sourceStateValue("loadingMore")
@@ -59,15 +70,26 @@ ListView {
     }
     function requestSourceSections(retry) {
         if (!sourcePaging || !sourceAdapter || !model || sourcePageKind < 0) return
+        const adapter = sourceAdapter
+        const contextModel = model
+        const pageKind = sourcePageKind
+        const scope = adapter.selectedSourceInstanceId
+        const revision = sourceContextRevision
         const action = retry ? "retry" : "loadMore"
-        if (typeof sourceAdapter[action] !== "function") return
-        const ids = retry ? model.retrySectionIds : model.paginationSectionIds
+        if (typeof adapter[action] !== "function") return
+        const ids = retry ? contextModel.retrySectionIds : contextModel.paginationSectionIds
         // Snapshot before requests synchronously change model state. An empty
         // aggregate is terminal, not permission to use the legacy fallback.
         const targets = ids !== undefined ? Array.from(ids)
                       : !loadingMore && (retry || hasMore) && sectionId ? [sectionId] : []
-        for (const id of targets)
-            if (id) sourceAdapter[action](sourcePageKind, id)
+        for (const id of targets) {
+            // The first callback may synchronously replace (or replace and
+            // restore) the context. Remaining IDs belong only to this snapshot.
+            if (!sourcePaging || sourceContextRevision !== revision || sourceAdapter !== adapter
+                    || model !== contextModel || sourcePageKind !== pageKind
+                    || adapter.selectedSourceInstanceId !== scope) return
+            if (id) adapter[action](pageKind, id)
+        }
     }
     onEnded: if (sourcePaging) requestSourceSections(false)
 
