@@ -1,6 +1,7 @@
 # Plugin-private request layer and isolated experimental package. Never bundled
 # or placed in SourceStartup's default search root before Phase 7 acceptance.
-add_library(quemusic_kugou_client STATIC KugouApiClient.cpp KugouApiClient.h)
+add_library(quemusic_kugou_client STATIC KugouApiClient.cpp KugouApiClient.h
+    KugouQrController.cpp KugouQrController.h)
 add_library(quemusic_kugou_session STATIC
     KugouSourceSession.cpp KugouSourceSession.h KugouMappers.cpp KugouMappers.h)
 target_compile_features(quemusic_kugou_session PUBLIC cxx_std_17)

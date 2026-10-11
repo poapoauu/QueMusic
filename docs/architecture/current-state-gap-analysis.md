@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+Phase 7 切片 10 已加入插件私有 QR 轮询控制器：固定实例/账号身份、独立网络、每次登录代次 UUID、单在途请求、单调总超时、取消/重试/销毁和通知重入保护，候选凭证仅可按当前代次由 C++ 一次性取走。最新全目标构建及 **79/79 CTest（64.00 秒）** 通过。Confirmed 不是账号存储成功或 Source 登录；尚未接入 SecretStore、Registry/UI lease、Plugin Management UI 或真实扫码。后续完成实例账号可信存储/绑定及 UI 生命周期，再迁出 Host 平台专用登录业务，Phase 7 仍未完成。
+
 Phase 7 切片 9 已将固定签名 QR 请求接入插件私有可取消 JSON client，共用原有 UUID、Pending、响应上限、脱敏错误与销毁保护；测试确认取消旧轮询后迟到 token 回包不投递。全目标构建及 **79/79 CTest（73.86 秒）** 通过。未改公开 SDK v2、Host UI/账号格式或默认 Source；轮询控制器的当前代次绑定、单在途请求、总超时、账号存储和真实扫码/UI 仍待完成。
 
 Phase 7 切片 8 已加入插件私有临时设备身份与严格 QR 响应映射：实例/账号绑定、UUID v4/独立 dfid/大端 MD5 十进制 mid、明确扫码状态、凭证类型边界、用户 ID 精度与别名冲突拒绝。全目标构建及 **79/79 CTest（74.62 秒）** 通过。不读取 Host Account.ini、不持久化 token、不赋予登录/Source Ready，也未迁移 Host 登录 UI；下一步接入可取消请求/轮询代次隔离，再完成实例存储和 Plugin Management UI，Phase 7 尚未完成。

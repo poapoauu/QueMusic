@@ -1,6 +1,7 @@
 #include "KugouApiClient.h"
 #include "KugouQrRequests.h"
 #include "KugouQrProtocol.h"
+#include "KugouQrController.h"
 #include <QJsonArray>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -63,6 +64,139 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void qrControllerSerializesPollingAndHandsOffCredentialsOnce()
+    {
+        using State = KugouQrController::State;
+        Network network;
+        KugouQrController controller("kugou/one", "one", &network, {1, 2000});
+        QSignalSpy confirmed(&controller, &KugouQrController::confirmationReady);
+        const auto attempt = controller.start(); QCOMPARE(controller.state(), State::Fetching);
+        network.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"KEY\"}}");
+        QCOMPARE(controller.state(), State::Waiting); QVERIFY(!controller.qrUrl().isEmpty());
+        QTRY_COMPARE(network.requests.size(), 2);
+        QTest::qWait(10); QCOMPARE(network.requests.size(), 2); // no overlapping poll
+        network.replies[1]->deliver("{\"status\":1,\"data\":{\"status\":1}}");
+        QTRY_COMPARE(network.requests.size(), 3);
+        network.replies[2]->deliver("{\"status\":1,\"data\":{\"status\":2}}");
+        QCOMPARE(controller.state(), State::Scanned); QTRY_COMPARE(network.requests.size(), 4);
+        network.replies[3]->deliver("{\"status\":1,\"data\":{\"status\":4,\"token\":\"PRIVATE\",\"user_id\":123}}");
+        QCOMPARE(controller.state(), State::Confirmed); QCOMPARE(confirmed.size(), 1);
+        QCOMPARE(confirmed[0][0].toUuid(), attempt); QVERIFY(controller.qrUrl().isEmpty());
+        QVERIFY(!controller.takeCredentials(QUuid::createUuid()));
+        const auto credentials = controller.takeCredentials(attempt); QVERIFY(credentials);
+        QCOMPARE(credentials->userId, "123"); QCOMPARE(credentials->token, "PRIVATE");
+        QVERIFY(!controller.takeCredentials(attempt)); QTest::qWait(10); QCOMPARE(network.requests.size(), 4);
+        controller.start(); QVERIFY(!controller.takeCredentials(attempt));
+    }
+    void qrControllerCancelRetryAndInstancesFenceOldAttempts()
+    {
+        Network oneNetwork, twoNetwork;
+        KugouQrController one("kugou/one", "one", &oneNetwork, {1, 2000});
+        KugouQrController two("kugou/two", "two", &twoNetwork, {1, 2000});
+        const auto old = one.start(), other = two.start(); QVERIFY(old != other);
+        QVERIFY(oneNetwork.requests[0].rawHeader("mid") != twoNetwork.requests[0].rawHeader("mid"));
+        QSignalSpy confirmed(&one, &KugouQrController::confirmationReady);
+        one.cancel(); QCOMPARE(one.state(), KugouQrController::State::Cancelled);
+        QVERIFY(oneNetwork.replies[0]->aborted);
+        const auto current = one.start(); QVERIFY(current != old);
+        oneNetwork.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"OLD\"}}");
+        QCOMPARE(one.state(), KugouQrController::State::Fetching); QVERIFY(one.qrUrl().isEmpty());
+        QCOMPARE(two.state(), KugouQrController::State::Fetching); QCOMPARE(confirmed.size(), 0);
+        oneNetwork.replies[1]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"NEW\"}}");
+        QTRY_COMPARE(oneNetwork.requests.size(), 3);
+        one.cancel();
+        oneNetwork.replies[2]->deliver("{\"status\":1,\"data\":{\"status\":4,\"token\":\"OLD_TOKEN\",\"user_id\":1}}");
+        QCOMPARE(confirmed.size(), 0); QVERIFY(!one.takeCredentials(current));
+    }
+    void qrControllerTotalTimeoutRejectsOverdueResponseEvenBeforeTimerDispatch()
+    {
+        Network network;
+        KugouQrController controller("kugou/one", "one", &network, {1, 25});
+        QSignalSpy confirmed(&controller, &KugouQrController::confirmationReady);
+        const auto attempt = controller.start();
+        QTest::qSleep(35); // intentionally do not process the deadline timer
+        network.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"LATE\"}}");
+        QCOMPARE(controller.state(), KugouQrController::State::Expired);
+        QVERIFY(controller.qrUrl().isEmpty()); QVERIFY(!controller.takeCredentials(attempt));
+        QTest::qWait(10); QCOMPARE(network.requests.size(), 1); QCOMPARE(confirmed.size(), 0);
+    }
+    void qrControllerDeadlineCancelsInFlightPoll()
+    {
+        Network network;
+        KugouQrController controller("kugou/one", "one", &network, {1, 200});
+        controller.start(); network.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"KEY\"}}");
+        QTRY_COMPARE(network.requests.size(), 2);
+        QSignalSpy finished(network.replies[1], &QNetworkReply::finished);
+        QTRY_COMPARE(controller.state(), KugouQrController::State::Expired);
+        QCOMPARE(finished.size(), 1); QCOMPARE(network.requests.size(), 2);
+    }
+    void qrControllerMalformedAndNetworkFailureDoNotGrantCredentials()
+    {
+        Network network;
+        KugouQrController controller("kugou/one", "one", &network, {1, 2000});
+        auto attempt = controller.start(); network.replies[0]->deliver("{\"status\":\"1\"}");
+        QCOMPARE(controller.state(), KugouQrController::State::Failed);
+        QCOMPARE(controller.errorKey(), "kugou.qrInvalidResponse"); QVERIFY(!controller.takeCredentials(attempt));
+        attempt = controller.start(); network.replies[1]->deliver("PRIVATE_TOKEN_BODY", 403);
+        QCOMPARE(controller.errorKey(), "kugou.requestFailed"); QVERIFY(!controller.takeCredentials(attempt));
+        KugouQrController invalid("kugou/one", "two", &network, {1, 1000});
+        invalid.start(); QCOMPARE(invalid.state(), KugouQrController::State::Failed);
+        QCOMPARE(network.requests.size(), 2);
+    }
+    void qrControllerNotificationsMayCancelRetryOrDestroy()
+    {
+        Network network;
+        KugouQrController cancelled("kugou/one", "one", &network, {1, 1000});
+        connect(&cancelled, &KugouQrController::stateChanged, &cancelled, [&cancelled](auto state) {
+            if (state == KugouQrController::State::Fetching) cancelled.cancel();
+        });
+        cancelled.start(); QCOMPARE(network.requests.size(), 0);
+        auto *controller = new KugouQrController("kugou/one", "one", &network, KugouQrController::Timing{1, 1000});
+        QPointer<KugouQrController> guard(controller);
+        connect(controller, &KugouQrController::stateChanged, controller, [controller](auto state) {
+            if (state == KugouQrController::State::Waiting) delete controller;
+        });
+        controller->start(); network.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"KEY\"}}");
+        QVERIFY(!guard); QTest::qWait(10); QCOMPARE(network.requests.size(), 1);
+        KugouQrController retry("kugou/one", "one", &network, {1, 1000});
+        bool restarted = false;
+        connect(&retry, &KugouQrController::stateChanged, &retry, [&retry, &restarted](auto state) {
+            if (state == KugouQrController::State::Waiting && !restarted) { restarted = true; retry.start(); }
+        });
+        const auto old = retry.start();
+        network.replies[1]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"KEY\"}}");
+        QVERIFY(old != retry.attemptId()); QCOMPARE(retry.state(), KugouQrController::State::Fetching);
+        QTest::qWait(10); QCOMPARE(network.requests.size(), 3);
+    }
+    void qrControllerRetryDuringConfirmationSuppressesOldCredentialSignal()
+    {
+        Network network;
+        KugouQrController controller("kugou/one", "one", &network, {1, 2000});
+        QSignalSpy confirmed(&controller, &KugouQrController::confirmationReady);
+        const auto old = controller.start();
+        network.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"KEY\"}}");
+        QTRY_COMPARE(network.requests.size(), 2);
+        connect(&controller, &KugouQrController::stateChanged, &controller, [&controller](auto state) {
+            if (state == KugouQrController::State::Confirmed) controller.start();
+        });
+        network.replies[1]->deliver("{\"status\":1,\"data\":{\"status\":4,\"token\":\"OLD\",\"user_id\":1}}");
+        QCOMPARE(controller.state(), KugouQrController::State::Fetching);
+        QVERIFY(old != controller.attemptId()); QCOMPARE(confirmed.size(), 0);
+        QVERIFY(!controller.takeCredentials(old)); QCOMPARE(network.requests.size(), 3);
+    }
+    void qrControllerOwnsOnlyItsProductionNetwork()
+    {
+        QPointer<QNetworkAccessManager> owned;
+        {
+            KugouQrController controller("kugou/one", "one"); // no start, no real I/O
+            const auto managers = controller.findChildren<QNetworkAccessManager *>();
+            QCOMPARE(managers.size(), 1); owned = managers[0];
+        }
+        QVERIFY(!owned);
+        Network borrowed;
+        { KugouQrController controller("kugou/one", "one", &borrowed, {1, 1000}); }
+        QVERIFY(!borrowed.parent());
+    }
     void qrTransportUsesFixedBuilderAndCancellationFencesOldReplies()
     {
         Network network;
