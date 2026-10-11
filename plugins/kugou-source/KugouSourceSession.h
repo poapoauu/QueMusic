@@ -5,7 +5,7 @@
 #include "extensions/item-lookup/v1/IItemLookupProviderV1.h"
 #include <QSet>
 
-// Anonymous prototype, not yet registered as a discoverable Source package.
+// Anonymous prototype, only packaged outside the default plugin search root.
 class KugouSourceSession final : public IMusicSourceSessionV2,
                                  public IPageProviderV2, public IPlaybackProviderV2,
                                  public IItemLookupProviderV1 {

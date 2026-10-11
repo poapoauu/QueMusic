@@ -1,0 +1,17 @@
+{
+  "id": "org.quemusic.source.kugou",
+  "sourceId": "kugou",
+  "name": "Kugou (experimental anonymous)",
+  "version": "0.1.0",
+  "category": "source",
+  "runtime": "native-qt",
+  "library": "@CMAKE_SHARED_MODULE_PREFIX@quemusic_kugou_source@CMAKE_SHARED_MODULE_SUFFIX@",
+  "pluginApi": {"major": 1, "minHostMinor": 0},
+  "interfaces": [{"id": "org.quemusic.MusicSourcePlugin/2.0", "version": "2.0"}],
+  "runtimeRequirements": {
+    "sourceSdkAbi": 2,
+    "qtMajor": @Qt6Core_VERSION_MAJOR@,
+    "architecture": "@QUEMUSIC_KUGOU_ARCHITECTURE@",
+    "buildKey": "$<IF:$<CONFIG:Debug>,Debug,Release>"
+  }
+}

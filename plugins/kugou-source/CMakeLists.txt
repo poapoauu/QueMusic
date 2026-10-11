@@ -1,5 +1,5 @@
-# Plugin-private request layer. No Source package is advertised until its v2
-# session and authentication UI are implemented and validated.
+# Plugin-private request layer and isolated experimental package. Never bundled
+# or placed in SourceStartup's default search root before Phase 7 acceptance.
 add_library(quemusic_kugou_client STATIC KugouApiClient.cpp KugouApiClient.h)
 add_library(quemusic_kugou_session STATIC
     KugouSourceSession.cpp KugouSourceSession.h KugouMappers.cpp KugouMappers.h)
@@ -11,6 +11,34 @@ set_target_properties(quemusic_kugou_client PROPERTIES POSITION_INDEPENDENT_CODE
 target_include_directories(quemusic_kugou_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(quemusic_kugou_client PUBLIC quemusic_source_sdk Qt6::Network)
 
+option(QUEMUSIC_BUILD_EXPERIMENTAL_KUGOU_SOURCE "Build isolated anonymous Kugou prototype" OFF)
+if(BUILD_TESTING OR QUEMUSIC_BUILD_EXPERIMENTAL_KUGOU_SOURCE)
+    add_library(quemusic_kugou_source MODULE KugouSourcePlugin.cpp KugouSourcePlugin.h plugin.json)
+    target_link_libraries(quemusic_kugou_source PRIVATE quemusic_kugou_session)
+    set(kugou_package_root "${CMAKE_BINARY_DIR}/experimental-source-packages")
+    set_target_properties(quemusic_kugou_source PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${kugou_package_root}/kugou"
+        RUNTIME_OUTPUT_DIRECTORY "${kugou_package_root}/kugou")
+    set(QUEMUSIC_KUGOU_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        list(LENGTH CMAKE_OSX_ARCHITECTURES kugou_architecture_count)
+        if(kugou_architecture_count GREATER 1)
+            set(QUEMUSIC_KUGOU_ARCHITECTURE "universal")
+        else()
+            list(GET CMAKE_OSX_ARCHITECTURES 0 QUEMUSIC_KUGOU_ARCHITECTURE)
+        endif()
+    endif()
+    string(TOLOWER "${QUEMUSIC_KUGOU_ARCHITECTURE}" QUEMUSIC_KUGOU_ARCHITECTURE)
+    if(QUEMUSIC_KUGOU_ARCHITECTURE STREQUAL "amd64" OR QUEMUSIC_KUGOU_ARCHITECTURE STREQUAL "x64")
+        set(QUEMUSIC_KUGOU_ARCHITECTURE "x86_64")
+    elseif(QUEMUSIC_KUGOU_ARCHITECTURE STREQUAL "aarch64")
+        set(QUEMUSIC_KUGOU_ARCHITECTURE "arm64")
+    endif()
+    configure_file(manifest.json.in "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in" @ONLY)
+    file(GENERATE OUTPUT "${kugou_package_root}/kugou/manifest.json"
+        INPUT "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in")
+endif()
+
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     qt_add_executable(quemusic_kugou_client_test ../../tests/tst_KugouApiClient.cpp)
@@ -19,4 +47,11 @@ if(BUILD_TESTING)
     qt_add_executable(quemusic_kugou_session_test ../../tests/tst_KugouSourceSession.cpp)
     target_link_libraries(quemusic_kugou_session_test PRIVATE quemusic_kugou_session Qt6::Test)
     add_test(NAME quemusic_kugou_session_test COMMAND quemusic_kugou_session_test)
+    qt_add_executable(quemusic_kugou_registration_test ../../tests/tst_KugouSourceRegistration.cpp)
+    target_compile_definitions(quemusic_kugou_registration_test PRIVATE
+        QUEMUSIC_KUGOU_PACKAGE_ROOT="${kugou_package_root}")
+    target_link_libraries(quemusic_kugou_registration_test PRIVATE
+        quemusic_playback_coordinator Qt6::Network Qt6::Test)
+    add_dependencies(quemusic_kugou_registration_test quemusic_kugou_source)
+    add_test(NAME quemusic_kugou_registration_test COMMAND quemusic_kugou_registration_test)
 endif()

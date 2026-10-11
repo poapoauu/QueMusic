@@ -1,0 +1,5 @@
+{
+  "Keys": ["org.quemusic.source.kugou"],
+  "sourceId": "kugou",
+  "sdkAbi": 2
+}
