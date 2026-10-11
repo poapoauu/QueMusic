@@ -57,22 +57,42 @@ QUuid KugouApiClient::get(Endpoint endpoint, const QUrlQuery &query)
                                   "kugou.invalidEndpoint", false));
         return id;
     }
-    if (!m_network) {
-        scheduleFailure(id, error(SourceErrorKindV2::Unavailable,
-                                  "kugou.networkUnavailable", true));
-        return id;
-    }
     url.setQuery(query);
     QNetworkRequest request(url);
     request.setRawHeader("Accept-Encoding", "identity");
     request.setRawHeader("Referer", "https://www.kugou.com/");
-    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
     request.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
     request.setAttribute(QNetworkRequest::AuthenticationReuseAttribute, QNetworkRequest::Manual);
     request.setTransferTimeout(15000);
+    dispatch(id, request);
+    return id;
+}
+
+QUuid KugouApiClient::getQr(KugouQrRequests::Operation operation,
+                           const KugouQrRequests::DeviceIdentity &identity,
+                           qint64 epochSeconds, const QString &code)
+{
+    const QUuid id = QUuid::createUuid();
+    m_pending.insert(id, {});
+    const auto request = KugouQrRequests::build(operation, identity, epochSeconds, code);
+    if (!request) {
+        scheduleFailure(id, error(SourceErrorKindV2::InvalidRequest, "kugou.qrInvalidRequest", false));
+        return id;
+    }
+    dispatch(id, *request);
+    return id;
+}
+
+void KugouApiClient::dispatch(const QUuid &id, QNetworkRequest request)
+{
+    if (!m_network) {
+        scheduleFailure(id, error(SourceErrorKindV2::Unavailable, "kugou.networkUnavailable", true));
+        return;
+    }
+    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     auto *reply = m_network->get(request);
     m_pending[id].reply = reply;
     reply->setReadBufferSize(MaximumBodyBytes + 1);
@@ -86,7 +106,6 @@ QUuid KugouApiClient::get(Endpoint endpoint, const QUrlQuery &query)
     // Also support injected managers returning an already completed reply.
     if (reply->isFinished())
         QTimer::singleShot(0, this, [this, id] { finish(id); });
-    return id;
 }
 
 void KugouApiClient::consume(const QUuid &id)

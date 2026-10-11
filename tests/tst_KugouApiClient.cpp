@@ -63,6 +63,54 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void qrTransportUsesFixedBuilderAndCancellationFencesOldReplies()
+    {
+        Network network;
+        KugouApiClient client(&network, nullptr);
+        QSignalSpy success(&client, &KugouApiClient::succeeded), failure(&client, &KugouApiClient::failed);
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto create = client.getQr(KugouQrRequests::Operation::CreateCode, device->requestIdentity, 1700000000);
+        const auto oldPoll = client.getQr(KugouQrRequests::Operation::PollCode, device->requestIdentity, 1700000001, "OLD_PRIVATE_KEY");
+        QVERIFY(!create.isNull()); QVERIFY(create != oldPoll);
+        QCOMPARE(network.requests.size(), 2);
+        QCOMPARE(network.requests[0].url().host(), "login-user.kugou.com");
+        QCOMPARE(network.requests[0].url().path(), "/v2/qrcode");
+        QCOMPARE(network.requests[1].url().path(), "/v2/get_userinfo_qrcode");
+        QCOMPARE(network.requests[1].rawHeader("mid"), device->requestIdentity.mid.toUtf8());
+        QVERIFY(network.requests[0].hasRawHeader("User-Agent"));
+        QVERIFY(!network.requests[0].hasRawHeader("Cookie"));
+        client.cancel(oldPoll); QVERIFY(network.replies[1]->aborted);
+        const auto current = client.getQr(KugouQrRequests::Operation::PollCode, device->requestIdentity, 1700000002, "NEW_PRIVATE_KEY");
+        network.replies[1]->deliver("{\"status\":1,\"data\":{\"status\":4,\"token\":\"OLD_PRIVATE_TOKEN\",\"user_id\":1}}");
+        QCOMPARE(success.size(), 0); QCOMPARE(failure.size(), 0);
+        network.replies[2]->deliver("{\"status\":1,\"data\":{\"status\":1}}");
+        QCOMPARE(success.size(), 1); QCOMPARE(success[0][0].toUuid(), current);
+        network.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"CODE\"}}");
+        QCOMPARE(success.size(), 2); QCOMPARE(success[1][0].toUuid(), create);
+        const auto pending = client.getQr(KugouQrRequests::Operation::CreateCode, device->requestIdentity, 1);
+        QVERIFY(!pending.isNull()); client.cancelAll();
+        network.replies[3]->deliver("{\"status\":1}"); QCOMPARE(success.size(), 2);
+    }
+    void qrInvalidInputAndNetworkLossAreDeferredAndSanitized()
+    {
+        auto network = std::make_unique<Network>();
+        KugouApiClient client(network.get(), nullptr);
+        QSignalSpy failure(&client, &KugouApiClient::failed), success(&client, &KugouApiClient::succeeded);
+        const auto invalid = client.getQr(KugouQrRequests::Operation::PollCode, {}, 1, "PRIVATE_KEY");
+        QCOMPARE(failure.size(), 0); QCOMPARE(network->requests.size(), 0);
+        QTRY_COMPARE(failure.size(), 1); QCOMPARE(failure[0][0].toUuid(), invalid);
+        auto error = qvariant_cast<SourceErrorV2>(failure[0][1]);
+        QCOMPARE(error.kind, SourceErrorKindV2::InvalidRequest); QVERIFY(error.detail.isEmpty());
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto pending = client.getQr(KugouQrRequests::Operation::CreateCode, device->requestIdentity, 1);
+        network.reset(); QTRY_COMPARE(failure.size(), 2);
+        QCOMPARE(failure[1][0].toUuid(), pending);
+        error = qvariant_cast<SourceErrorV2>(failure[1][1]);
+        QCOMPARE(error.kind, SourceErrorKindV2::Unavailable); QVERIFY(error.detail.isEmpty());
+        const auto absent = client.getQr(KugouQrRequests::Operation::CreateCode, device->requestIdentity, 1);
+        client.cancel(absent); QCoreApplication::processEvents(); QCOMPARE(failure.size(), 2);
+        QCOMPARE(success.size(), 0);
+    }
     void qrDeviceIdentityIsEphemeralAndInstanceBound()
     {
         using namespace KugouQrProtocol;

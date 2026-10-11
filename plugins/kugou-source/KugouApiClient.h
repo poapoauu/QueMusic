@@ -1,6 +1,7 @@
 #pragma once
 
 #include "v2/SourceV2Types.h"
+#include "KugouQrRequests.h"
 #include <QHash>
 #include <QNetworkAccessManager>
 #include <QPointer>
@@ -9,8 +10,8 @@
 
 class QNetworkReply;
 
-// Instance-owned, anonymous JSON transport. Authenticated QR operations will
-// have their own explicit protocol; this client never borrows Host cookies.
+// Instance-owned JSON transport. QR requests use their explicit private
+// protocol builder; no caller-supplied URL or Host cookies are accepted.
 class KugouApiClient final : public QObject {
     Q_OBJECT
 public:
@@ -22,6 +23,9 @@ public:
     ~KugouApiClient() override;
 
     QUuid get(Endpoint endpoint, const QUrlQuery &query = {});
+    QUuid getQr(KugouQrRequests::Operation operation,
+                const KugouQrRequests::DeviceIdentity &identity,
+                qint64 epochSeconds, const QString &code = {});
     void cancel(const QUuid &requestId);
     void cancelAll();
 
@@ -35,6 +39,7 @@ private:
         QByteArray bytes;
     };
     void consume(const QUuid &id);
+    void dispatch(const QUuid &id, QNetworkRequest request);
     void finish(const QUuid &id);
     void fail(const QUuid &id, const SourceErrorV2 &error);
     void scheduleFailure(const QUuid &id, const SourceErrorV2 &error);
