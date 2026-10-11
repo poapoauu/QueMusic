@@ -644,6 +644,7 @@ endif()
 
 add_subdirectory(plugins/navidrome-source)
 add_subdirectory(plugins/local-source)
+add_subdirectory(plugins/kugou-source)
 
 qt_add_executable(quemusic_navidrome_smoke
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/NavidromeSmoke.cpp
