@@ -1,5 +1,7 @@
 #include "KugouApiClient.h"
 #include "KugouQrRequests.h"
+#include "KugouQrProtocol.h"
+#include <QJsonArray>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSignalSpy>
@@ -61,6 +63,70 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void qrDeviceIdentityIsEphemeralAndInstanceBound()
+    {
+        using namespace KugouQrProtocol;
+        QVERIFY(!createDevice("kugou/one", "two"));
+        QVERIFY(!createDevice("kugou/", ""));
+        QVERIFY(!createDevice("kugou/one\n", "one\n"));
+        const auto one = createDevice("kugou/one", "one"), two = createDevice("kugou/two", "two");
+        QVERIFY(one && two);
+        QCOMPARE(one->sourceInstanceId, "kugou/one"); QCOMPARE(one->accountId, "one");
+        QVERIFY(one->guid != two->guid); QVERIFY(one->requestIdentity.dfid != two->requestIdentity.dfid);
+        QVERIFY(one->requestIdentity.mid != two->requestIdentity.mid);
+        QVERIFY(QUuid(one->guid).version() == QUuid::Random);
+        QCOMPARE(one->requestIdentity.mid, decimalDigest(QCryptographicHash::hash(one->guid.toUtf8(), QCryptographicHash::Md5)));
+        QVERIFY(KugouQrRequests::build(KugouQrRequests::Operation::CreateCode, one->requestIdentity, 1));
+        QCOMPARE(decimalDigest(QByteArray(16, '\0')), "0");
+        QCOMPARE(decimalDigest(QByteArray(16, char(0xff))), "340282366920938463463374607431768211455");
+        QCOMPARE(decimalDigest(QCryptographicHash::hash("00112233-4455-4677-8899-aabbccddeeff", QCryptographicHash::Md5)),
+                 "303182012337535952547182526388775132166");
+        QByteArray lowDigest(16, '\0'); lowDigest[13] = 1;
+        QCOMPARE(decimalDigest(lowDigest), "65536");
+        QVERIFY(decimalDigest(QByteArray(15, '\0')).isEmpty());
+    }
+    void qrResponseMappingRequiresExplicitStateAndAccountIdentity()
+    {
+        using namespace KugouQrProtocol;
+        auto wrap = [](QJsonObject data) { return QJsonObject{{"status", 1}, {"data", data}}; };
+        auto code = mapCode(wrap({{"qrcode", "opaque&+#/%26"}, {"token", "IGNORED"}}));
+        QVERIFY(code); QCOMPARE(code->landingUrl.host(), "h5.kugou.com");
+        QCOMPARE(QUrlQuery(code->landingUrl).queryItems().size(), 2);
+        QCOMPARE(QUrlQuery(code->landingUrl).queryItemValue("qrcode", QUrl::FullyDecoded), code->key);
+        QVERIFY(!code->landingUrl.hasFragment());
+        for (const auto &bad : {QString{}, QString("key\n"), QString(1025, 'a')})
+            QVERIFY(!mapCode(wrap({{"qrcode", bad}})));
+        QVERIFY(!mapCode(wrap({{"qrcode", 123}})));
+        QVERIFY(!mapCode({{"status", "1"}, {"data", QJsonObject{{"qrcode", "key"}}}}));
+        QVERIFY(!mapCode({{"status", 1}, {"data", QJsonArray{}}}));
+        for (int status : {0, 1, 2}) {
+            const auto poll = mapPoll(wrap({{"status", status}, {"token", "SHOULD_NOT_ESCAPE"}, {"user_id", 7}}));
+            QVERIFY(poll); QVERIFY(!poll->credentials);
+            QCOMPARE(poll->state, status == 0 ? PollState::Expired : status == 1 ? PollState::Waiting : PollState::Scanned);
+        }
+        QJsonObject data{{"status", 4}, {"token", "PRIVATE_TOKEN="}, {"user_id", 123}, {"nickname", "ignored"}};
+        auto poll = mapPoll(wrap(data)); QVERIFY(poll && poll->credentials);
+        QCOMPARE(poll->state, PollState::Confirmed); QCOMPARE(poll->credentials->userId, "123");
+        QCOMPARE(poll->credentials->token, "PRIVATE_TOKEN=");
+        data.insert("userid", "123"); QVERIFY(mapPoll(wrap(data)));
+        data.insert("userid", "124"); QVERIFY(!mapPoll(wrap(data)));
+        data.remove("user_id"); QVERIFY(mapPoll(wrap(data)));
+        data.remove("userid"); QVERIFY(!mapPoll(wrap(data)));
+        for (const auto &id : {QJsonValue("01"), QJsonValue("0"), QJsonValue(" 1"), QJsonValue(true),
+                              QJsonValue(-1), QJsonValue(1.5), QJsonValue(9007199254740992.0), QJsonValue()}) {
+            data.insert("user_id", id); QVERIFY(!mapPoll(wrap(data)));
+        }
+        data.insert("user_id", "9007199254740993"); QVERIFY(mapPoll(wrap(data)));
+        for (const auto &token : {QJsonValue(""), QJsonValue("x; userid=1"), QJsonValue("x\r\n"),
+                                 QJsonValue(123), QJsonValue(QString(4097, 'x'))}) {
+            data.insert("token", token); QVERIFY(!mapPoll(wrap(data)));
+        }
+        data.insert("token", "valid");
+        for (const auto &status : {QJsonValue("4"), QJsonValue(3), QJsonValue(4.5), QJsonValue(true), QJsonValue()}) {
+            data.insert("status", status); QVERIFY(!mapPoll(wrap(data)));
+        }
+        QVERIFY(!mapPoll({{"status", 0}, {"data", QJsonObject{{"status", 4}, {"token", "valid"}, {"user_id", 1}}}}));
+    }
     void qrRequestsAreDeterministicPrivateAndStrict()
     {
         using namespace KugouQrRequests;

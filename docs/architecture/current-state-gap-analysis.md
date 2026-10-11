@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+Phase 7 切片 8 已加入插件私有临时设备身份与严格 QR 响应映射：实例/账号绑定、UUID v4/独立 dfid/大端 MD5 十进制 mid、明确扫码状态、凭证类型边界、用户 ID 精度与别名冲突拒绝。全目标构建及 **79/79 CTest（74.62 秒）** 通过。不读取 Host Account.ini、不持久化 token、不赋予登录/Source Ready，也未迁移 Host 登录 UI；下一步接入可取消请求/轮询代次隔离，再完成实例存储和 Plugin Management UI，Phase 7 尚未完成。
+
 Phase 7 切片 7 已加入插件私有 QR 获取/轮询请求构造基础：固定 HTTPS 端点、白名单参数、排序 UTF-8 签名、身份/时间边界、百分号编码和隔离请求属性。全目标构建及 **79/79 CTest（75.09 秒）** 通过。仅纯构造函数，尚未发送认证请求、生成/存储设备身份或接入登录 UI；不会借用 Host Account.ini。后续继续实例隔离的设备身份与严格响应映射，再接可取消轮询/秘密存储和 Management UI。
 
 本次检查的最重要结论是：**此前完成的 Source SDK v2 / Source Registry / Capability / Action Router / Navidrome / PlaybackCoordinator / Original UI Data Adapter 改造确实存在，不应重新实现；但它们尚未位于当前检出分支。**
