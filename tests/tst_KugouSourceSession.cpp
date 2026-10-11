@@ -64,6 +64,12 @@ QJsonObject page(const QJsonArray &rows = {track()}, int total = 2)
 {
     return {{"status", 1}, {"data", QJsonObject{{"info", rows}, {"total", total}}}};
 }
+QJsonObject verifiedResource()
+{
+    return {{"status", 1}, {"data", QJsonObject{{"hash", hash}, {"songName", "Verified Song"},
+        {"author_name", "Verified Artist"}, {"timeLength", 62}, {"pay_type", 0},
+        {"url", "https://cdn.kugou.com/song?key=PRIVATE"}, {"token", "PRIVATE"}}}};
+}
 MediaRefV2 media(const QString &account = "one", const QString &id = hash)
 {
     return {"kugou", "kugou/" + account, account, MediaEntityTypeV2::Track, id};
@@ -73,6 +79,82 @@ MediaRefV2 media(const QString &account = "one", const QString &id = hash)
 class KugouSourceSessionTest final : public QObject {
     Q_OBJECT
 private slots:
+    void unknownMediaNeedsExplicitResourceVerificationBeforeIndexing()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy stream(&session, &IMusicSourceSessionV2::streamReady);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        const auto id = session.resolveStream(media());
+        QVERIFY(!session.lookupItem(media())); QTRY_COMPARE(network.requests.size(), 1);
+        network.replies[0]->deliver(verifiedResource());
+        QCOMPARE(stream.size(), 1); QCOMPARE(stream[0][0].toUuid(), id);
+        const auto item = session.lookupItem(media()); QVERIFY(item);
+        QCOMPARE(item->ref, media()); QCOMPARE(item->title, "Verified Song");
+        QCOMPARE(item->durationMs, 62000); QCOMPARE(item->subtitle, "Verified Artist");
+        QVERIFY(item->metadata.isEmpty()); QVERIFY(item->externalIds.isEmpty());
+        KugouSourceSession other(config("two"), &network, nullptr);
+        other.open(); QTRY_COMPARE(other.state(), SourceSessionStateV2::Ready);
+        QVERIFY(!other.lookupItem(media("two")));
+        session.close(); QVERIFY(!session.lookupItem(media()));
+    }
+    void unknownMediaVerificationFailsClosedForIncompleteOrUnsafeResponses()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy stream(&session, &IMusicSourceSessionV2::streamReady);
+        QSignalSpy failure(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        for (int variant = 0; variant < 10; ++variant) {
+            if (variant > 0) {
+                session.close(); session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+            }
+            auto response = verifiedResource(); auto data = response["data"].toObject();
+            if (variant == 0) data.remove("pay_type");
+            if (variant == 1) data["pay_type"] = "0";
+            if (variant == 2) data["pay_type"] = 3;
+            if (variant == 3) data["hash"] = QString(32, 'F');
+            if (variant == 4) data.remove("songName");
+            if (variant == 5) data["songName"] = " ";
+            if (variant == 6) data["url"] = "file:///private";
+            response["data"] = data;
+            if (variant == 7) response.remove("status");
+            if (variant == 8) response["status"] = "1";
+            if (variant == 9) response["status"] = 0;
+            session.resolveStream(media()); QTRY_COMPARE(network.requests.size(), variant + 1);
+            network.replies[variant]->deliver(response);
+            QCOMPARE(failure.size(), variant + 1); QCOMPARE(stream.size(), 0);
+            if (variant == 2) {
+                QVERIFY(session.lookupItem(media()));
+                QCOMPARE(session.lookupItem(media())->availableActions.value(SourceActionV2::Play).state,
+                         AvailabilityV2::Unavailable);
+                session.resolveStream(media()); QTRY_COMPARE(failure.size(), variant + 2);
+                QCOMPARE(network.requests.size(), variant + 1);
+                failure.removeLast();
+            } else QVERIFY(!session.lookupItem(media()));
+            QVERIFY(qvariant_cast<SourceErrorV2>(failure.last()[1]).detail.isEmpty());
+        }
+    }
+    void verificationCannotUndoRestrictionsAndCancelledRepliesCannotPopulateIndex()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy stream(&session, &IMusicSourceSessionV2::streamReady);
+        QSignalSpy failure(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        session.resolveStream(media()); session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 2);
+        network.replies[1]->deliver(page({track(3)}, 1));
+        network.replies[0]->deliver(verifiedResource());
+        QCOMPARE(failure.size(), 1); QCOMPARE(stream.size(), 0);
+        QCOMPARE(session.lookupItem(media())->availableActions.value(SourceActionV2::Play).state,
+                 AvailabilityV2::Unavailable);
+        session.close(); session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        const auto canceled = session.resolveStream(media()); QTRY_COMPARE(network.requests.size(), 3);
+        auto held = network.replies[2]; session.cancel(canceled); QVERIFY(held->aborted);
+        held->deliver(verifiedResource()); QVERIFY(!session.lookupItem(media()));
+        session.resolveStream(media()); QTRY_COMPARE(network.requests.size(), 4);
+        held = network.replies[3]; session.close(); QVERIFY(held->aborted);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        if (held) held->deliver(verifiedResource());
+        QVERIFY(!session.lookupItem(media())); QCOMPARE(stream.size(), 0); QCOMPARE(failure.size(), 1);
+    }
     void itemLookupIsExactIndexedOnlyAndNeverPerformsIo()
     {
         Network network; KugouSourceSession session(config(), &network, nullptr);
@@ -144,6 +226,9 @@ private slots:
         const auto overflow = section.items.last();
         QVERIFY(!session.lookupItem(overflow.ref));
         QCOMPARE(overflow.availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+        QSignalSpy failure(&session, &IMusicSourceSessionV2::requestFailed);
+        session.resolveStream(overflow.ref); QTRY_COMPARE(failure.size(), 1);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failure[0][1]).kind, SourceErrorKindV2::Authorization);
         QCOMPARE(network.requests.size(), 42);
     }
     void interfacesOpenCapabilitiesAndSearchStreamProtocol()
@@ -203,12 +288,12 @@ private slots:
         session.close(); session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
         session.fetchPage(query); QTRY_COMPARE(failure.size(), 4); QCOMPARE(network.requests.size(), 2);
     }
-    void foreignMalformedAndUnverifiedMediaNeverRequestAResource()
+    void foreignMalformedAndRestrictedMediaNeverRequestAResource()
     {
         Network network; KugouSourceSession session(config(), &network, nullptr);
         QSignalSpy failure(&session, &IMusicSourceSessionV2::requestFailed);
         session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
-        for (int variant = 0; variant < 7; ++variant) {
+        for (int variant = 0; variant < 6; ++variant) {
             auto ref = media();
             if (variant == 0) ref.sourcePluginId = "local";
             if (variant == 1) ref.sourceInstanceId = "kugou/two";
@@ -217,13 +302,12 @@ private slots:
             if (variant == 4) ref.entityId = "file:///x";
             if (variant == 5) ref.entityId = hash.toLower();
             session.resolveStream(ref); QTRY_COMPARE(failure.size(), variant + 1);
-            QCOMPARE(qvariant_cast<SourceErrorV2>(failure.last()[1]).kind,
-                     variant == 6 ? SourceErrorKindV2::Authorization : SourceErrorKindV2::InvalidRequest);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failure.last()[1]).kind, SourceErrorKindV2::InvalidRequest);
         }
         QCOMPARE(network.requests.size(), 0);
         session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 1);
         network.replies[0]->deliver(page({track(3)}));
-        session.resolveStream(media()); QTRY_COMPARE(failure.size(), 8); QCOMPARE(network.requests.size(), 1);
+        session.resolveStream(media()); QTRY_COMPARE(failure.size(), 7); QCOMPARE(network.requests.size(), 1);
     }
     void invalidQueriesAndUnsupportedOperationsDoNotUseLegacy()
     {
@@ -261,7 +345,9 @@ private slots:
         one.close(); QVERIFY(held->aborted); one.open(); QTRY_COMPARE(one.state(), SourceSessionStateV2::Ready);
         if (held) held->deliver(page()); QCOMPARE(first.size(), 0);
         one.resolveStream(media()); QSignalSpy failure(&one, &IMusicSourceSessionV2::requestFailed);
-        QTRY_COMPARE(failure.size(), 1); QCOMPARE(network.requests.size(), 3);
+        QTRY_COMPARE(network.requests.size(), 4);
+        network.replies[3]->deliver({{"hash", hash}, {"url", "https://cdn.kugou.com/a"}});
+        QTRY_COMPARE(failure.size(), 1);
     }
     void malformedBusinessResponsesAreNotSuccessfulEmptyPages()
     {

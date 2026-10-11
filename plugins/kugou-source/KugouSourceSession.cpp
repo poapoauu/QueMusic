@@ -155,9 +155,11 @@ void KugouSourceSession::dispatch(const QUuid &id)
             fail(id, failure(SourceErrorKindV2::InvalidRequest, "source.media.invalid")); return;
         }
         const auto indexed = lookupItem(media);
-        if (!indexed || indexed->availableActions.value(SourceActionV2::Play).state != AvailabilityV2::Available) {
+        if ((indexed && indexed->availableActions.value(SourceActionV2::Play).state != AvailabilityV2::Available)
+            || (!indexed && m_tracks.size() >= 4096)) {
             fail(id, failure(SourceErrorKindV2::Authorization, "kugou.track.unverified")); return;
         }
+        m_requests[id].needsVerification = !indexed;
         endpoint = KugouApiClient::Endpoint::ResolveTrack;
         parameters.addQueryItem("cmd", "playInfo"); parameters.addQueryItem("hash", hash);
     }
@@ -170,12 +172,26 @@ void KugouSourceSession::succeeded(const QUuid &clientId, const QJsonObject &res
     if (id.isNull() || !m_requests.contains(id)) return;
     const auto request = m_requests.value(id);
     if (request.kind == Kind::Stream) {
+        std::optional<MediaItemV2> verified;
+        if (request.needsVerification) {
+            verified = KugouMappers::verifiedResourceTrack(response, request.media);
+            const auto current = lookupItem(request.media);
+            if (!verified || (current && current->availableActions.value(SourceActionV2::Play).state
+                != AvailabilityV2::Available) || (!current && m_tracks.size() >= 4096)) {
+                fail(id, failure(SourceErrorKindV2::Authorization, "kugou.track.unverified")); return;
+            }
+            if (verified->availableActions.value(SourceActionV2::Play).state != AvailabilityV2::Available) {
+                m_tracks.insert(request.media.entityId, *verified);
+                fail(id, failure(SourceErrorKindV2::Authorization, "kugou.track.unverified")); return;
+            }
+        }
+        const auto stream = KugouMappers::stream(response, request.media);
+        if (!stream) { fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.stream.invalid")); return; }
+        if (verified) m_tracks.insert(request.media.entityId, *verified);
         const auto indexed = lookupItem(request.media);
         if (!indexed || indexed->availableActions.value(SourceActionV2::Play).state != AvailabilityV2::Available) {
             fail(id, failure(SourceErrorKindV2::Authorization, "kugou.track.unverified")); return;
         }
-        const auto stream = KugouMappers::stream(response, request.media);
-        if (!stream) { fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.stream.invalid")); return; }
         m_requests.remove(id); emit streamReady(id, *stream); return;
     }
     const auto data = response.value("data").toObject();

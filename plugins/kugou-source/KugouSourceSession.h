@@ -34,6 +34,7 @@ private:
         MediaRefV2 media;
         QUuid clientId;
         int page = 1;
+        bool needsVerification = false;
     };
     struct Cursor { QString search; int limit; int page; };
     QUuid enqueue(Request request);

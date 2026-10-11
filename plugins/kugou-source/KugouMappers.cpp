@@ -33,6 +33,21 @@ std::optional<MediaItemV2> track(const QJsonObject &object, const SourceIdentity
             : ActionAvailabilityV2{AvailabilityV2::Unavailable, "kugou.track.restricted", {}});
     return item;
 }
+std::optional<MediaItemV2> verifiedResourceTrack(const QJsonObject &object, const MediaRefV2 &media)
+{
+    if (media.entityType != MediaEntityTypeV2::Track || media.entityId.isEmpty()
+        || canonicalHash(media.entityId) != media.entityId
+        || object.value("status").toDouble(-1) != 1) return {};
+    const auto data = object.value("data").isObject() ? object.value("data").toObject() : object;
+    if (canonicalHash(data.value("hash").toString()) != media.entityId
+        || !data.value("pay_type").isDouble()) return {};
+    // Resource metadata uses a different wire shape from search results.
+    // Explicitly project it; never retain the original object or signed URL.
+    const QJsonObject row{{"hash", media.entityId}, {"songname", data.value("songName")},
+        {"singername", data.value("author_name")}, {"duration", data.value("timeLength")},
+        {"pay_type", data.value("pay_type")}};
+    return track(row, {media.sourcePluginId, media.sourceInstanceId, media.accountId, {}});
+}
 std::optional<StreamDescriptorV2> stream(const QJsonObject &object, const MediaRefV2 &media)
 {
     if (media.entityType != MediaEntityTypeV2::Track || media.entityId.isEmpty()

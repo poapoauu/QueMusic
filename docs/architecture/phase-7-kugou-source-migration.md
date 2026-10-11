@@ -40,7 +40,7 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - opaque 游标绑定搜索词、limit 和 Session，上限 1024；已确认条目缓存上限 4096，关闭清除。达到条目上限时新 hash 保持不可播放，不清除已有受限记录以便旧回包重新获权；达到游标上限时旧游标清理后失效。
 - resolveStream 只接受当前实例已确认可播放的完整 ref，核验返回 hash、业务状态、HTTP/HTTPS URL（禁止文件/data/相对 URL、userinfo、fragment）。只发标准 StreamDescriptor 给 Host/Core，不调用播放器、不返回旧路径，不自动升级质量或绕过受限资源。
 
-当前重要限制：恢复队列中尚未在当前 Session 重新确认的媒体拒绝解析，需要后续可信网络重新验证；切片 3 的同步 Item Lookup 不解决未知历史 ref 的验证。不应把此原型直接注册成最终可用音源。免费/付费字段和资源 hash 的真实平台响应、HTTPS 搜索、授权失效等仍需要真实服务验证，不能凭测试夹具认定协议完备。
+切片 2 当时的重要限制：未在当前 Session 重新确认的恢复媒体直接拒绝解析；切片 4 已在插件私有解析中增加异步验证，但尚未接入 Host 的恢复权限链。切片 3 的同步 Item Lookup 始终不承担网络验证。不应把此原型直接注册成最终可用音源。免费/付费字段和资源 hash 的真实平台响应、HTTPS 搜索、授权失效等仍需要真实服务验证，不能凭测试夹具认定协议完备。
 
 ## 切片 3：当前会话 Item Lookup
 
@@ -50,9 +50,19 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 
 此切片仅补齐标准同步查找契约；未知恢复媒体仍拒绝解析，尚未实现异步可信网络重新验证、可加载插件包或 Registry/Coordinator 集成，Phase 7 未完成。
 
+## 切片 4：插件私有异步资源身份验证
+
+未知但身份合法的完整 Track ref 可以通过现有异步 `resolveStream` 请求重新验证，不新增公共 SDK 方法，不把同步 Lookup 改为网络调用，也不读取历史展示快照。跨来源/实例/账号、非法 hash/type、已索引受限项或索引已满的未知项，在请求前拒绝。
+
+未知项验证要求业务 status 明确为数值 1、返回 hash 精确对应请求、非空 songName 和数值 pay_type。只有 pay_type 为 0 且资源通过既有 URL 安全校验才索引为可播放并发 streamReady。缺少权限字段、字符串状态/权限、空名称、不匹配 hash 或非法 URL 不授予播放能力。展示 DTO 只投影 songName/author_name/timeLength；URL/token 不进入索引。明确付费响应可索引为受限项，后续重试不能撤销该限制。
+
+完成时重新检查当前权限与容量，搜索期间观察到的限制不能被验证响应覆盖；取消、关闭/重开后的回包不能建立索引。默认每实例网络管理器和生命周期契约不变。
+
+这是匿名私有 Session 的验证机制，不是应用恢复播放完成：Host 仍须通过其当前权限链，不能给持久化快照恢复 Available 或自动播放。后续插件注册与 Registry/Coordinator 测试必须确定未知恢复 ref 的验证入口并覆盖最终权限检查。实际端点是否返回这些字段尚未验证；若缺失将明确失败，不猜测免费、绕过付费或回退 Legacy。
+
 ## 推荐的后续切片与验收
 
-1. v2 Session/mapper：当前匿名搜索、解析及当前会话同步 Item Lookup 契约已接入私有实现；下一步补未知恢复媒体的可信网络验证、插件描述/Schema/manifest 与注册，再做 Registry/Coordinator 集成测试。保持 Lookup 无 I/O，不以恢复快照授予权限。补实际动作能力和业务协议验证后才对应用公开，不把解析 URL 或旧路径交给 QML。
+1. v2 Session/mapper：当前匿名搜索、解析、当前会话同步 Item Lookup 及未知媒体异步验证机制已接入私有实现；下一步补插件描述/Schema/manifest 与注册，再做 Registry/Coordinator 集成及 Host 恢复权限链验证。保持 Lookup 无 I/O，不以恢复快照授予权限。补实际动作能力和真实业务协议验证后才对应用公开，不把解析 URL 或旧路径交给 QML。
 2. QR 认证协议：设备标识、签名、获取/轮询/超时/取消/重试、登录/退出、实例隔离和秘密存储全部插件负责。为令牌和账号建立可信绑定；不自动导入 Host Account.ini，不输出凭证日志。用协议夹具覆盖晚到回包、过期、错误和销毁，再单独进行真实扫码验收。
 3. Management UI：实现独立 Plugin UI API provider/context 与 `import QueMusic.PluginUI 1.0` QML，复用稳定 Theme/UI Kit；QR 与账号 UI 仅在插件可用时出现。普通设置走 Schema，不引用 Style、AccountManager 或其他私有 Host QML。
 4. Host 迁出：新插件和 UI 验收后去除酷狗登录实现/入口和 Core 直接引用；网易迁移不在此切片处理。测试禁用/删除插件后无可用酷狗来源、无酷狗登录 UI，以及无 Source 到旧平台 fallback。
@@ -75,3 +85,9 @@ SDK v2/Source 插件 ABI/Plugin UI API/磁盘格式不变。尚未加载真实�
 Qt 6.11.1/macOS x86_64 Debug 全目标增量构建成功，酷狗请求层/Session 两项专项通过；最终 **77/77 CTest 通过（75.53 秒）**。新增验收覆盖扩展 qobject_cast、未索引与非 Ready 查询拒绝、完整身份精确匹配、返回副本隔离、白名单展示字段、跨实例不共享、限制不能被免费回包撤销、关闭重开失效，以及填满索引后的溢出拒绝和旧限制保留。同步 Lookup 不产生额外网络请求；全部酷狗协议测试仍为注入夹具，无真实服务/账号/实际音频访问。
 
 只变更插件私有 Session 实现及测试，公共 SDK/扩展 IID、Plugin UI API 和磁盘格式不变。尚未注册酷狗可用包、接入 Coordinator 或完成历史媒体网络验证，不能据此宣称 Phase 7 已完成。
+
+## 切片 4 验证
+
+Qt 6.11.1/macOS x86_64 Debug 全目标构建、最新 Session 测试目标重建及两项酷狗专项复跑通过；最终 **77/77 CTest 通过（74.29 秒）**。新增测试验证未知 ref 的异步完整响应、身份与展示白名单、验证前不入索引、缺失/字符串/错误状态与权限、hash 不符、空标题、非法 URL、付费记录保持受限、验证期间搜索权限降级、取消与关闭重开后的迟到回包，以及索引满时不能通过解析路径绕过限制。
+
+只使用注入的无外网协议夹具，无真实平台、账号或音频验证。未改公共 SDK/IID、Host 恢复逻辑、Plugin UI API 或磁盘格式；实际服务字段验证、可加载插件、Registry/Coordinator 端到端和 QR Management UI 仍待后续完成。
