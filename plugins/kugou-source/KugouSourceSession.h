@@ -2,13 +2,15 @@
 #include "KugouApiClient.h"
 #include "v2/IMusicSourceSessionV2.h"
 #include "v2/ISourceProvidersV2.h"
+#include "extensions/item-lookup/v1/IItemLookupProviderV1.h"
 #include <QSet>
 
 // Anonymous prototype, not yet registered as a discoverable Source package.
 class KugouSourceSession final : public IMusicSourceSessionV2,
-                                 public IPageProviderV2, public IPlaybackProviderV2 {
+                                 public IPageProviderV2, public IPlaybackProviderV2,
+                                 public IItemLookupProviderV1 {
     Q_OBJECT
-    Q_INTERFACES(IPageProviderV2 IPlaybackProviderV2)
+    Q_INTERFACES(IPageProviderV2 IPlaybackProviderV2 IItemLookupProviderV1)
 public:
     explicit KugouSourceSession(SourceConfigurationV2 configuration, QObject *parent = nullptr);
     KugouSourceSession(SourceConfigurationV2 configuration, QNetworkAccessManager *network, QObject *parent);
@@ -21,6 +23,7 @@ public:
     void cancel(const QUuid &id) override;
     QUuid fetchPage(const PageQueryV2 &query) override;
     QUuid resolveStream(const MediaRefV2 &media) override;
+    std::optional<MediaItemV2> lookupItem(const MediaRefV2 &ref) const override;
     QUuid fetchArtwork(const MediaRefV2 &media) override;
     QUuid fetchLyrics(const MediaRefV2 &media) override;
 private:
@@ -47,7 +50,7 @@ private:
     QHash<QUuid, Request> m_requests;
     QHash<QUuid, QUuid> m_clientIds;
     QHash<QString, Cursor> m_cursors;
-    QHash<QString, ActionAvailabilityV2> m_tracks;
+    QHash<QString, MediaItemV2> m_tracks;
     QUuid m_openId;
     bool m_closing = false;
 };

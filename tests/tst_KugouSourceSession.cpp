@@ -73,11 +73,78 @@ MediaRefV2 media(const QString &account = "one", const QString &id = hash)
 class KugouSourceSessionTest final : public QObject {
     Q_OBJECT
 private slots:
+    void itemLookupIsExactIndexedOnlyAndNeverPerformsIo()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        auto *lookup = qobject_cast<IItemLookupProviderV1 *>(&session);
+        QVERIFY(lookup); QVERIFY(!lookup->lookupItem(media()));
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        QVERIFY(!lookup->lookupItem(media())); QCOMPARE(network.requests.size(), 0);
+        session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 1);
+        network.replies[0]->deliver(page());
+        auto item = lookup->lookupItem(media()); QVERIFY(item);
+        QCOMPARE(item->title, "Song"); QCOMPARE(item->durationMs, 61500);
+        QVERIFY(item->metadata.isEmpty()); QVERIFY(item->externalIds.isEmpty());
+        QCOMPARE(item->availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Available);
+        // A returned DTO is a copy, not a writable permission handle.
+        item->title = "tampered"; item->availableActions.clear();
+        QCOMPARE(lookup->lookupItem(media())->title, "Song");
+        for (int variant = 0; variant < 7; ++variant) {
+            auto ref = media();
+            if (variant == 0) ref.sourcePluginId = "local";
+            if (variant == 1) ref.sourceInstanceId = "kugou/two";
+            if (variant == 2) ref.accountId = "two";
+            if (variant == 3) ref.entityType = MediaEntityTypeV2::Album;
+            if (variant == 4) ref.entityId = hash.toLower();
+            if (variant == 5) ref.entityId = QString(32, 'F');
+            if (variant == 6) ref.entityId = "file:///private";
+            QVERIFY(!lookup->lookupItem(ref));
+        }
+        QCOMPARE(network.requests.size(), 1);
+        KugouSourceSession other(config("two"), &network, nullptr);
+        other.open(); QTRY_COMPARE(other.state(), SourceSessionStateV2::Ready);
+        QVERIFY(!other.lookupItem(media("two")));
+        session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 2);
+        network.replies[1]->deliver(page({track(3)}, 1));
+        QCOMPARE(lookup->lookupItem(media())->availableActions.value(SourceActionV2::Play).state,
+                 AvailabilityV2::Unavailable);
+        session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 3);
+        network.replies[2]->deliver(page());
+        QCOMPARE(lookup->lookupItem(media())->availableActions.value(SourceActionV2::Play).state,
+                 AvailabilityV2::Unavailable);
+        session.close(); QVERIFY(!lookup->lookupItem(media()));
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        QVERIFY(!lookup->lookupItem(media())); QCOMPARE(network.requests.size(), 3);
+    }
     void defaultSessionOwnsItsNetworkManager()
     {
         auto session = std::make_unique<KugouSourceSession>(config());
         QPointer<QNetworkAccessManager> network = session->findChild<QNetworkAccessManager *>();
         QVERIFY(network); session.reset(); QVERIFY(!network);
+    }
+    void fullIndexDoesNotEvictRestrictionsOrExposeUnindexedItems()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 1);
+        network.replies[0]->deliver(page({track(3)}, 1));
+        auto query = search(); query.limit = 100;
+        for (int batch = 0; batch < 41; ++batch) {
+            QJsonArray rows;
+            for (int i = 0; i < 100; ++i)
+                rows.append(track(0, QString::number(batch * 100 + i, 16).rightJustified(32, '0').toUpper()));
+            session.fetchPage(query); QTRY_COMPARE(network.requests.size(), batch + 2);
+            network.replies[batch + 1]->deliver(page(rows, 4100));
+        }
+        QVERIFY(session.lookupItem(media()));
+        QCOMPARE(session.lookupItem(media())->availableActions.value(SourceActionV2::Play).state,
+                 AvailabilityV2::Unavailable);
+        const auto section = qvariant_cast<PageResultV2>(ready.last()[1]).sections[0];
+        const auto overflow = section.items.last();
+        QVERIFY(!session.lookupItem(overflow.ref));
+        QCOMPARE(overflow.availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+        QCOMPARE(network.requests.size(), 42);
     }
     void interfacesOpenCapabilitiesAndSearchStreamProtocol()
     {

@@ -74,6 +74,15 @@ QUuid KugouSourceSession::enqueue(Request request)
 QUuid KugouSourceSession::open() { return enqueue({Kind::Open}); }
 QUuid KugouSourceSession::fetchPage(const PageQueryV2 &query) { return enqueue({Kind::Page, query}); }
 QUuid KugouSourceSession::resolveStream(const MediaRefV2 &media) { return enqueue({Kind::Stream, {}, media}); }
+std::optional<MediaItemV2> KugouSourceSession::lookupItem(const MediaRefV2 &ref) const
+{
+    if (m_state != SourceSessionStateV2::Ready) return std::nullopt;
+    const auto it = m_tracks.constFind(ref.entityId);
+    if (it == m_tracks.cend() || it->ref != ref) return std::nullopt;
+    // Only the current session's validated search DTOs are indexed. No I/O,
+    // historical snapshot import, or stream URL is involved in this lookup.
+    return *it;
+}
 QUuid KugouSourceSession::fetchArtwork(const MediaRefV2 &media) { return enqueue({Kind::Unsupported, {}, media}); }
 QUuid KugouSourceSession::fetchLyrics(const MediaRefV2 &media) { return enqueue({Kind::Unsupported, {}, media}); }
 
@@ -145,7 +154,8 @@ void KugouSourceSession::dispatch(const QUuid &id)
             || hash.isEmpty() || hash != media.entityId) {
             fail(id, failure(SourceErrorKindV2::InvalidRequest, "source.media.invalid")); return;
         }
-        if (!m_tracks.contains(hash) || m_tracks.value(hash).state != AvailabilityV2::Available) {
+        const auto indexed = lookupItem(media);
+        if (!indexed || indexed->availableActions.value(SourceActionV2::Play).state != AvailabilityV2::Available) {
             fail(id, failure(SourceErrorKindV2::Authorization, "kugou.track.unverified")); return;
         }
         endpoint = KugouApiClient::Endpoint::ResolveTrack;
@@ -160,8 +170,8 @@ void KugouSourceSession::succeeded(const QUuid &clientId, const QJsonObject &res
     if (id.isNull() || !m_requests.contains(id)) return;
     const auto request = m_requests.value(id);
     if (request.kind == Kind::Stream) {
-        if (!m_tracks.contains(request.media.entityId)
-            || m_tracks.value(request.media.entityId).state != AvailabilityV2::Available) {
+        const auto indexed = lookupItem(request.media);
+        if (!indexed || indexed->availableActions.value(SourceActionV2::Play).state != AvailabilityV2::Available) {
             fail(id, failure(SourceErrorKindV2::Authorization, "kugou.track.unverified")); return;
         }
         const auto stream = KugouMappers::stream(response, request.media);
@@ -187,11 +197,13 @@ void KugouSourceSession::succeeded(const QUuid &clientId, const QJsonObject &res
         // A late older free response must not undo a restriction observed in
         // this anonymous session. Reauthentication/reopen will revalidate.
         if (m_tracks.contains(item->ref.entityId))
-            right = intersectActionAvailabilityV2({m_tracks.value(item->ref.entityId), right});
+            right = intersectActionAvailabilityV2({m_tracks.value(item->ref.entityId)
+                .availableActions.value(SourceActionV2::Play), right});
+        item->availableActions.insert(SourceActionV2::Play, right);
         if (m_tracks.size() >= 4096 && !m_tracks.contains(item->ref.entityId))
             right = {AvailabilityV2::Unavailable, "kugou.track.unverified", {}};
         else
-            m_tracks.insert(item->ref.entityId, right);
+            m_tracks.insert(item->ref.entityId, *item);
         if (hashes.contains(item->ref.entityId)) {
             for (auto &existing : section.items)
                 if (existing.ref.entityId == item->ref.entityId)

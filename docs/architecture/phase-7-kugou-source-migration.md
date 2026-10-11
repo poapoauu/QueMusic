@@ -40,11 +40,19 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - opaque 游标绑定搜索词、limit 和 Session，上限 1024；已确认条目缓存上限 4096，关闭清除。达到条目上限时新 hash 保持不可播放，不清除已有受限记录以便旧回包重新获权；达到游标上限时旧游标清理后失效。
 - resolveStream 只接受当前实例已确认可播放的完整 ref，核验返回 hash、业务状态、HTTP/HTTPS URL（禁止文件/data/相对 URL、userinfo、fragment）。只发标准 StreamDescriptor 给 Host/Core，不调用播放器、不返回旧路径，不自动升级质量或绕过受限资源。
 
-当前重要限制：恢复队列中尚未在当前 Session 重新确认的媒体拒绝解析，需要后续可信 Item Lookup/重新验证；不应把此原型直接注册成最终可用音源。免费/付费字段和资源 hash 的真实平台响应、HTTPS 搜索、授权失效等仍需要真实服务验证，不能凭测试夹具认定协议完备。
+当前重要限制：恢复队列中尚未在当前 Session 重新确认的媒体拒绝解析，需要后续可信网络重新验证；切片 3 的同步 Item Lookup 不解决未知历史 ref 的验证。不应把此原型直接注册成最终可用音源。免费/付费字段和资源 hash 的真实平台响应、HTTPS 搜索、授权失效等仍需要真实服务验证，不能凭测试夹具认定协议完备。
+
+## 切片 3：当前会话 Item Lookup
+
+复用已有可选 `IItemLookupProviderV1`，不修改 SDK v2 或扩展接口定义。索引从单独权限记录改为有界的完整白名单 `MediaItemV2`，查询要求 Ready 且完整 ref 精确匹配（来源、实例、账号、类型、规范 hash）。返回独立 DTO 副本，不执行 I/O、不解析流、不导入历史展示快照，也不直接授予播放权限。
+
+搜索及资源完成仍检查同一索引中的权限；已见限制保持交集语义，不被迟到免费回包恢复。关闭/重开清空索引，另一个实例不共享条目。满 4096 项后新条目仍显示为不可播放且不进入 Lookup，不驱逐已有受限项。媒体 URL、token 和响应原始字段不进入索引。
+
+此切片仅补齐标准同步查找契约；未知恢复媒体仍拒绝解析，尚未实现异步可信网络重新验证、可加载插件包或 Registry/Coordinator 集成，Phase 7 未完成。
 
 ## 推荐的后续切片与验收
 
-1. v2 Session/mapper：当前匿名搜索与解析契约已接入私有实现；下一步补可信 Item Lookup/恢复身份验证、插件描述/Schema/manifest 与注册，再做 Registry/Coordinator 集成测试。补实际动作能力和业务协议验证后才对应用公开，不把解析 URL 或旧路径交给 QML。
+1. v2 Session/mapper：当前匿名搜索、解析及当前会话同步 Item Lookup 契约已接入私有实现；下一步补未知恢复媒体的可信网络验证、插件描述/Schema/manifest 与注册，再做 Registry/Coordinator 集成测试。保持 Lookup 无 I/O，不以恢复快照授予权限。补实际动作能力和业务协议验证后才对应用公开，不把解析 URL 或旧路径交给 QML。
 2. QR 认证协议：设备标识、签名、获取/轮询/超时/取消/重试、登录/退出、实例隔离和秘密存储全部插件负责。为令牌和账号建立可信绑定；不自动导入 Host Account.ini，不输出凭证日志。用协议夹具覆盖晚到回包、过期、错误和销毁，再单独进行真实扫码验收。
 3. Management UI：实现独立 Plugin UI API provider/context 与 `import QueMusic.PluginUI 1.0` QML，复用稳定 Theme/UI Kit；QR 与账号 UI 仅在插件可用时出现。普通设置走 Schema，不引用 Style、AccountManager 或其他私有 Host QML。
 4. Host 迁出：新插件和 UI 验收后去除酷狗登录实现/入口和 Core 直接引用；网易迁移不在此切片处理。测试禁用/删除插件后无可用酷狗来源、无酷狗登录 UI，以及无 Source 到旧平台 fallback。
@@ -61,3 +69,9 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 首次专项发现两条断言把 v2 的未知/未就绪能力误等同于 Unsupported；保留 SDK 的 fail-closed 语义，Session 显式声明未实现动作 Unsupported、未就绪 Play 为 Unavailable。随后补充推荐等非搜索页面返回 Unsupported 的验收，避免因缺少搜索词而误报参数错误；最终复跑使用最新源码。
 
 SDK v2/Source 插件 ABI/Plugin UI API/磁盘格式不变。尚未加载真实酷狗包、连接外部平台、实际播放音频或迁移 QR UI；Registry/Coordinator 端到端、可信恢复身份验证和真实授权协议留给后续切片，Phase 7 未完成。
+
+## 切片 3 验证
+
+Qt 6.11.1/macOS x86_64 Debug 全目标增量构建成功，酷狗请求层/Session 两项专项通过；最终 **77/77 CTest 通过（75.53 秒）**。新增验收覆盖扩展 qobject_cast、未索引与非 Ready 查询拒绝、完整身份精确匹配、返回副本隔离、白名单展示字段、跨实例不共享、限制不能被免费回包撤销、关闭重开失效，以及填满索引后的溢出拒绝和旧限制保留。同步 Lookup 不产生额外网络请求；全部酷狗协议测试仍为注入夹具，无真实服务/账号/实际音频访问。
+
+只变更插件私有 Session 实现及测试，公共 SDK/扩展 IID、Plugin UI API 和磁盘格式不变。尚未注册酷狗可用包、接入 Coordinator 或完成历史媒体网络验证，不能据此宣称 Phase 7 已完成。
