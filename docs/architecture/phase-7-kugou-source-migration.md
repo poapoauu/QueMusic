@@ -28,14 +28,36 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 
 不改 Source SDK v2、插件 ABI、Plugin UI API 或持久化格式。此 client 是插件私有实现，不是新公共 SDK。
 
+## 切片 2：匿名 v2 Session 与可信媒体映射
+
+新增 `KugouSourceSession`、`KugouMappers` 和 Session 专项测试；仍为插件私有静态实现，**没有注册可发现的酷狗包或修改主程序接线**。本轮只建立标准 v2 Provider 契约，尚未通过 Registry/PlaybackCoordinator 的真实集成测试，不等于已经可以在应用里用新插件播放。
+
+- 复用 IMusicSourceSessionV2 / IPageProviderV2 / IPlaybackProviderV2；每次异步方法先发 requestStarted，再异步派发或失败。取消、关闭、重开和通知中重入/析构后不投递旧结果。
+- 配置限定本插件 package/source、完整实例与账号身份，匿名原型拒绝传入 Host cookie/secret 和未知参数；默认网络管理器由实例拥有。Ready 表示本地匿名配置就绪，不代表真实服务器或登录验证通过。
+- 只声明 Play，搜索只支持 Tracks；其他页面、媒体类型、收藏/下载/歌词/封面/私人发现不伪装支持。暂不处理已有账号迁移。
+- 搜索生成带完整 source/instance/account/type 的 32 位十六进制 hash ref、毫秒时长和白名单展示字段；不复制响应内的 URL/token/质量路径到 MediaItem metadata 或 QML。
+- 仅 pay_type 明确为数值 0 的条目有匿名播放候选能力。缺失、字符串或付费值保持受限；同实例已见限制不能被较旧的免费搜索回包撤销，资源完成时再次核验已见权限。
+- opaque 游标绑定搜索词、limit 和 Session，上限 1024；已确认条目缓存上限 4096，关闭清除。达到条目上限时新 hash 保持不可播放，不清除已有受限记录以便旧回包重新获权；达到游标上限时旧游标清理后失效。
+- resolveStream 只接受当前实例已确认可播放的完整 ref，核验返回 hash、业务状态、HTTP/HTTPS URL（禁止文件/data/相对 URL、userinfo、fragment）。只发标准 StreamDescriptor 给 Host/Core，不调用播放器、不返回旧路径，不自动升级质量或绕过受限资源。
+
+当前重要限制：恢复队列中尚未在当前 Session 重新确认的媒体拒绝解析，需要后续可信 Item Lookup/重新验证；不应把此原型直接注册成最终可用音源。免费/付费字段和资源 hash 的真实平台响应、HTTPS 搜索、授权失效等仍需要真实服务验证，不能凭测试夹具认定协议完备。
+
 ## 推荐的后续切片与验收
 
-1. v2 Session/mapper：落实 SourceInstance/account/ref、搜索与可信媒体解析、实际动作能力、分页/取消/关闭；Coordinator 播放，不把解析 URL 或旧路径交给 QML。验证异步 generation、异实例/类型/hash 拒绝、业务错误、非 HTTP 媒体拒绝及权限边界，再注册真实插件包。
+1. v2 Session/mapper：当前匿名搜索与解析契约已接入私有实现；下一步补可信 Item Lookup/恢复身份验证、插件描述/Schema/manifest 与注册，再做 Registry/Coordinator 集成测试。补实际动作能力和业务协议验证后才对应用公开，不把解析 URL 或旧路径交给 QML。
 2. QR 认证协议：设备标识、签名、获取/轮询/超时/取消/重试、登录/退出、实例隔离和秘密存储全部插件负责。为令牌和账号建立可信绑定；不自动导入 Host Account.ini，不输出凭证日志。用协议夹具覆盖晚到回包、过期、错误和销毁，再单独进行真实扫码验收。
 3. Management UI：实现独立 Plugin UI API provider/context 与 `import QueMusic.PluginUI 1.0` QML，复用稳定 Theme/UI Kit；QR 与账号 UI 仅在插件可用时出现。普通设置走 Schema，不引用 Style、AccountManager 或其他私有 Host QML。
 4. Host 迁出：新插件和 UI 验收后去除酷狗登录实现/入口和 Core 直接引用；网易迁移不在此切片处理。测试禁用/删除插件后无可用酷狗来源、无酷狗登录 UI，以及无 Source 到旧平台 fallback。
 5. 补齐既有目标数据能力、业务错误及真实集成测试后，按最终方案关闭 Phase 7。不能只靠“插件目录存在”、传输测试或空态截图宣称完成。
 
-## 本轮验证
+## 切片 1 验证
 
 专用测试覆盖路由/请求策略、查询编码、并发身份、取消和迟到回调、异步失败、网络管理器/实例销毁、HTTP 错误脱敏、包装 JSON、响应大小和同步观察者析构。Qt 6.11.1/macOS x86_64 Debug 全目标增量构建成功；专项 CTest 通过，最后全量 **76/76 CTest 通过（66.04 秒）**。无真实账号、外部 API 或实际音频访问；真实 HTTPS 服务、QR 和标准 Source Session 尚未验收。
+
+## 切片 2 验证
+
+全目标增量构建、最新 Session 目标重建和请求层/Session 两项专项复跑通过；最终 **77/77 CTest 通过（61.98 秒）**。新增测试使用真实 Session/mapper 与注入的无外网网络管理器，覆盖标准 Provider 接口、请求启动顺序、搜索/资源身份、时长和脱敏字段、分页绑定/失效、未知/付费条目拒绝、跨实例并发/取消/关闭重开、业务错误、重复 hash 权利交集、迟到免费回包、解析期间权利变化、不安全资源 URL、重入/析构及网络管理器所有权。
+
+首次专项发现两条断言把 v2 的未知/未就绪能力误等同于 Unsupported；保留 SDK 的 fail-closed 语义，Session 显式声明未实现动作 Unsupported、未就绪 Play 为 Unavailable。随后补充推荐等非搜索页面返回 Unsupported 的验收，避免因缺少搜索词而误报参数错误；最终复跑使用最新源码。
+
+SDK v2/Source 插件 ABI/Plugin UI API/磁盘格式不变。尚未加载真实酷狗包、连接外部平台、实际播放音频或迁移 QR UI；Registry/Coordinator 端到端、可信恢复身份验证和真实授权协议留给后续切片，Phase 7 未完成。

@@ -8,6 +8,8 @@
 
 2026-10-11 已启动最终方案 Phase 7，新增酷狗插件私有可取消请求层；全目标增量构建和 76/76 CTest 通过（66.04 秒）。尚未注册酷狗 Source、接入认证 UI 或删除 Host 旧登录，见[迁移记录](phase-7-kugou-source-migration.md)。
 
+后续匿名 v2 Session/mapper 切片已加入私有实现：搜索、实例绑定 ref/游标、资源解析、未知/付费权利拒绝与异步生命周期；最终 77/77 CTest 通过（61.98 秒）。仍未注册应用可用音源或通过 Registry/Coordinator 真实集成，恢复身份验证、QR/账号 UI 与 Host 迁出继续按 Phase 7 记录推进。
+
 当前进展说明：本文件第 1–4 节的分支拓扑和 40/40 测试数是 **2026-09-17 的历史快照**，不再代表当前开发分支。`codex/plugin-ui-api-v1` 在原有 v2 上完成 Plugin UI API、Plugin Settings、Local Source Plugin，以及 Phase 4 的不透明身份、统一队列/历史持久化和恢复。2026-10-03 本机 Debug 全量构建及 CTest **69/69** 通过；Phase 4 证据见[验收记录](phase-4-queue-history-identity-record.md)。Phase 5/6、其余平台迁移及跨平台发行验证仍未完成，不能将此视为最终架构完成。
 
 ## 1. 结论摘要
