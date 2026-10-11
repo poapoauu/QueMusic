@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+Phase 7 切片 7 已加入插件私有 QR 获取/轮询请求构造基础：固定 HTTPS 端点、白名单参数、排序 UTF-8 签名、身份/时间边界、百分号编码和隔离请求属性。全目标构建及 **79/79 CTest（75.09 秒）** 通过。仅纯构造函数，尚未发送认证请求、生成/存储设备身份或接入登录 UI；不会借用 Host Account.ini。后续继续实例隔离的设备身份与严格响应映射，再接可取消轮询/秘密存储和 Management UI。
+
 本次检查的最重要结论是：**此前完成的 Source SDK v2 / Source Registry / Capability / Action Router / Navidrome / PlaybackCoordinator / Original UI Data Adapter 改造确实存在，不应重新实现；但它们尚未位于当前检出分支。**
 
 仓库当前存在两个必须区分的状态：

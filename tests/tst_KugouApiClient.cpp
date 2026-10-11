@@ -1,4 +1,5 @@
 #include "KugouApiClient.h"
+#include "KugouQrRequests.h"
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSignalSpy>
@@ -60,6 +61,61 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void qrRequestsAreDeterministicPrivateAndStrict()
+    {
+        using namespace KugouQrRequests;
+        QCOMPARE(signature({{"a", "1"}, {"b", QString::fromUtf8("中文")}}),
+                 QByteArray("bf777163e4a7ecfd2b4d8de8de4b6baa"));
+        const DeviceIdentity identity{"ABCDEFGHIJKLMNOPQRSTUVWX", "123456789012345678901234567890"};
+        const auto create = build(Operation::CreateCode, identity, 1700000000);
+        QVERIFY(create);
+        QCOMPARE(create->url().host(), "login-user.kugou.com");
+        QCOMPARE(create->url().scheme(), "https");
+        QCOMPARE(create->url().path(), "/v2/qrcode");
+        const QUrlQuery query(create->url());
+        QCOMPARE(query.queryItems().size(), 11);
+        QCOMPARE(query.queryItemValue("qrcode_txt", QUrl::FullyDecoded),
+                 "https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=1001&");
+        QMap<QString, QString> unsignedParameters;
+        for (const auto &pair : query.queryItems(QUrl::FullyDecoded))
+            if (pair.first != "signature") unsignedParameters.insert(pair.first, pair.second);
+        QCOMPARE(query.queryItemValue("signature").toLatin1(), signature(unsignedParameters));
+        QCOMPARE(create->rawHeader("mid"), identity.mid.toUtf8());
+        QCOMPARE(create->rawHeader("dfid"), identity.dfid.toUtf8());
+        QCOMPARE(create->rawHeader("clienttime"), QByteArray("1700000000"));
+        QVERIFY(!create->hasRawHeader("Cookie")); QVERIFY(!create->hasRawHeader("Authorization"));
+        QCOMPARE(create->transferTimeout(), 15000);
+        QCOMPARE(create->attribute(QNetworkRequest::CookieLoadControlAttribute).toInt(), int(QNetworkRequest::Manual));
+        QCOMPARE(create->attribute(QNetworkRequest::CookieSaveControlAttribute).toInt(), int(QNetworkRequest::Manual));
+        QCOMPARE(create->attribute(QNetworkRequest::AuthenticationReuseAttribute).toInt(), int(QNetworkRequest::Manual));
+        QCOMPARE(create->attribute(QNetworkRequest::RedirectPolicyAttribute).toInt(), int(QNetworkRequest::ManualRedirectPolicy));
+        const auto poll = build(Operation::PollCode, identity, 1700000000, "a&b=+#/%26opaque");
+        QVERIFY(poll); QCOMPARE(poll->url().path(), "/v2/get_userinfo_qrcode");
+        QCOMPARE(QUrlQuery(poll->url()).queryItemValue("qrcode", QUrl::FullyDecoded), "a&b=+#/%26opaque");
+        QCOMPARE(QUrlQuery(poll->url()).queryItems().size(), 10);
+        QVERIFY(!poll->url().hasFragment());
+        QVERIFY(create->url() == build(Operation::CreateCode, identity, 1700000000)->url());
+        QVERIFY(create->url() != build(Operation::CreateCode, identity, 1700000001)->url());
+        auto other = identity; other.dfid = "ABCDEFGHIJKLMNOPQRSTUVWY";
+        QVERIFY(create->url() != build(Operation::CreateCode, other, 1700000000)->url());
+        QVERIFY(!build(Operation::CreateCode, identity, 0));
+        QVERIFY(!build(Operation::CreateCode, identity, 253402300800LL));
+        QVERIFY(!build(Operation::CreateCode, identity, 1, "unexpected"));
+        QVERIFY(!build(Operation::PollCode, identity, 1));
+        QVERIFY(!build(Operation::PollCode, identity, 1, QString(1025, 'a')));
+        QVERIFY(!build(Operation::PollCode, identity, 1, "key\r\nInjected"));
+        QVERIFY(!build(Operation::PollCode, identity, 1, " key"));
+        QVERIFY(!build(Operation(99), identity, 1));
+        other = identity; other.dfid.append('\n'); QVERIFY(!build(Operation::CreateCode, other, 1));
+        other = identity; other.dfid[0] = 'a'; QVERIFY(!build(Operation::CreateCode, other, 1));
+        other = identity; other.mid = "01"; QVERIFY(!build(Operation::CreateCode, other, 1));
+        other.mid = "-1"; QVERIFY(!build(Operation::CreateCode, other, 1));
+        other.mid = QString(40, '9'); QVERIFY(!build(Operation::CreateCode, other, 1));
+        other.mid = "340282366920938463463374607431768211456";
+        QVERIFY(!build(Operation::CreateCode, other, 1));
+        other.mid = "340282366920938463463374607431768211455";
+        QVERIFY(build(Operation::CreateCode, other, 1));
+    }
     void endpointsAreFixedAndRequestsDoNotBorrowAuthentication()
     {
         Network network;
