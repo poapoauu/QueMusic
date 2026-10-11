@@ -41,6 +41,16 @@ endif()
 
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_library(quemusic_kugou_source_fixture MODULE ../../tests/fixtures/KugouSourceFixture.cpp)
+    target_link_libraries(quemusic_kugou_source_fixture PRIVATE quemusic_kugou_session)
+    set(kugou_fixture_root "${CMAKE_BINARY_DIR}/tests/kugou-source-fixture")
+    set_target_properties(quemusic_kugou_source_fixture PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${kugou_fixture_root}/kugou"
+        RUNTIME_OUTPUT_DIRECTORY "${kugou_fixture_root}/kugou")
+    file(READ "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in" kugou_fixture_manifest)
+    string(REPLACE "quemusic_kugou_source" "quemusic_kugou_source_fixture"
+        kugou_fixture_manifest "${kugou_fixture_manifest}")
+    file(GENERATE OUTPUT "${kugou_fixture_root}/kugou/manifest.json" CONTENT "${kugou_fixture_manifest}")
     qt_add_executable(quemusic_kugou_client_test ../../tests/tst_KugouApiClient.cpp)
     target_link_libraries(quemusic_kugou_client_test PRIVATE quemusic_kugou_client Qt6::Test)
     add_test(NAME quemusic_kugou_client_test COMMAND quemusic_kugou_client_test)
@@ -54,4 +64,13 @@ if(BUILD_TESTING)
         quemusic_playback_coordinator Qt6::Network Qt6::Test)
     add_dependencies(quemusic_kugou_registration_test quemusic_kugou_source)
     add_test(NAME quemusic_kugou_registration_test COMMAND quemusic_kugou_registration_test)
+    qt_add_executable(quemusic_kugou_integration_test ../../tests/tst_KugouSourceIntegration.cpp)
+    target_compile_definitions(quemusic_kugou_integration_test PRIVATE
+        QUEMUSIC_KUGOU_FIXTURE_ROOT="${kugou_fixture_root}")
+    # Match the application's process-lifetime Qt Network dependency. Unloading
+    # the fixture must not unload Qt Network's application-global callbacks.
+    target_link_libraries(quemusic_kugou_integration_test PRIVATE
+        quemusic_playback_coordinator Qt6::Network Qt6::Test)
+    add_dependencies(quemusic_kugou_integration_test quemusic_kugou_source_fixture)
+    add_test(NAME quemusic_kugou_integration_test COMMAND quemusic_kugou_integration_test)
 endif()

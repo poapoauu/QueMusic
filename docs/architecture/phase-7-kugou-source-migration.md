@@ -58,7 +58,7 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 
 完成时重新检查当前权限与容量，搜索期间观察到的限制不能被验证响应覆盖；取消、关闭/重开后的回包不能建立索引。默认每实例网络管理器和生命周期契约不变。
 
-这是匿名私有 Session 的验证机制，不是应用恢复播放完成：Host 仍须通过其当前权限链，不能给持久化快照恢复 Available 或自动播放。后续插件注册与 Registry/Coordinator 测试必须确定未知恢复 ref 的验证入口并覆盖最终权限检查。实际端点是否返回这些字段尚未验证；若缺失将明确失败，不猜测免费、绕过付费或回退 Legacy。
+这是匿名私有 Session 的验证机制，不是应用恢复播放完成：Host 仍须通过其当前权限链；已有 playableAtEnqueue 恢复值仅是历史动作上限，不能替代插件当前验证或触发自动播放。切片 6 使用用户发起的 playQueueEntry 验证该入口，不改 Host 持久化语义。实际端点是否返回这些字段尚未验证；若缺失将明确失败，不猜测免费、绕过付费或回退 Legacy。
 
 ## 切片 5：隔离实验包与注册基线
 
@@ -70,9 +70,19 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 
 本轮不变更公共 SDK/Plugin UI API/Host QML/账号持久化格式，不删除旧酷狗业务或声称扫码认证完成。
 
+## 切片 6：受控传输下的 Registry/Coordinator 成功链
+
+状态：2026-10-11 正常全目标构建、四项酷狗专项与全量 **79/79 CTest** 已通过。以下证据仅覆盖受控传输，不代表真实平台或音频验收。
+
+新增仅在 BUILD_TESTING 编译的原生测试工厂与独立包目录 `<build>/tests/kugou-source-fixture`。工厂共享插件私有 descriptor/Schema 定义，创建真实 KugouSourceSession/client/mapper，只把网络管理器替换为无 socket 的测试传输。生产工厂不增加测试方法、环境变量、端点覆盖或 Host 配置字段；生产实验包及默认应用来源不变。
+
+测试通过 PluginManager、临时 SourceAccountStore 与真实 SourceRegistry/PlaybackCoordinator 建立链路。搜索结果经 Coordinator 解析后只有 Sink 接收完整 StreamDescriptor；公共 queue/currentItem 不含签名 URL/token。恢复历史队列不自动发网络请求或播放；用户调用 playQueueEntry 后，对未索引 ref 重新验证完整响应，缺失权限、付费、hash 不符或非法 URL 不进入 Sink。
+
+进一步覆盖实例快速切换取消旧验证、解析期间搜索发现付费限制、用户停止/实例禁用后的迟到回包、活动 lease 阻止卸载且清理后可卸载，以及 Sink prepare 失败不进入 play。Sink 为 Host 播放边界测试替身，不输出真实音频。该证据不能代替真实酷狗协议、授权/扫码或产品内体验验收。
+
 ## 推荐的后续切片与验收
 
-1. v2 Session/mapper：当前匿名搜索、解析、同步 Item Lookup、未知媒体异步验证及隔离实验包已实现；Registry 工厂/实例生命周期与 Coordinator 拒绝路径进入测试。下一步使用可控传输夹具完成搜索/解析成功链、恢复验证、禁用/卸载及并发端到端验收。保持 Lookup 无 I/O，不以恢复快照授予权限。补实际动作能力和真实业务协议验证后才对应用公开，不把解析 URL 或旧路径交给 QML。
+1. v2 Session/mapper：当前匿名搜索、解析、同步 Item Lookup、未知媒体异步验证及隔离实验包已实现；Registry 工厂/生命周期、拒绝路径及受控传输成功/恢复/切换链进入测试。后续补真实业务响应验证和实际动作能力，再对应用公开；保持 Lookup 无 I/O，不以恢复快照授予当前权限，不把解析 URL 或旧路径交给 QML。
 2. QR 认证协议：设备标识、签名、获取/轮询/超时/取消/重试、登录/退出、实例隔离和秘密存储全部插件负责。为令牌和账号建立可信绑定；不自动导入 Host Account.ini，不输出凭证日志。用协议夹具覆盖晚到回包、过期、错误和销毁，再单独进行真实扫码验收。
 3. Management UI：实现独立 Plugin UI API provider/context 与 `import QueMusic.PluginUI 1.0` QML，复用稳定 Theme/UI Kit；QR 与账号 UI 仅在插件可用时出现。普通设置走 Schema，不引用 Style、AccountManager 或其他私有 Host QML。
 4. Host 迁出：新插件和 UI 验收后去除酷狗登录实现/入口和 Core 直接引用；网易迁移不在此切片处理。测试禁用/删除插件后无可用酷狗来源、无酷狗登录 UI，以及无 Source 到旧平台 fallback。
@@ -107,3 +117,13 @@ Qt 6.11.1/macOS x86_64 Debug 全目标构建、最新 Session 测试目标重建
 Qt 6.11.1/macOS x86_64 Debug 全目标构建和酷狗三项专项通过；最终 **78/78 CTest 通过（63.68 秒）**。实际动态模块通过 PluginManager manifest/runtime/SDK 接口检查，并经 SourceAccountStore/SourceRegistry 创建两个独立匿名实例。禁用/重开与拒绝 Host secret/未知参数测试通过；Coordinator 的三条拒绝路径均无 Provider requestStarted、无传输完成回调、无 Sink prepare/play。
 
 生成 manifest 与实验模块均位于独立实验目录。额外检查默认 `<build>/plugins` 与 `bin/QueMusic.app/Contents` 的 manifest/酷狗库产物，仍只有 Local/Navidrome 包，没有实验酷狗包。未做真实网络、扫码、实际音频、成功播放端到端、安装/重定位或跨平台发行验收；本机动态注册和拒绝路径通过不等于 Phase 7 完成。
+
+## 切片 6：验证与已恢复的环境阻塞
+
+首次全目标构建成功，前三项酷狗专项通过；新集成程序打印 13 个用例通过后在进程退出时 SIGSEGV，因此首次 CTest 判为失败，不作为验收通过。崩溃报告显示 QObject 销毁时调用已卸载地址。依赖检查发现新测试宿主未直接链接 Qt Network，而真实 QueMusic 主程序有该进程级依赖。CMake 补齐测试宿主 Qt6::Network，保留 Busy/Success 卸载断言，不通过关闭测试或禁止卸载掩盖问题。恢复后的正常重建与专项/全量复跑均正常退出，验证此依赖修正在本机有效。
+
+随后两次正常重建在第三方 qmcorecmd 启动阶段停止进展；单独重链接用于诊断的测试二进制也未进入 main/test 输出。macOS 系统日志记录 AppleSystemPolicy `Unable to apply provenance sandbox`（对应本次启动的 qmcorecmd），相关进程为 U 状态。没有移除 provenance 属性、关闭安全检查或修改系统服务。
+
+本次续验时旧阻塞进程已退出，正常全目标构建成功；酷狗四项专项 **4/4 通过（1.80 秒）**，包含进程正常退出与实际夹具模块卸载；最终全量 **79/79 CTest 通过（76.10 秒）**，包括 macOS 增量打包/重定位检查。使用的是正常 CMake 重建产物，不以之前手动重链接的诊断产物作为验收依据。
+
+本切片仅抽出插件私有工厂定义并新增测试工厂/集成测试；Source SDK v2 ABI、扩展 IID、Plugin UI API、Host 恢复逻辑和磁盘格式不变。真实酷狗响应字段、账号认证、QR Management UI、实际音频与 Host 平台业务迁出仍未完成。下一步按推荐顺序迁移插件私有 QR 协议：先固化签名/设备身份与严格响应映射，再加入可取消的请求和轮询生命周期；不直接复制 Host Account.ini 持久化、凭证日志或缺少请求代次隔离的旧实现。

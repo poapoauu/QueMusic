@@ -18,6 +18,8 @@
 
 当前进展说明：本文件第 1–4 节的分支拓扑和 40/40 测试数是 **2026-09-17 的历史快照**，不再代表当前开发分支。`codex/plugin-ui-api-v1` 在原有 v2 上完成 Plugin UI API、Plugin Settings、Local Source Plugin，以及 Phase 4 的不透明身份、统一队列/历史持久化和恢复。2026-10-03 本机 Debug 全量构建及 CTest **69/69** 通过；Phase 4 证据见[验收记录](phase-4-queue-history-identity-record.md)。Phase 5/6、其余平台迁移及跨平台发行验证仍未完成，不能将此视为最终架构完成。
 
+切片 6 已通过受控传输下的 Registry/Coordinator 成功、用户发起的恢复验证、取消/权限降级与安全卸载链测试。首次退出崩溃已补测试宿主 Qt Network 依赖；本机启动阻塞恢复后，正常全目标构建、酷狗四项专项和最终 **79/79 CTest（76.10 秒）** 均通过。公共队列/当前条目不暴露资源 URL/token，恢复不自动请求或播放；真实服务、认证/QR UI、实际音频和 Host 迁出仍未验收，下一步迁移插件私有 QR 协议，详见 Phase 7 记录。
+
 ## 1. 结论摘要
 
 本次检查的最重要结论是：**此前完成的 Source SDK v2 / Source Registry / Capability / Action Router / Navidrome / PlaybackCoordinator / Original UI Data Adapter 改造确实存在，不应重新实现；但它们尚未位于当前检出分支。**
