@@ -40,12 +40,17 @@ struct Device {
     QString guid;
     KugouQrRequests::DeviceIdentity requestIdentity;
 };
-inline std::optional<Device> createDevice(const QString &instance, const QString &account)
+inline bool validScope(const QString &instance, const QString &account)
 {
     if (account.trimmed().isEmpty() || account.size() > 512 || instance != "kugou/" + account)
-        return std::nullopt;
+        return false;
     for (const auto c : account) if (c.isNull() || c.isSpace() || c.category() == QChar::Other_Control)
-        return std::nullopt;
+        return false;
+    return true;
+}
+inline std::optional<Device> createDevice(const QString &instance, const QString &account)
+{
+    if (!validScope(instance, account)) return std::nullopt;
     Device device;
     device.sourceInstanceId = instance; device.accountId = account;
     device.guid = QUuid::createUuid().toString(QUuid::WithoutBraces);

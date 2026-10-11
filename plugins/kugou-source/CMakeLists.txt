@@ -71,7 +71,7 @@ if(BUILD_TESTING)
     # Match the application's process-lifetime Qt Network dependency. Unloading
     # the fixture must not unload Qt Network's application-global callbacks.
     target_link_libraries(quemusic_kugou_integration_test PRIVATE
-        quemusic_playback_coordinator Qt6::Network Qt6::Test)
+        quemusic_playback_coordinator quemusic_plugin_settings Qt6::Network Qt6::Test)
     add_dependencies(quemusic_kugou_integration_test quemusic_kugou_source_fixture)
     add_test(NAME quemusic_kugou_integration_test COMMAND quemusic_kugou_integration_test)
 endif()

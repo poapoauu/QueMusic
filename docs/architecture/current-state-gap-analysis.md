@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+Phase 7 切片 11 已加入插件私有版本化凭证记录，绑定 package/source/instance/account、实际认证设备和用户 ID，严格拒绝非规范编码及身份冲突；控制器按代次一次性交接设备与候选凭证。真实 Host bridge/SourceAccountStore 的无外网存储契约测试覆盖 secure envelope、INI 不含凭证/设备标识、重开、包冲突、清除及轮换失败回滚。全目标构建、五项专项通过，最新 **79/79 CTest（63.68 秒）** 通过。Secret Schema 仅由测试夹具声明，生产工厂仍为空 Schema，尚未完成生产账号存储接线；后续须明确独立 Plugin UI API 的业务 Secret 声明/展示边界，再接插件认证 Backend/Management UI。系统 Keychain、真实扫码/账号、实际音频与 Host 旧登录迁出仍未验收，Phase 7 未完成。
+
 Phase 7 切片 10 已加入插件私有 QR 轮询控制器：固定实例/账号身份、独立网络、每次登录代次 UUID、单在途请求、单调总超时、取消/重试/销毁和通知重入保护，候选凭证仅可按当前代次由 C++ 一次性取走。最新全目标构建及 **79/79 CTest（64.00 秒）** 通过。Confirmed 不是账号存储成功或 Source 登录；尚未接入 SecretStore、Registry/UI lease、Plugin Management UI 或真实扫码。后续完成实例账号可信存储/绑定及 UI 生命周期，再迁出 Host 平台专用登录业务，Phase 7 仍未完成。
 
 Phase 7 切片 9 已将固定签名 QR 请求接入插件私有可取消 JSON client，共用原有 UUID、Pending、响应上限、脱敏错误与销毁保护；测试确认取消旧轮询后迟到 token 回包不投递。全目标构建及 **79/79 CTest（73.86 秒）** 通过。未改公开 SDK v2、Host UI/账号格式或默认 Source；轮询控制器的当前代次绑定、单在途请求、总超时、账号存储和真实扫码/UI 仍待完成。

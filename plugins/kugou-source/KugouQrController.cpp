@@ -106,3 +106,10 @@ std::optional<KugouQrProtocol::Credentials> KugouQrController::takeCredentials(c
     if (attempt.isNull() || attempt != m_attempt || m_state != State::Confirmed) return std::nullopt;
     return std::exchange(m_credentials, std::nullopt);
 }
+std::optional<KugouCredentialRecord::Account> KugouQrController::takeAccount(const QUuid &attempt)
+{
+    if (!m_device) return std::nullopt;
+    const auto credentials = takeCredentials(attempt);
+    if (!credentials) return std::nullopt;
+    return KugouCredentialRecord::Account{*m_device, *credentials};
+}

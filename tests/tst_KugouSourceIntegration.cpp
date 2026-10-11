@@ -2,6 +2,10 @@
 #include "PluginManager.h"
 #include "SourceAccountStore.h"
 #include "SourceRegistry.h"
+#include "HostPluginUiSettingsBridge.h"
+#include "../plugins/kugou-source/KugouCredentialRecord.h"
+#include "v2/SourceSecretsV2.h"
+#include <QFile>
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/item-lookup/v1/IItemLookupProviderV1.h"
 #include <QJsonDocument>
@@ -11,6 +15,30 @@
 #include <QTest>
 
 namespace {
+class CredentialStore final : public ISecretStore {
+public:
+    QHash<QString, QByteArray> values;
+    bool failWrite = false;
+    QString failRemove;
+    bool write(const QString &reference, const QByteArray &value, QString *error) override
+    {
+        if (failWrite) { if (error) *error = "PRIVATE_BACKEND_ERROR"; return false; }
+        values.insert(reference, value); return true;
+    }
+    std::optional<QByteArray> read(const QString &reference, QString *) const override
+    { return values.contains(reference) ? std::optional<QByteArray>(values.value(reference)) : std::nullopt; }
+    bool remove(const QString &reference, QString *) override
+    { if (reference == failRemove) return false; values.remove(reference); return true; }
+};
+SourceAccountSaveV2 credentialRequest(const QString &account)
+{
+    // Storage-contract fixture only. Production factory still has empty Schema;
+    // this must not become a Host-rendered manual credential input form.
+    SettingsFieldV2 field;
+    field.id = "credentialBundle"; field.type = SettingsFieldTypeV2::Secret; field.required = true;
+    return {"org.quemusic.source.kugou", "kugou", account, "Fixture", true, 1,
+        {{"credentialFixture", "fixture", {field}}}, {}};
+}
 const QString packageId = "org.quemusic.source.kugou";
 MediaRefV2 media(const QString &account = "one")
 {
@@ -79,6 +107,89 @@ QVariantMap row(const MediaItemV2 &item)
 class KugouSourceIntegrationTest final : public QObject {
     Q_OBJECT
 private slots:
+    void privateCredentialRecordRejectsIdentityDeviceAndEncodingConflicts()
+    {
+        using namespace KugouCredentialRecord;
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto bytes = encode({*device, {"9007199254740993", "PRIVATE_TOKEN="}}); QVERIFY(bytes);
+        const auto restored = decode(*bytes, "kugou/one", "one", "9007199254740993"); QVERIFY(restored);
+        QCOMPARE(restored->device.guid, device->guid); QCOMPARE(restored->device.requestIdentity.mid, device->requestIdentity.mid);
+        QVERIFY(!decode(*bytes, "kugou/two", "two")); QVERIFY(!decode(*bytes, "kugou/one", "one", "123"));
+        QVERIFY(!decode(*bytes + " ", "kugou/one", "one"));
+        QVERIFY(!decode(QByteArray(16385, 'x'), "kugou/one", "one"));
+        auto object = QJsonDocument::fromJson(*bytes).object();
+        for (const auto &key : {"accountId", "sourceInstanceId", "pluginPackageId", "sourceId", "guid", "dfid", "mid", "userId"}) {
+            auto bad = object; bad[key] = "WRONG";
+            QVERIFY(!decode(QJsonDocument(bad).toJson(QJsonDocument::Compact), "kugou/one", "one"));
+        }
+        auto bad = object; bad["version"] = "1";
+        QVERIFY(!decode(QJsonDocument(bad).toJson(QJsonDocument::Compact), "kugou/one", "one"));
+        bad = object; bad["userId"] = 123;
+        QVERIFY(!decode(QJsonDocument(bad).toJson(QJsonDocument::Compact), "kugou/one", "one"));
+        bad = object; bad["extra"] = "PRIVATE";
+        QVERIFY(!decode(QJsonDocument(bad).toJson(QJsonDocument::Compact), "kugou/one", "one"));
+        bad = object; bad["token"] = "x; userid=1";
+        QVERIFY(!decode(QJsonDocument(bad).toJson(QJsonDocument::Compact), "kugou/one", "one"));
+        QByteArray duplicate = *bytes; duplicate.chop(1); duplicate += ",\"version\":1}";
+        QVERIFY(!decode(duplicate, "kugou/one", "one"));
+        Account invalid{*device, {"123", "x; userid=1"}}; QVERIFY(!encode(invalid));
+    }
+    void hostStoresBoundCredentialOnlyInSecureEnvelope()
+    {
+        QTemporaryDir dir; QSettings settings(dir.filePath("accounts.ini"), QSettings::IniFormat);
+        CredentialStore secrets; SourceAccountStore store(&settings, &secrets);
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto bytes = KugouCredentialRecord::encode({*device, {"123", "PRIVATE_TOKEN"}}); QVERIFY(bytes);
+        HostPluginUiSettingsBridge bridge(&store, nullptr, credentialRequest("one"));
+        QSignalSpy finished(&bridge, &PluginUiSettingsBridge::operationFinished);
+        const auto id = bridge.saveSecret("credentialBundle", QString::fromUtf8(*bytes));
+        QTRY_COMPARE(finished.size(), 1); QCOMPARE(finished[0][0].toUuid(), id); QVERIFY(finished[0][1].toBool());
+        QVERIFY(bridge.publicValues().isEmpty()); QVERIFY(bridge.secretConfigured("credentialBundle"));
+        QVERIFY(!QJsonDocument::fromVariant(bridge.sections()).toJson().contains("PRIVATE"));
+        const auto record = store.storedAccount("kugou", "one"); QVERIFY(record);
+        QCOMPARE(record->pluginPackageId, packageId); QCOMPARE(record->sourceInstanceId, "kugou/one");
+        QVERIFY(record->parameters.isEmpty()); QCOMPARE(record->secretFormat, "namedEnvelopeV2");
+        const auto fields = decodeSourceSecretsV2(secrets.values.value(record->secretReference)); QVERIFY(fields);
+        QCOMPARE(fields->keys(), QStringList{"credentialBundle"}); QCOMPARE(fields->value("credentialBundle"), *bytes);
+        settings.sync(); QFile metadata(settings.fileName()); QVERIFY(metadata.open(QIODevice::ReadOnly));
+        const auto ini = metadata.readAll(); metadata.close(); QVERIFY(!ini.contains("PRIVATE"));
+        QVERIFY(!ini.contains(device->guid.toUtf8())); QVERIFY(!ini.contains(device->requestIdentity.dfid.toUtf8()));
+        QSettings reopened(settings.fileName(), QSettings::IniFormat); SourceAccountStore restored(&reopened, &secrets);
+        const auto resolved = restored.resolvedAccountV2("kugou", "one"); QVERIFY(resolved);
+        const auto envelope = decodeSourceSecretsV2(resolved->secret); QVERIFY(envelope);
+        QVERIFY(KugouCredentialRecord::decode(envelope->value("credentialBundle"), "kugou/one", "one", "123"));
+        QVERIFY(!KugouCredentialRecord::decode(envelope->value("credentialBundle"), "kugou/two", "two"));
+        auto foreign = credentialRequest("one"); foreign.pluginPackageId = "org.example.foreign";
+        HostPluginUiSettingsBridge conflict(&store, nullptr, foreign);
+        QSignalSpy rejected(&conflict, &PluginUiSettingsBridge::operationFinished);
+        conflict.saveSecret("credentialBundle", "PRIVATE_HIJACK"); QTRY_COMPARE(rejected.size(), 1);
+        QVERIFY(!rejected[0][1].toBool()); QCOMPARE(secrets.values.size(), 1);
+        bridge.clearSecret("credentialBundle"); QTRY_COMPARE(finished.size(), 2);
+        QVERIFY(finished[1][1].toBool()); QVERIFY(!bridge.secretConfigured("credentialBundle")); QVERIFY(secrets.values.isEmpty());
+    }
+    void hostCredentialRotationFailurePreservesExistingBinding()
+    {
+        QTemporaryDir dir; QSettings settings(dir.filePath("accounts.ini"), QSettings::IniFormat);
+        CredentialStore secrets; SourceAccountStore store(&settings, &secrets);
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto old = KugouCredentialRecord::encode({*device, {"123", "PRIVATE_OLD"}}); QVERIFY(old);
+        const auto next = KugouCredentialRecord::encode({*device, {"123", "PRIVATE_NEW"}}); QVERIFY(next);
+        HostPluginUiSettingsBridge bridge(&store, nullptr, credentialRequest("one"));
+        QSignalSpy finished(&bridge, &PluginUiSettingsBridge::operationFinished);
+        bridge.saveSecret("credentialBundle", QString::fromUtf8(*old)); QTRY_COMPARE(finished.size(), 1); QVERIFY(finished[0][1].toBool());
+        const auto reference = store.secretReference("kugou", "one");
+        secrets.failWrite = true;
+        bridge.saveSecret("credentialBundle", QString::fromUtf8(*next)); QTRY_COMPARE(finished.size(), 2);
+        QVERIFY(!finished[1][1].toBool()); QCOMPARE(finished[1][2].toString(), "source.settings.secureWriteFailed");
+        QCOMPARE(store.secretReference("kugou", "one"), reference); QCOMPARE(secrets.values.size(), 1);
+        secrets.failWrite = false; secrets.failRemove = reference;
+        bridge.saveSecret("credentialBundle", QString::fromUtf8(*next)); QTRY_COMPARE(finished.size(), 3);
+        QVERIFY(!finished[2][1].toBool()); QCOMPARE(finished[2][2].toString(), "source.settings.previousSecretCleanupFailed");
+        QCOMPARE(store.secretReference("kugou", "one"), reference); QCOMPARE(secrets.values.size(), 1);
+        QCOMPARE(decodeSourceSecretsV2(secrets.values.value(reference))->value("credentialBundle"), *old);
+        bridge.invalidate(); bridge.saveSecret("credentialBundle", QString::fromUtf8(*next));
+        QCoreApplication::processEvents(); QCOMPARE(finished.size(), 3); QCOMPARE(secrets.values.size(), 1);
+    }
     void searchToCoordinatorToSinkKeepsResourceOutOfPublicState()
     {
         Harness h; QVERIFY(h.load()); QVERIFY(h.save("one"));

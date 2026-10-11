@@ -1,6 +1,7 @@
 #pragma once
 #include "KugouApiClient.h"
 #include "KugouQrProtocol.h"
+#include "KugouCredentialRecord.h"
 #include <QElapsedTimer>
 #include <QTimer>
 
@@ -23,6 +24,7 @@ public:
     QString errorKey() const { return m_error; }
     // One-shot, exact attempt only. Never expose this method/struct to QML.
     std::optional<KugouQrProtocol::Credentials> takeCredentials(const QUuid &attempt);
+    std::optional<KugouCredentialRecord::Account> takeAccount(const QUuid &attempt);
 signals:
     void stateChanged(KugouQrController::State state);
     void confirmationReady(QUuid attemptId);

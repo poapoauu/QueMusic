@@ -120,6 +120,20 @@ Confirmed 仅代表当前代次得到了经过映射的候选凭证，不是账�
 
 测试加入已有请求层目标，覆盖等待/扫码/确认链、单在途轮询、一次性凭证、实例隔离、取消重试与旧响应、事件循环尚未派发 deadline 时的过期拒绝、deadline 取消在途轮询、错误/非法配置、通知重入/销毁（含确认通知内重试后不发旧凭证信号）和网络所有权。Qt 6.11.1/macOS x86_64 Debug 最新全目标构建成功，酷狗四项专项 **4/4 通过（3.78 秒）**，最终全量 **79/79 CTest 通过（64.00 秒）**，包括 macOS 打包/重定位。全部使用无外网夹具；真实扫码、账号绑定持久化和 UI 尚未验收。公开 SDK v2/IID、Plugin UI API、默认 Source、Host UI 与磁盘格式不变。
 
+## 切片 11：私有凭证记录与 Host 存储契约
+
+最终方案第 12 节要求插件负责认证、Host 管理 Secret 持久化。检查确认现有 PluginUiSettingsBridge/SourceAccountStore 已提供命名 Secret 事务、实例身份冲突检查、轮换回滚和清除；不应让酷狗链接 Host 私有账号类或另写明文文件。
+
+新增插件私有 `KugouCredentialRecord` version 1（不是 SDK/Host 磁盘格式升级），保存 package/source/instance/account、UUID/dfid/mid 和规范用户 ID/token。编码前检查实例身份、UUID v4、设备摘要一致和凭证边界；读取必须匹配调用者的实例/账号及可选既有用户 ID，拒绝额外/重复字段、非规范编码、未知版本、类型混淆、错误设备摘要和超限数据。记录不生成 cookie，不作为登录权限或 Source Ready 证明。
+
+控制器新增 C++ 一次性 takeAccount(attempt)，原子交接实际认证代次使用的设备与候选凭证，和原 takeCredentials 共用一次性消费状态。记录/候选凭证不注册 metatype、不提供 QML 可调用属性。获取后仍须经过 Host 存储成功及后续绑定/Session 验证，不能把确认信号等同于持久登录成功。
+
+集成测试使用真实 HostPluginUiSettingsBridge/SourceAccountStore 和临时 QSettings、内存 SecretStore，验证命名 secure envelope、INI 不含 token/设备标识、配置重开、包身份冲突、轮换写入失败/旧 Secret 清理失败回滚、失效 bridge 不接受晚写及清除。只有测试夹具声明 credentialBundle Secret；生产工厂仍保持空 Schema，无手工 token/账号表单、无默认 Source 改动。存储契约测试不是生产 Backend/Management UI 接线验收，也不是系统 Keychain 或真实账号验收。
+
+生产 UI 接入前须明确插件业务 Secret 的声明/展示边界：现有空 Schema 不接受该字段，不能将测试夹具 Schema 直接上线为 Host 普通输入框。该差距应在独立 Plugin UI API 的可选 C++ 存储契约上演进或复用已有安全桥，不改 Source SDK v2 布局，不借用 Host Account.ini。
+
+Qt 6.11.1/macOS x86_64 Debug 正常全目标构建成功。首次构建发现集成测试目标缺少插件私有头文件搜索路径，改为显式引用私有 codec 头文件后重建通过；没有因此让生产插件依赖 Host 私有存储实现。Host bridge 与酷狗五项专项 **5/5 通过（4.43 秒）**；最新全量 **79/79 CTest 通过（63.68 秒）**，包括 macOS 打包/重定位。公共 SDK v2/IID、Plugin UI API、Host 磁盘格式和默认 Source 不变；生产认证存储接口/Management UI、真实扫码、系统 Keychain 和实际音频仍未验收。
+
 ## 推荐的后续切片与验收
 
 1. v2 Session/mapper：当前匿名搜索、解析、同步 Item Lookup、未知媒体异步验证及隔离实验包已实现；Registry 工厂/生命周期、拒绝路径及受控传输成功/恢复/切换链进入测试。后续补真实业务响应验证和实际动作能力，再对应用公开；保持 Lookup 无 I/O，不以恢复快照授予当前权限，不把解析 URL 或旧路径交给 QML。

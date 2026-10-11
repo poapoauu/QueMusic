@@ -83,8 +83,13 @@ private slots:
         QCOMPARE(controller.state(), State::Confirmed); QCOMPARE(confirmed.size(), 1);
         QCOMPARE(confirmed[0][0].toUuid(), attempt); QVERIFY(controller.qrUrl().isEmpty());
         QVERIFY(!controller.takeCredentials(QUuid::createUuid()));
-        const auto credentials = controller.takeCredentials(attempt); QVERIFY(credentials);
-        QCOMPARE(credentials->userId, "123"); QCOMPARE(credentials->token, "PRIVATE");
+        const auto account = controller.takeAccount(attempt); QVERIFY(account);
+        QCOMPARE(account->credentials.userId, "123"); QCOMPARE(account->credentials.token, "PRIVATE");
+        QCOMPARE(account->device.sourceInstanceId, "kugou/one");
+        QCOMPARE(account->device.requestIdentity.mid.toUtf8(), network.requests[0].rawHeader("mid"));
+        const auto record = KugouCredentialRecord::encode(*account); QVERIFY(record);
+        QVERIFY(KugouCredentialRecord::decode(*record, "kugou/one", "one", "123"));
+        QVERIFY(!controller.takeAccount(attempt));
         QVERIFY(!controller.takeCredentials(attempt)); QTest::qWait(10); QCOMPARE(network.requests.size(), 4);
         controller.start(); QVERIFY(!controller.takeCredentials(attempt));
     }
