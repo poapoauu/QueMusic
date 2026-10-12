@@ -3,6 +3,7 @@
 #include "SettingsSchemaPresentation.h"
 #include "SourceRegistry.h"
 #include "SourceSettingsValidation.h"
+#include "v2/SourceSecretsV2.h"
 
 #include <QSet>
 #include <QRegularExpression>
@@ -15,12 +16,26 @@ bool secretField(const SettingsFieldV2 &field)
 
 HostPluginUiSettingsBridge::HostPluginUiSettingsBridge(SourceAccountStore *store,
     SourceRegistry *registry, const SourceAccountSaveV2 &request, QObject *parent)
+    : HostPluginUiSettingsBridge(store, registry, request, QStringList(), parent)
+{}
+
+HostPluginUiSettingsBridge::HostPluginUiSettingsBridge(SourceAccountStore *store,
+    SourceRegistry *registry, const SourceAccountSaveV2 &request,
+    const QStringList &backendSecretFields, QObject *parent)
     : PluginUiSettingsBridge(parent), m_store(store), m_registry(registry), m_request(request)
 {
     const auto detached = detachSettingsSchemaV2(request.schema);
     if (!detached) m_valid = false;
     else m_request.schema = *detached;
     m_request.draft.clear();
+    for (const auto &id : backendSecretFields) {
+        if (!isSecretField(id) || m_backendSecretFields.contains(id)) m_valid = false;
+        m_backendSecretFields.insert(QString(id.constData(), id.size()));
+    }
+    m_presentationSchema = m_request.schema;
+    for (auto &section : m_presentationSchema)
+        section.fields.removeIf([this](const auto &field) { return m_backendSecretFields.contains(field.id); });
+    m_presentationSchema.removeIf([](const auto &section) { return section.fields.isEmpty() && section.actions.isEmpty(); });
     m_existingRequired = store && store->storedAccount(request.sourceId, request.accountId).has_value();
 }
 
@@ -59,7 +74,7 @@ QVariantList HostPluginUiSettingsBridge::sections() const
 {
     if (!validIdentity()) return {};
     const auto existing = m_store->storedAccount(m_request.sourceId, m_request.accountId);
-    auto sections = settingsSectionsPresentationV2(m_request.schema, {},
+    auto sections = settingsSectionsPresentationV2(m_presentationSchema, {},
         existing ? existing->parameters : QVariantMap(),
         existing ? existing->configuredSecretFieldIds : QStringList());
     // Retain public visibility rules so the form can react to unsaved edits.
@@ -68,7 +83,7 @@ QVariantList HostPluginUiSettingsBridge::sections() const
         auto section = sections[s].toMap();
         auto fields = section.value("fields").toList();
         for (qsizetype f = 0; f < fields.size(); ++f) {
-            const auto &condition = m_request.schema[s].fields[f].visibleWhen;
+            const auto &condition = m_presentationSchema[s].fields[f].visibleWhen;
             if (!condition) continue;
             auto field = fields[f].toMap();
             field.insert("visibleWhen", QVariantMap{{"fieldId", condition->fieldId},
@@ -83,7 +98,7 @@ QVariantList HostPluginUiSettingsBridge::sections() const
 
 bool HostPluginUiSettingsBridge::secretConfigured(const QString &fieldId) const
 {
-    if (!validIdentity() || !isSecretField(fieldId)) return false;
+    if (m_backendSecretFields.contains(fieldId) || !validIdentity() || !isSecretField(fieldId)) return false;
     const auto existing = m_store->storedAccount(m_request.sourceId, m_request.accountId);
     return existing && existing->configuredSecretFieldIds.contains(fieldId);
 }
@@ -99,8 +114,9 @@ QUuid HostPluginUiSettingsBridge::finish(bool success, const QString &reasonKey)
 
 void HostPluginUiSettingsBridge::notifyChange()
 {
+    QPointer<HostPluginUiSettingsBridge> guard(this);
     if (m_registry) m_registry->configurationChanged(m_request.sourceId + '/' + m_request.accountId);
-    emit changed();
+    if (guard) emit guard->changed();
 }
 
 QUuid HostPluginUiSettingsBridge::savePublicValues(const QVariantMap &values)
@@ -109,6 +125,14 @@ QUuid HostPluginUiSettingsBridge::savePublicValues(const QVariantMap &values)
 }
 
 QUuid HostPluginUiSettingsBridge::saveSettings(const QVariantMap &values, const QVariantMap &secrets)
+{
+    for (auto it = secrets.cbegin(); it != secrets.cend(); ++it)
+        if (m_backendSecretFields.contains(it.key()))
+            return finish(false, QStringLiteral("source.settings.invalidSecretDraft"));
+    return persistSettings(values, secrets);
+}
+
+QUuid HostPluginUiSettingsBridge::persistSettings(const QVariantMap &values, const QVariantMap &secrets)
 {
     if (!validIdentity()) return finish(false, QStringLiteral("source.settings.identityConflict"));
     for (auto it = values.cbegin(); it != values.cend(); ++it)
@@ -127,27 +151,74 @@ QUuid HostPluginUiSettingsBridge::saveSettings(const QVariantMap &values, const 
     }
     QString error;
     const bool success = m_store->saveValidatedV2(request, &error);
-    if (success) { m_existingRequired = true; notifyChange(); }
-    return finish(success, success ? QString() : error);
+    if (success) m_existingRequired = true;
+    const auto id = finish(success, success ? QString() : error);
+    // Registry/changed observers may close the UI and destroy this service.
+    if (success) notifyChange();
+    return id;
 }
 
 QUuid HostPluginUiSettingsBridge::saveSecret(const QString &fieldId, const QString &value)
 {
     if (!validIdentity()) return finish(false, QStringLiteral("source.settings.identityConflict"));
-    if (!isSecretField(fieldId) || value.isEmpty())
+    if (m_backendSecretFields.contains(fieldId) || !isSecretField(fieldId) || value.isEmpty())
         return finish(false, QStringLiteral("source.settings.invalidSecretDraft"));
     return saveSettings({}, {{fieldId, value}});
 }
 
 QUuid HostPluginUiSettingsBridge::clearSecret(const QString &fieldId)
 {
+    if (m_backendSecretFields.contains(fieldId))
+        return finish(false, QStringLiteral("source.settings.invalidSecretDraft"));
+    return clearStoredSecret(fieldId);
+}
+
+QUuid HostPluginUiSettingsBridge::clearStoredSecret(const QString &fieldId)
+{
     if (!validIdentity()) return finish(false, QStringLiteral("source.settings.identityConflict"));
     if (!isSecretField(fieldId))
         return finish(false, QStringLiteral("source.settings.invalidSecretDraft"));
     QString error;
     const bool success = m_store->clearNamedSecretV2(m_request, fieldId, &error);
+    const auto id = finish(success, success ? QString() : error);
     if (success) notifyChange();
-    return finish(success, success ? QString() : error);
+    return id;
+}
+
+bool HostPluginUiSettingsBridge::backendSecretConfigured(const QString &fieldId) const
+{
+    if (!validIdentity() || !m_backendSecretFields.contains(fieldId)) return false;
+    const auto account = m_store->storedAccount(m_request.sourceId, m_request.accountId);
+    return account && account->configuredSecretFieldIds.contains(fieldId);
+}
+
+std::optional<QByteArray> HostPluginUiSettingsBridge::readBackendSecret(const QString &fieldId) const
+{
+    if (!backendSecretConfigured(fieldId)) return std::nullopt;
+    const auto account = m_store->resolvedAccountV2(m_request.sourceId, m_request.accountId);
+    if (!account) return std::nullopt;
+    const auto fields = decodeSourceSecretsV2(account->secret);
+    if (!fields || !fields->contains(fieldId)) return std::nullopt;
+    const auto bytes = fields->value(fieldId);
+    if (bytes.isEmpty() || bytes.size() > 65536 || bytes.contains('\0')
+        || QString::fromUtf8(bytes).toUtf8() != bytes) return std::nullopt;
+    return bytes;
+}
+
+QUuid HostPluginUiSettingsBridge::saveBackendSecret(const QString &fieldId, const QByteArray &record)
+{
+    if (!validIdentity()) return finish(false, QStringLiteral("source.settings.identityConflict"));
+    if (!m_backendSecretFields.contains(fieldId) || record.isEmpty() || record.size() > 65536
+        || record.contains('\0') || QString::fromUtf8(record).toUtf8() != record)
+        return finish(false, QStringLiteral("source.settings.invalidSecretDraft"));
+    return persistSettings({}, {{fieldId, QString::fromUtf8(record)}});
+}
+
+QUuid HostPluginUiSettingsBridge::clearBackendSecret(const QString &fieldId)
+{
+    if (!m_backendSecretFields.contains(fieldId))
+        return finish(false, QStringLiteral("source.settings.invalidSecretDraft"));
+    return clearStoredSecret(fieldId);
 }
 
 void HostPluginUiSettingsBridge::invalidate()

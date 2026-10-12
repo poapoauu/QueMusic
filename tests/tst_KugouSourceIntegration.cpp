@@ -140,11 +140,16 @@ private slots:
         CredentialStore secrets; SourceAccountStore store(&settings, &secrets);
         const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
         const auto bytes = KugouCredentialRecord::encode({*device, {"123", "PRIVATE_TOKEN"}}); QVERIFY(bytes);
-        HostPluginUiSettingsBridge bridge(&store, nullptr, credentialRequest("one"));
+        HostPluginUiSettingsBridge bridge(&store, nullptr, credentialRequest("one"), QStringList{"credentialBundle"});
+        auto *backendSecrets = qobject_cast<IPluginUiBackendSecretsV1 *>(&bridge); QVERIFY(backendSecrets);
         QSignalSpy finished(&bridge, &PluginUiSettingsBridge::operationFinished);
-        const auto id = bridge.saveSecret("credentialBundle", QString::fromUtf8(*bytes));
+        const auto id = backendSecrets->saveBackendSecret("credentialBundle", *bytes);
         QTRY_COMPARE(finished.size(), 1); QCOMPARE(finished[0][0].toUuid(), id); QVERIFY(finished[0][1].toBool());
-        QVERIFY(bridge.publicValues().isEmpty()); QVERIFY(bridge.secretConfigured("credentialBundle"));
+        QVERIFY(bridge.publicValues().isEmpty()); QVERIFY(bridge.sections().isEmpty());
+        QVERIFY(!bridge.secretConfigured("credentialBundle")); QVERIFY(backendSecrets->backendSecretConfigured("credentialBundle"));
+        const auto fromService = backendSecrets->readBackendSecret("credentialBundle"); QVERIFY(fromService);
+        QCOMPARE(*fromService, *bytes);
+        QVERIFY(KugouCredentialRecord::decode(*fromService, "kugou/one", "one", "123"));
         QVERIFY(!QJsonDocument::fromVariant(bridge.sections()).toJson().contains("PRIVATE"));
         const auto record = store.storedAccount("kugou", "one"); QVERIFY(record);
         QCOMPARE(record->pluginPackageId, packageId); QCOMPARE(record->sourceInstanceId, "kugou/one");
@@ -164,8 +169,8 @@ private slots:
         QSignalSpy rejected(&conflict, &PluginUiSettingsBridge::operationFinished);
         conflict.saveSecret("credentialBundle", "PRIVATE_HIJACK"); QTRY_COMPARE(rejected.size(), 1);
         QVERIFY(!rejected[0][1].toBool()); QCOMPARE(secrets.values.size(), 1);
-        bridge.clearSecret("credentialBundle"); QTRY_COMPARE(finished.size(), 2);
-        QVERIFY(finished[1][1].toBool()); QVERIFY(!bridge.secretConfigured("credentialBundle")); QVERIFY(secrets.values.isEmpty());
+        backendSecrets->clearBackendSecret("credentialBundle"); QTRY_COMPARE(finished.size(), 2);
+        QVERIFY(finished[1][1].toBool()); QVERIFY(!backendSecrets->backendSecretConfigured("credentialBundle")); QVERIFY(secrets.values.isEmpty());
     }
     void hostCredentialRotationFailurePreservesExistingBinding()
     {

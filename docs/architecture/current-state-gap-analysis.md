@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+2026-10-12，Phase 7 切片 12 新增独立版本化 `IPluginUiBackendSecretsV1` C++ 服务与 Host bridge 的显式 backend-only Secret 绑定：完整 Schema 用于原有安全事务，展示投影隐藏业务字段，普通 QML 读写/清除接口不接受这些字段。服务支持有界 UTF-8 记录读写/清除、实例身份约束及 Context 失效；另补成功通知中销毁服务的重入保护。全目标构建、九项专项及最终 **79/79 CTest（82.74 秒）** 通过，安装产物包含新头文件。Source SDK v2/旧 UI 接口虚表/磁盘格式不变。生产 Provider 声明发现、Management Session 和其他 Host 设置表单尚未接线，酷狗生产 Schema 仍为空，真实扫码/Keychain/音频仍未验收；后续须统一所有展示入口再启用认证字段，见 [C++ 存储契约](plugin-ui-backend-secrets-v1.md)。
+
 Phase 7 切片 11 已加入插件私有版本化凭证记录，绑定 package/source/instance/account、实际认证设备和用户 ID，严格拒绝非规范编码及身份冲突；控制器按代次一次性交接设备与候选凭证。真实 Host bridge/SourceAccountStore 的无外网存储契约测试覆盖 secure envelope、INI 不含凭证/设备标识、重开、包冲突、清除及轮换失败回滚。全目标构建、五项专项通过，最新 **79/79 CTest（63.68 秒）** 通过。Secret Schema 仅由测试夹具声明，生产工厂仍为空 Schema，尚未完成生产账号存储接线；后续须明确独立 Plugin UI API 的业务 Secret 声明/展示边界，再接插件认证 Backend/Management UI。系统 Keychain、真实扫码/账号、实际音频与 Host 旧登录迁出仍未验收，Phase 7 未完成。
 
 Phase 7 切片 10 已加入插件私有 QR 轮询控制器：固定实例/账号身份、独立网络、每次登录代次 UUID、单在途请求、单调总超时、取消/重试/销毁和通知重入保护，候选凭证仅可按当前代次由 C++ 一次性取走。最新全目标构建及 **79/79 CTest（64.00 秒）** 通过。Confirmed 不是账号存储成功或 Source 登录；尚未接入 SecretStore、Registry/UI lease、Plugin Management UI 或真实扫码。后续完成实例账号可信存储/绑定及 UI 生命周期，再迁出 Host 平台专用登录业务，Phase 7 仍未完成。

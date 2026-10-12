@@ -52,6 +52,10 @@ private slots:
     void notificationDoesNotIncludeSecretData();
     void createsRequiredPublicAndSecretFieldsAtomically();
     void exposesOnlyPublicVisibilityCondition();
+    void backendSecretsAreCppOnlyAndOmittedFromPresentation();
+    void backendSecretDeclarationAndRecordsFailClosed();
+    void backendSecretsRemainInstanceBoundAndInvalidatable();
+    void backendNotificationMayDestroyService();
 };
 
 void PluginUiSettingsBridgeTest::publicValuesOmitSecrets()
@@ -197,6 +201,103 @@ void PluginUiSettingsBridgeTest::exposesOnlyPublicVisibilityCondition()
     const auto condition = fields.last().toMap().value("visibleWhen").toMap();
     QCOMPARE(condition.value("fieldId").toString(), QString("server"));
     QVERIFY(!fields.last().toMap().contains("value"));
+}
+
+void PluginUiSettingsBridgeTest::backendSecretsAreCppOnlyAndOmittedFromPresentation()
+{
+    Fixture f;
+    HostPluginUiSettingsBridge bridge(&f.store, nullptr, f.request, QStringList{"password"});
+    auto *service = qobject_cast<IPluginUiBackendSecretsV1 *>(&bridge); QVERIFY(service);
+    QVERIFY(service->backendSecretConfigured("password"));
+    QCOMPARE(*service->readBackendSecret("password"), QByteArray("PRIVATE-password"));
+    QVERIFY(!bridge.secretConfigured("password"));
+    const auto fields = bridge.sections().first().toMap().value("fields").toList();
+    QCOMPARE(fields.size(), 1); QCOMPARE(fields.first().toMap().value("id").toString(), QString("server"));
+    for (int i = 0; i < bridge.metaObject()->methodCount(); ++i) {
+        const auto name = bridge.metaObject()->method(i).name();
+        QVERIFY(!name.contains("BackendSecret")); QVERIFY(name != "backendSecretConfigured");
+    }
+    QSignalSpy finished(&bridge, &PluginUiSettingsBridge::operationFinished);
+    bridge.saveSecret("password", "PRIVATE-QML");
+    bridge.saveSettings({}, {{"password", "PRIVATE-QML"}});
+    bridge.clearSecret("password");
+    bridge.savePublicValues({{"password", "PRIVATE-QML"}});
+    QTRY_COMPARE(finished.size(), 4);
+    for (const auto &result : finished) QVERIFY(!result[1].toBool());
+    QCOMPARE(*service->readBackendSecret("password"), QByteArray("PRIVATE-password"));
+    const auto id = service->saveBackendSecret("password", "PRIVATE-业务-record");
+    QTRY_COMPARE(finished.size(), 5); QCOMPARE(finished.last()[0].toUuid(), id); QVERIFY(finished.last()[1].toBool());
+    QCOMPARE(*service->readBackendSecret("password"), QByteArray("PRIVATE-业务-record"));
+    bridge.savePublicValues({{"server", "changed"}}); QTRY_COMPARE(finished.size(), 6); QVERIFY(finished.last()[1].toBool());
+    QCOMPARE(*service->readBackendSecret("password"), QByteArray("PRIVATE-业务-record"));
+    service->clearBackendSecret("password"); QTRY_COMPARE(finished.size(), 7); QVERIFY(finished.last()[1].toBool());
+    QVERIFY(!service->backendSecretConfigured("password")); QVERIFY(!service->readBackendSecret("password"));
+    QVERIFY(f.secrets.values.isEmpty());
+}
+
+void PluginUiSettingsBridgeTest::backendSecretDeclarationAndRecordsFailClosed()
+{
+    Fixture f;
+    for (const auto &ids : {QStringList{"server"}, QStringList{"missing"}, QStringList{"password", "password"}}) {
+        HostPluginUiSettingsBridge bad(&f.store, nullptr, f.request, ids);
+        QVERIFY(bad.sections().isEmpty()); QVERIFY(bad.publicValues().isEmpty());
+        QVERIFY(!bad.readBackendSecret("password"));
+        QSignalSpy rejected(&bad, &PluginUiSettingsBridge::operationFinished);
+        bad.saveBackendSecret("password", "PRIVATE-invalid"); QCoreApplication::processEvents();
+        QCOMPARE(rejected.size(), 0);
+        QCOMPARE(f.secrets.values.size(), 1);
+    }
+    HostPluginUiSettingsBridge bridge(&f.store, nullptr, f.request, QStringList{"password"});
+    QSignalSpy finished(&bridge, &PluginUiSettingsBridge::operationFinished);
+    for (const auto &bytes : {QByteArray(), QByteArray(65537, 'x'), QByteArray::fromHex("ff"), QByteArray("x\0y", 3)})
+        bridge.saveBackendSecret("password", bytes);
+    bridge.saveBackendSecret("server", "PRIVATE-invalid"); bridge.clearBackendSecret("server");
+    QTRY_COMPARE(finished.size(), 6);
+    for (const auto &result : finished) { QVERIFY(!result[1].toBool()); QVERIFY(!result[2].toString().contains("PRIVATE")); }
+    QCOMPARE(*bridge.readBackendSecret("password"), QByteArray("PRIVATE-password"));
+    HostPluginUiSettingsBridge ordinary(&f.store, nullptr, f.request);
+    QVERIFY(!ordinary.readBackendSecret("password")); QVERIFY(ordinary.secretConfigured("password"));
+    auto only = f.request; only.schema.first().fields.removeFirst();
+    HostPluginUiSettingsBridge secretOnly(&f.store, nullptr, only, QStringList{"password"});
+    QVERIFY(secretOnly.sections().isEmpty());
+}
+
+void PluginUiSettingsBridgeTest::backendSecretsRemainInstanceBoundAndInvalidatable()
+{
+    Fixture f;
+    auto other = f.request; other.accountId = "other"; other.draft["password"] = "PRIVATE-other";
+    QVERIFY(f.store.saveValidatedV2(other));
+    HostPluginUiSettingsBridge bridge(&f.store, nullptr, f.request, QStringList{"password"});
+    QCOMPARE(*bridge.readBackendSecret("password"), QByteArray("PRIVATE-password"));
+    auto foreign = f.request; foreign.pluginPackageId = "org.example.foreign";
+    HostPluginUiSettingsBridge conflict(&f.store, nullptr, foreign, QStringList{"password"});
+    QVERIFY(!conflict.readBackendSecret("password")); QVERIFY(!conflict.backendSecretConfigured("password"));
+    QSignalSpy rejected(&conflict, &PluginUiSettingsBridge::operationFinished);
+    conflict.saveBackendSecret("password", "PRIVATE-hijack"); QTRY_COMPARE(rejected.size(), 1); QVERIFY(!rejected[0][1].toBool());
+    bridge.invalidate(); QVERIFY(!bridge.readBackendSecret("password"));
+    QSignalSpy finished(&bridge, &PluginUiSettingsBridge::operationFinished);
+    bridge.saveBackendSecret("password", "PRIVATE-late"); bridge.clearBackendSecret("password");
+    QCoreApplication::processEvents(); QCOMPARE(finished.size(), 0);
+    QCOMPARE(f.store.resolvedAccountV2("example", "other")->secret,
+             *encodeSourceSecretsV2({{"password", "PRIVATE-other"}}));
+}
+
+void PluginUiSettingsBridgeTest::backendNotificationMayDestroyService()
+{
+    Fixture f;
+    auto *bridge = new HostPluginUiSettingsBridge(&f.store, nullptr, f.request, QStringList{"password"});
+    QPointer<HostPluginUiSettingsBridge> guard(bridge);
+    connect(bridge, &PluginUiSettingsBridge::changed, bridge, [bridge] { delete bridge; });
+    const auto id = bridge->saveBackendSecret("password", "PRIVATE-reentrant");
+    QVERIFY(!id.isNull()); QVERIFY(guard.isNull());
+    QCOMPARE(f.store.resolvedAccountV2("example", "home")->secret,
+             *encodeSourceSecretsV2({{"password", "PRIVATE-reentrant"}}));
+    bridge = new HostPluginUiSettingsBridge(&f.store, nullptr, f.request, QStringList{"password"});
+    guard = bridge;
+    connect(bridge, &PluginUiSettingsBridge::changed, bridge, [bridge] { delete bridge; });
+    const auto clearId = bridge->clearBackendSecret("password");
+    QVERIFY(!clearId.isNull()); QVERIFY(guard.isNull()); QVERIFY(f.secrets.values.isEmpty());
+    QCoreApplication::processEvents();
 }
 
 QTEST_MAIN(PluginUiSettingsBridgeTest)

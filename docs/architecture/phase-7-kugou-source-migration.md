@@ -134,6 +134,16 @@ Confirmed 仅代表当前代次得到了经过映射的候选凭证，不是账�
 
 Qt 6.11.1/macOS x86_64 Debug 正常全目标构建成功。首次构建发现集成测试目标缺少插件私有头文件搜索路径，改为显式引用私有 codec 头文件后重建通过；没有因此让生产插件依赖 Host 私有存储实现。Host bridge 与酷狗五项专项 **5/5 通过（4.43 秒）**；最新全量 **79/79 CTest 通过（63.68 秒）**，包括 macOS 打包/重定位。公共 SDK v2/IID、Plugin UI API、Host 磁盘格式和默认 Source 不变；生产认证存储接口/Management UI、真实扫码、系统 Keychain 和实际音频仍未验收。
 
+## 切片 12：独立 C++ Backend Secret 服务与展示隔离
+
+新增可选 `IPluginUiBackendSecretsV1`，IID 独立版本化；不扩充 Source SDK v2、旧 Plugin UI provider 或 SettingsBridge 虚表。Host 私有桥增加显式 backend-only Secret 声明的构造入口，必须是完整 Schema 中已有 Secret ID，未知/重复/公共字段使服务失效。旧构造入口仍没有 backend-only 字段，不改变现有插件行为。
+
+完整 Schema 继续交给 SourceAccountStore 校验/事务；展示投影去除业务 Secret 字段及空区块。普通 QML 查询配置标志返回 false，四条写入/清除路径拒绝业务字段。新 C++ 服务提供有界 UTF-8 记录保存、读取、清除和配置标志，复用现有 secure envelope、身份约束、错误脱敏及轮换回滚；不是任意存储、登录权限或 native 插件沙箱。
+
+测试验证 Qt metaobject 不包含新凭证方法、声明/记录边界、普通配置保存保留业务 Secret、实例/包隔离及失效 Context；酷狗存储夹具改经新服务往返私有账号记录，确认表单完全没有 credentialBundle。另补存储成功通知立即关闭 UI/销毁桥的保护：先登记完成通知，Registry 通知后检查 QPointer，changed 返回后不再访问对象；保存和清除均有重入销毁测试。生产 Schema 仍为空；Provider 声明发现、生产 Management Session 和其他 Host 表单尚未接线，不能只靠局部隐藏就上线认证字段。完整契约及后续验收见 [Backend Secrets 1.0](plugin-ui-backend-secrets-v1.md)。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 最新全目标构建成功，九项专项复跑 **9/9 通过（11.30 秒）**；补齐通知销毁保护后的最终全量 **79/79 CTest 通过（82.74 秒）**，含外部 SDK 安装/加载、macOS 打包/重定位。已检查安装产物包含新服务头文件；验证仍使用无外网/内存 SecretStore 夹具。真实扫码、Keychain、实际音频和 Host 平台登录迁出仍未验收。
+
 ## 推荐的后续切片与验收
 
 1. v2 Session/mapper：当前匿名搜索、解析、同步 Item Lookup、未知媒体异步验证及隔离实验包已实现；Registry 工厂/生命周期、拒绝路径及受控传输成功/恢复/切换链进入测试。后续补真实业务响应验证和实际动作能力，再对应用公开；保持 Lookup 无 I/O，不以恢复快照授予当前权限，不把解析 URL 或旧路径交给 QML。
