@@ -5,6 +5,8 @@
   "version": "0.1.0",
   "category": "source",
   "runtime": "native-qt",
+  "pluginUiApi": "1.0",
+  "ui": {"management": "qml/ManagementPage.qml"},
   "library": "@CMAKE_SHARED_MODULE_PREFIX@quemusic_kugou_source@CMAKE_SHARED_MODULE_SUFFIX@",
   "pluginApi": {"major": 1, "minHostMinor": 0},
   "interfaces": [{"id": "org.quemusic.MusicSourcePlugin/2.0", "version": "2.0"}],

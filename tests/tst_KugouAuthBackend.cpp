@@ -7,6 +7,11 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <cstring>
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QQuickWindow>
+#include <QQuickItem>
+#include <QImage>
 
 namespace {
 class Reply final : public QNetworkReply {
@@ -76,6 +81,57 @@ QByteArray confirmed(const QString &user = "123", const QString &token = "PRIVAT
 class KugouAuthBackendTest final : public QObject {
     Q_OBJECT
 private slots:
+    void clearingMissingBindingDoesNotCreateAccount()
+    {
+        Fixture f; QVERIFY(f.store.accounts().isEmpty());
+        QVERIFY(f.backend->clearAccount()); QCOMPARE(f.backend->state(), "cleared");
+        QVERIFY(f.backend->clearAccount()); QCOMPARE(f.backend->state(), "cleared");
+        QVERIFY(f.store.accounts().isEmpty()); QCOMPARE(f.secrets.writes, 0);
+        QVERIFY(f.secrets.values.isEmpty()); QVERIFY(f.network.replies.isEmpty());
+    }
+    void productionPageDrivesControlledBackendAndFencesLateReply()
+    {
+        Fixture f;
+        f.context.setContext({"org.quemusic.source.kugou", "kugou", "kugou/one", "one", PluginUiMode::Edit},
+            f.backend, &f.bridge, nullptr, nullptr);
+        QQmlEngine engine; engine.addImportPath(QUEMUSIC_QML_IMPORT_DIR);
+        QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QUEMUSIC_KUGOU_MANAGEMENT_PAGE));
+        QTRY_VERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> page(component.createWithInitialProperties({{"pluginUiContext", QVariant::fromValue(&f.context)}}));
+        QVERIFY2(page, qPrintable(component.errorString()));
+        auto *refresh = page->findChild<QObject *>("pluginQrRefresh"); QVERIFY(refresh);
+        QVERIFY(QMetaObject::invokeMethod(refresh, "click")); QCOMPARE(f.network.replies.size(), 1);
+        f.network.replies[0]->deliver("{\"status\":1,\"data\":{\"qrcode\":\"TEST-CODE\"}}");
+        QCOMPARE(f.backend->state(), "waiting");
+        auto *canvas = page->findChild<QObject *>("pluginQrCanvas"); QVERIFY(canvas);
+        auto *qr = canvas->parent(); QVERIFY(qr->property("validPayload").toBool());
+        QVERIFY(qr->findChild<QObject *>("pluginQrImage")->property("source").toUrl().isEmpty());
+        auto *item = qobject_cast<QQuickItem *>(page.data()); QVERIFY(item);
+        QQuickWindow window;
+        item->setParentItem(window.contentItem()); item->setWidth(420); item->setHeight(item->implicitHeight());
+        window.resize(420, qCeil(item->height())); window.show();
+        QTRY_VERIFY(window.isExposed()); QTest::qWait(80);
+        item->setHeight(item->implicitHeight()); window.resize(420, qCeil(item->height()));
+        QTest::qWait(80);
+        auto *clearButton = page->findChild<QQuickItem *>("kugouClearAccount"); QVERIFY(clearButton);
+        QVERIFY(clearButton->mapToItem(item, QPointF()).y() + clearButton->height() <= item->height());
+        const auto screenshot = window.grabWindow(); QVERIFY(!screenshot.isNull());
+        QVERIFY(screenshot.save(QString(QUEMUSIC_QML_IMPORT_DIR) + "/kugou-management-test.png"));
+        item->setWidth(320); item->setHeight(200); window.resize(320, 200); QTest::qWait(80);
+        QVERIFY(page->property("contentHeight").toReal() > item->height());
+        QTRY_COMPARE(f.network.replies.size(), 2); f.network.replies[1]->deliver(confirmed());
+        QTRY_COMPARE(f.backend->state(), "stored"); QVERIFY(f.backend->credentialStored());
+        QVERIFY(page->findChild<QObject *>("kugouQrLogin")->property("statusText").toString().contains("verification pending"));
+        QVERIFY(QMetaObject::invokeMethod(clearButton, "click"));
+        QTRY_COMPARE(f.backend->state(), "cleared"); QVERIFY(!f.backend->credentialStored());
+        QVERIFY(QMetaObject::invokeMethod(refresh, "click")); QCOMPARE(f.network.replies.size(), 3);
+        auto late = f.network.replies[2]; f.context.invalidate(); QVERIFY(late->aborted);
+        late->deliver("{\"status\":1,\"data\":{\"qrcode\":\"LATE-CODE\"}}");
+        QCOMPARE(f.backend->state(), "invalidated");
+        QVERIFY(!refresh->property("enabled").toBool()); QCOMPARE(f.network.replies.size(), 3);
+        item->setParentItem(nullptr); window.hide(); page.reset(); QCOMPARE(warnings.size(), 0);
+    }
     void candidateIsStoredAndVerifiedWithoutAuthenticationGrant()
     {
         Fixture f; QVERIFY(f.backend->startQr()); QCOMPARE(f.backend->state(), "fetching");

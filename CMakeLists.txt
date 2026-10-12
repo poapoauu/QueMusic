@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(QueMusic VERSION 0.1 LANGUAGES CXX)
+if(APPLE AND BUILD_TESTING)
+    enable_language(OBJCXX)
+endif()
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -165,6 +168,10 @@ set(QUEMUSIC_PLUGIN_UI_QML_FILES
     plugin-ui/qml/PluginQrCode.qml
     plugin-ui/qml/PluginQrLogin.qml)
 list(APPEND QUEMUSIC_PLUGIN_UI_QML_FILES plugin-ui/qml/PluginSettingsForm.qml)
+# Package an independent copy without changing QT_RESOURCE_ALIAS on the legacy
+# app's api/qrcode.js source. Installed Kit consumers never need Host resources.
+configure_file(api/qrcode.js "${CMAKE_CURRENT_BINARY_DIR}/plugin-ui-generated/qrcode.js" COPYONLY)
+list(APPEND QUEMUSIC_PLUGIN_UI_QML_FILES "${CMAKE_CURRENT_BINARY_DIR}/plugin-ui-generated/qrcode.js")
 foreach(plugin_ui_qml_file IN LISTS QUEMUSIC_PLUGIN_UI_QML_FILES)
     get_filename_component(plugin_ui_qml_name "${plugin_ui_qml_file}" NAME)
     set_source_files_properties("${plugin_ui_qml_file}" PROPERTIES
@@ -245,7 +252,7 @@ install(FILES plugin-ui/PluginTheme.h plugin-ui/PluginUiContext.h
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/QueMusic/PluginUI/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/quemusic/qml/QueMusic/PluginUI"
     COMPONENT PluginSdk
-    FILES_MATCHING PATTERN "*.qml" PATTERN "qmldir" PATTERN "*.qmltypes")
+    FILES_MATCHING PATTERN "*.qml" PATTERN "*.js" PATTERN "qmldir" PATTERN "*.qmltypes")
 configure_package_config_file(cmake/QueMusicPluginSdkConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/QueMusicPluginSdkConfig.cmake"
     INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/QueMusicPluginSdk")
@@ -469,7 +476,7 @@ if(BUILD_TESTING)
     endforeach()
     add_test(NAME quemusic_plugin_ui_import_public_module_test
         COMMAND ${CMAKE_COMMAND}
-            "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}/plugin-ui/qml"
+            "-DROOT=${CMAKE_CURRENT_BINARY_DIR}/QueMusic/PluginUI"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidatePluginQmlImports.cmake")
     qt_add_executable(quemusic_plugin_ui_external_loader
         tests/tst_PluginUiExternal.cpp)
@@ -497,6 +504,12 @@ if(BUILD_TESTING)
     add_test(NAME quemusic_plugin_ui_theme_test COMMAND quemusic_plugin_ui_theme_test)
 
     qt_add_executable(quemusic_plugin_ui_qml_test tests/tst_PluginUiQml.cpp)
+    if(APPLE)
+        target_sources(quemusic_plugin_ui_qml_test PRIVATE tests/DecodeQrVision.mm)
+        set_target_properties(quemusic_plugin_ui_qml_test PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
+        target_link_libraries(quemusic_plugin_ui_qml_test PRIVATE
+            "-framework Vision" "-framework Foundation" "-framework CoreGraphics")
+    endif()
     target_link_libraries(quemusic_plugin_ui_qml_test PRIVATE
         quemusic_plugin_ui Qt6::Test Qt6::Qml Qt6::Quick)
     target_compile_definitions(quemusic_plugin_ui_qml_test PRIVATE

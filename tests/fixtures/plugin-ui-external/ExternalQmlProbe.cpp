@@ -15,12 +15,13 @@ int main(int argc, char **argv)
     component.setData(R"(
         import QtQuick
         import QueMusic.PluginUI 1.0
-        PluginPage { title: "Installed module probe" }
+        PluginQrCode { payload: "https://example.com/installed-kit" }
     )", QUrl());
     if (!component.isReady()) {
         qWarning().noquote() << component.errorString();
         return 3;
     }
     QScopedPointer<QObject> page(component.create());
-    return page ? 0 : 4;
+    if (!page) return 4;
+    return page->property("validPayload").toBool() && !page->property("error").toBool() ? 0 : 5;
 }

@@ -22,7 +22,11 @@
 
 ## 1. 结论摘要
 
-2026-10-12，Phase 7 切片 15 已接入酷狗生产工厂的可选 backend-only `credentialBundle` Schema/声明，以及 Session 的命名 envelope/私有规范记录/实例账号绑定校验。Host 普通表单和实例展示隐藏业务字段，拒绝手工 Secret，普通重命名保留凭证；匿名实例仍可创建，旧 cookie/raw payload/损坏/跨账号/额外字段/未知参数在 open 时拒绝且无网络。有效候选记录不提升账号权限，不进入匿名请求或媒体 DTO；Ready 不表示服务端登录。生产 Management Provider/QML、二维码编码显示、真实 token 验证、Keychain/扫码/音频及 Host 旧登录迁出仍未实现或验收，Phase 7 未完成。SDK v2/旧 UI 接口虚表/IID/磁盘格式与默认 Source 均不变；下一切片接管理 UI 与 Context/lease 生命周期。早期空 Schema 记录为历史快照，当前状态以本段和 [Phase 7 切片 15](phase-7-kugou-source-migration.md) 为准。
+2026-10-12，Phase 7 切片 16 已接入生产实验酷狗工厂的 Management Provider/manifest/包内 QML，固定 Host Context/所有者、Create/Edit 与 backend-only 凭证服务。页面复用独立 Plugin UI 1.0 Kit/Theme，离线编码公开 QR URL，不引用 Host 私有 QML，不自动发起扫码/保存或导入旧账号。Kit 追加有界 ASCII payload 与按钮 enable，安装资源独立；保留旧 Host QR 路径和 source 图片接口。生产动态模块验证身份、失效、页面/lease 释放、实际卸载和卸载后管理入口不可用；受控静态 Backend+同一页面验证按钮、候选存储、清除、晚响应与滚动/截图。空绑定清除幂等且不制造账号。实际手机扫码、服务端 token/账号能力、Keychain、音频及旧 Host 登录迁出尚未验收；仍为默认关闭的隔离实验包，不是 Phase 7 出口。新页面依赖本次更新后的 UI Kit，不能假设所有历史 1.0 Host 均提供新增属性；发行前须收敛最低运行时要求，见 [QR 控件契约](plugin-ui-qr-payload-v1.md)。
+
+切片 16 验证：全目标构建成功，十四项专项 **14/14（31.12 秒）**、导入检查 **6/6（0.36 秒）**、最终全量 **82/82 CTest（74.83 秒）** 通过，含外部安装资源探针与 macOS 打包/重定位。页面截图已检查、短视口滚动通过；此前动态元对象冲突与源码/打包目录 lint 差异均已修正并复跑。没有读取真实账号或实际扫码。
+
+2026-10-12，Phase 7 切片 15 已接入酷狗生产工厂的可选 backend-only `credentialBundle` Schema/声明，以及 Session 的命名 envelope/私有规范记录/实例账号绑定校验。Host 普通表单和实例展示隐藏业务字段，拒绝手工 Secret，普通重命名保留凭证；匿名实例仍可创建，旧 cookie/raw payload/损坏/跨账号/额外字段/未知参数在 open 时拒绝且无网络。有效候选记录不提升账号权限，不进入匿名请求或媒体 DTO；Ready 不表示服务端登录。当时生产 Management Provider/QML、二维码编码显示、真实 token 验证、Keychain/扫码/音频及 Host 旧登录迁出仍未实现或验收，Phase 7 未完成。SDK v2/旧 UI 接口虚表/IID/磁盘格式与默认 Source 均不变；后续接管理 UI 与 Context/lease 生命周期。早期状态保留为历史快照，当前状态以上方切片 16 和 [Phase 7 记录](phase-7-kugou-source-migration.md) 为准。
 
 切片 15 验证：全目标构建成功，十项专项 **10/10（10.48 秒）**、全量 **80/80 CTest（69.77 秒）** 通过；使用无外网/内存 SecretStore 夹具，未读取真实账号。
 

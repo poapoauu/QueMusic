@@ -8,6 +8,11 @@
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include "PluginTheme.h"
+#include <QPainter>
+#include <QJSValue>
+#ifdef Q_OS_MACOS
+QString decodeQrVision(const QImage &image);
+#endif
 
 class PluginUiQmlTest final : public QObject {
     Q_OBJECT
@@ -19,6 +24,7 @@ private slots:
     void keyboardNavigationAndAccessibility();
     void managementKitTypesInstantiate();
     void managementKitBehavior();
+    void qrPayloadIsOfflineBoundedAndIndependentlyDecodable();
     void narrowLongTextLayoutHasNoWarnings();
     void publicSettingsFormInstantiates();
 };
@@ -309,6 +315,46 @@ void PluginUiQmlTest::managementKitBehavior()
     QCOMPARE(refresh.count(), 1);
     QCOMPARE(cancel.count(), 1);
     QCOMPARE(warnings.count(), 0);
+}
+
+void PluginUiQmlTest::qrPayloadIsOfflineBoundedAndIndependentlyDecodable()
+{
+    QQmlEngine engine; engine.addImportPath(QStringLiteral(QUEMUSIC_QML_IMPORT_DIR));
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+    QQmlComponent component(&engine);
+    component.setData("import QtQuick\nimport QueMusic.PluginUI 1.0\nPluginQrCode { width: 300; height: 300 }", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> object(component.create()); QVERIFY(object);
+    for (const auto &payload : {QString("https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=1001&qrcode=TEST%26CODE"),
+                                QString(180, 'A')}) {
+        QVERIFY(object->setProperty("payload", payload));
+        QVERIFY(object->property("validPayload").toBool()); QVERIFY(!object->property("error").toBool());
+        auto *image = object->findChild<QObject *>("pluginQrImage"); QVERIFY(image);
+        QVERIFY(image->property("source").toUrl().isEmpty());
+        const auto rows = object->property("modules").value<QJSValue>();
+        const int count = rows.property("length").toInt(); QVERIFY(count >= 21 && count <= 57);
+        QImage bitmap((count + 8) * 6, (count + 8) * 6, QImage::Format_RGB32); bitmap.fill(Qt::white);
+        QPainter painter(&bitmap);
+        for (int row = 0; row < count; ++row) {
+            const auto columns = rows.property(row); QCOMPARE(columns.property("length").toInt(), count);
+            for (int col = 0; col < count; ++col)
+                if (columns.property(col).toBool()) painter.fillRect((col + 4) * 6, (row + 4) * 6, 6, 6, Qt::black);
+        }
+        painter.end();
+#ifdef Q_OS_MACOS
+        QCOMPARE(decodeQrVision(bitmap), payload);
+#endif
+    }
+    for (const auto &payload : {QString(214, 'A'), QString::fromUtf8("非ASCII"), QString("bad\nvalue")}) {
+        QVERIFY(object->setProperty("payload", payload));
+        QVERIFY(!object->property("validPayload").toBool()); QVERIFY(object->property("error").toBool());
+        QVERIFY(object->findChild<QObject *>("pluginQrImage")->property("source").toUrl().isEmpty());
+    }
+    object->setProperty("payload", QString()); QVERIFY(object->property("error").toBool());
+    object->setProperty("payload", QString("https://example.com/qr"));
+    object->setProperty("width", 20); object->setProperty("height", 20);
+    QVERIFY(object->property("validPayload").toBool()); QVERIFY(object->property("error").toBool());
+    QCOMPARE(warnings.size(), 0);
 }
 
 void PluginUiQmlTest::narrowLongTextLayoutHasNoWarnings()

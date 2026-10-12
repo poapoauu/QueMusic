@@ -143,6 +143,12 @@ bool KugouAuthBackend::clearAccount()
 {
     if (!valid() || m_pending) return false;
     ++m_generation; m_running = false; m_controller->cancel();
+    if (!service()->backendSecretConfigured(fieldId)) {
+        // Create-mode has no persisted account yet. Clearing an empty binding
+        // is idempotent and must not ask Host storage to manufacture an account.
+        m_stored = false; m_user.clear(); m_bindingSnapshot.reset();
+        return notify("cleared");
+    }
     m_pending = true; m_clearing = true; m_pendingRecord.clear();
     const auto generation = m_generation;
     if (!notify("clearing") || !valid() || generation != m_generation) return false;

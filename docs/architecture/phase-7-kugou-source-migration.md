@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 15）：生产工厂已有 backend-only 凭证 Schema/声明，Session 可校验同实例的命名凭证记录。普通 Host 表单仍为空；Management Provider/QML 与真实认证尚未接入。以下各切片是完成当时的历史快照，早期“空 Schema/拒绝所有 secret”不再描述最新生产工厂。
+最新状态（切片 16）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。普通 Host 表单仍为空，实际服务端认证尚未验收。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -183,6 +183,20 @@ Session 不再拒绝全部秘密，而是只接受 SourceSecrets v2 命名 envel
 兼容性：没有变更 Source SDK v2/既有 UI 接口虚表、IID 或 envelope 格式；新增可选声明与字段仅影响实验酷狗包。完整 Schema 必须随工厂一起更新，旧纯匿名实例无需补凭证。尚未接入管理后端，因此本切片只完成生产存储/Session 边界；下一切片接 Management Provider、独立 QML、二维码编码/显示及 Context/lease 卸载测试，之后才做服务端 token/真实扫码验收并迁出旧 Host 登录。
 
 2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，十项专项 **10/10（10.48 秒）**、最终全量 **80/80 CTest（69.77 秒）** 通过，含外部 SDK、Local/Navidrome、原 UI 和 macOS 增量打包/重定位回归。首次构建的测试目标缺少私有头文件搜索路径，补齐并重新生成后完整重建/测试正常，不以旧二进制作为新测试证据。无真实外网、Keychain 或账号读取；未宣称可扫码登录或 Phase 7 完成。
+
+## 切片 16：独立管理页面、离线二维码与动态生命周期
+
+生产工厂实现已有 `ISourceManagementUiProvider`，manifest 声明 `pluginUiApi: 1.0` 和包内 `qml/ManagementPage.qml`，支持 Host 分配 Create 身份和既有 Edit 身份。创建 Backend 时检查 Context/模式/完整实例/账号/服务及所有者，Backend 与插件自有网络归 Context 生命周期管理，不接 Host 私有 AccountManager。页面仅导入 QtQuick 与 QueMusic.PluginUI 1.0，使用稳定 ScrollPage、Theme、AccountCard、QrLogin、Status/Button；窄短视口可滚动，普通表单不显示业务凭证。
+
+Kit 保留旧图片 `source` 行为，追加离线 payload 编码和刷新/取消 enable 控制。既有纯 JS 算法独立复制到 Kit 资源/安装产物，不改变原 Host 资源别名；有界 ASCII、版本 1–10/M、整数像素、四模块 quiet zone，非法/超限/尺寸不足显示错误，不回退远端图片。详情、安装与最低运行时兼容风险见 [QR payload 契约](plugin-ui-qr-payload-v1.md)。
+
+页面不自动启动 QR，不自动保存账号，不导入 Legacy Host 记录；只响应用户刷新/取消/清除。storing/clearing 禁止新操作，stored 明示“服务验证待完成”，不是已登录或账号能力；失效后按钮禁用、URL 清空，晚回包不能改写存储。清除没有持久绑定的 Create Context 为无写入、无制造账号的幂等成功；损坏/既有记录仍走原 Host 清除事务。
+
+动态测试加载真实生产模块，验证 Provider/Owner、Create/Edit、Schema 隐藏、独立实例、持有页面时卸载 Busy、页面销毁/Context 失效后 lease 归零和实际卸载 Success、卸载后 Host 不再报告管理 UI。受控协议测试另用静态 Backend 和同一生产 QML，驱动按钮→获取→轮询候选→Host 存储→状态/清除，覆盖失效与迟到回包及页面渲染/短视口滚动；不在同一进程重复链接插件私有 QObject 实现。第一次动态测试出现元对象冲突，已分离两个宿主，保留卸载检查而非忽略断言。
+
+macOS QR 测试用独立 Vision 解码还原 URL 和较长 payload；该框架仅链接测试程序。外部 Qt-only 安装探针检验 Kit JS 资源完备。均使用测试数据/内存 SecretStore，无真实手机扫码、Keychain、服务端 token/账号权限或实际音频验收；实验包仍默认关闭、独立输出，无应用默认 Source/install/bundle 接线，不删除旧 Host 登录。本切片不是 Phase 7 出口，后续先补服务认证/数据能力与真实集成证据，再迁出旧登录并做启用/禁用/删除验收。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 最终全目标构建成功，十四项专项 **14/14（31.12 秒）**，导入检查 **6/6（0.36 秒）**，最终全量 **82/82 CTest（74.83 秒）** 通过。第一次全量仅 public Kit 源码目录 lint 失败（打包 JS 不在该目录），改为检查实际独立模块目录后重建/全量复跑通过；私有/越界/远端导入拒绝测试不变。渲染截图已人工检查 QR/按钮完整，短视口滚动断言通过。检查 bundle manifest 仍只有 Local/Navidrome，没有酷狗实验包；这些证据不代表真实平台、手机或跨平台发行验收。
 
 ## 推荐的后续切片与验收
 

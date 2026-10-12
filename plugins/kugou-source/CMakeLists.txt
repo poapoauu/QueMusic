@@ -19,7 +19,7 @@ target_link_libraries(quemusic_kugou_auth PUBLIC quemusic_kugou_client quemusic_
 option(QUEMUSIC_BUILD_EXPERIMENTAL_KUGOU_SOURCE "Build isolated anonymous Kugou prototype" OFF)
 if(BUILD_TESTING OR QUEMUSIC_BUILD_EXPERIMENTAL_KUGOU_SOURCE)
     add_library(quemusic_kugou_source MODULE KugouSourcePlugin.cpp KugouSourcePlugin.h plugin.json)
-    target_link_libraries(quemusic_kugou_source PRIVATE quemusic_kugou_session quemusic_plugin_ui_sdk)
+    target_link_libraries(quemusic_kugou_source PRIVATE quemusic_kugou_session quemusic_kugou_auth)
     set(kugou_package_root "${CMAKE_BINARY_DIR}/experimental-source-packages")
     set_target_properties(quemusic_kugou_source PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${kugou_package_root}/kugou"
@@ -42,6 +42,8 @@ if(BUILD_TESTING OR QUEMUSIC_BUILD_EXPERIMENTAL_KUGOU_SOURCE)
     configure_file(manifest.json.in "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in" @ONLY)
     file(GENERATE OUTPUT "${kugou_package_root}/kugou/manifest.json"
         INPUT "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in")
+    file(GENERATE OUTPUT "${kugou_package_root}/kugou/qml/ManagementPage.qml"
+        INPUT "${CMAKE_CURRENT_SOURCE_DIR}/qml/ManagementPage.qml")
 endif()
 
 if(BUILD_TESTING)
@@ -53,6 +55,10 @@ if(BUILD_TESTING)
         LIBRARY_OUTPUT_DIRECTORY "${kugou_fixture_root}/kugou"
         RUNTIME_OUTPUT_DIRECTORY "${kugou_fixture_root}/kugou")
     file(READ "${CMAKE_CURRENT_BINARY_DIR}/manifest.json.in" kugou_fixture_manifest)
+    # This transport fixture has no management provider. Do not advertise UI
+    # merely because it shares the production session/schema.
+    string(REGEX REPLACE "  \"pluginUiApi\"[^\n]*\n  \"ui\"[^\n]*\n" ""
+        kugou_fixture_manifest "${kugou_fixture_manifest}")
     string(REPLACE "quemusic_kugou_source" "quemusic_kugou_source_fixture"
         kugou_fixture_manifest "${kugou_fixture_manifest}")
     file(GENERATE OUTPUT "${kugou_fixture_root}/kugou/manifest.json" CONTENT "${kugou_fixture_manifest}")
@@ -61,7 +67,24 @@ if(BUILD_TESTING)
     add_test(NAME quemusic_kugou_client_test COMMAND quemusic_kugou_client_test)
     qt_add_executable(quemusic_kugou_auth_test ../../tests/tst_KugouAuthBackend.cpp)
     target_link_libraries(quemusic_kugou_auth_test PRIVATE quemusic_kugou_auth quemusic_plugin_settings Qt6::Test)
+    target_compile_definitions(quemusic_kugou_auth_test PRIVATE
+        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_BINARY_DIR}"
+        QUEMUSIC_KUGOU_MANAGEMENT_PAGE="${CMAKE_CURRENT_SOURCE_DIR}/qml/ManagementPage.qml")
     add_test(NAME quemusic_kugou_auth_test COMMAND quemusic_kugou_auth_test)
+    qt_add_executable(quemusic_kugou_management_ui_test ../../tests/tst_KugouManagementUi.cpp)
+    target_link_libraries(quemusic_kugou_management_ui_test PRIVATE
+        quemusic_plugin_settings Qt6::Network Qt6::Test Qt6::Quick)
+    # Do not statically link plugin-private QObject/moc implementations into
+    # this host: it loads the real module and must have only one set of them.
+    target_include_directories(quemusic_kugou_management_ui_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(quemusic_kugou_management_ui_test PRIVATE
+        QUEMUSIC_KUGOU_PACKAGE_ROOT="${kugou_package_root}"
+        QUEMUSIC_QML_IMPORT_DIR="${CMAKE_BINARY_DIR}")
+    add_dependencies(quemusic_kugou_management_ui_test quemusic_kugou_source)
+    add_test(NAME quemusic_kugou_management_ui_test COMMAND quemusic_kugou_management_ui_test)
+    set_tests_properties(quemusic_kugou_management_ui_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_test(NAME quemusic_kugou_management_imports_test COMMAND ${CMAKE_COMMAND}
+        -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/qml -P ${CMAKE_SOURCE_DIR}/cmake/ValidatePluginQmlImports.cmake)
     qt_add_executable(quemusic_kugou_session_test ../../tests/tst_KugouSourceSession.cpp)
     target_link_libraries(quemusic_kugou_session_test PRIVATE quemusic_kugou_session Qt6::Test)
     add_test(NAME quemusic_kugou_session_test COMMAND quemusic_kugou_session_test)
