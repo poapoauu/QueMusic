@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+2026-10-12，Phase 7 切片 14 已实现插件私有 KugouAuthBackend：固定 Context 身份/服务、当前扫码代次交接、完整存储记录快照校验、拒绝隐式换号、Host 事务与读回匹配、清除、失效/晚回包和通知销毁保护。Host 通知中的嵌套事件循环提前完成也按 UUID 暂存/匹配，storing 通知的并发记录修改不会被覆盖。公开属性没有 token/用户 ID/设备 DTO；stored 仅表示候选记录持久化，不是服务端认证或 Source Ready。最新全目标构建、十项专项及 **80/80 CTest（67.48 秒）** 通过；无外网/内存 SecretStore 夹具。生产工厂仍为空 Schema，未接 Management Provider/QML 或认证 Session，默认 Source、Host 登录入口、SDK v2/UI API/IID/磁盘格式均不变。后续接生产声明与 Management/Session 配置，再单独做真实 token/扫码/Keychain/音频验收，Phase 7 未完成。
+
 2026-10-12，Phase 7 切片 13 已接入独立 `IPluginUiBackendSecretProviderV1` 声明发现，并统一普通 PluginSettingsController、PluginManagementUiSession 和 Host bridge 的验证/展示投影。业务 Secret 字段不进入两处表单或实例配置字段 ID 展示，普通保存/连接测试/设置动作的 Secret 草稿拒绝业务字段；完整 Schema 仍用于事务及既有凭证保留。非法未知/公共/重复声明使两个入口拒绝，不回退人工 token 表单。动态插件夹具验证 Create/Edit、公共修改保留凭证、失效/卸载保护及非法声明。全目标构建、九项专项、最终 **79/79 CTest（83.81 秒）** 通过，外部安装产物含新声明头文件。旧 SDK v2/UI provider IID、虚表及磁盘格式不变；酷狗生产仍为空 Schema，下一步接认证 Backend/业务凭证声明与 Session 绑定。真实扫码/Keychain/音频及 Host 旧登录迁出尚未验收，Phase 7 未完成。
 
 2026-10-12，Phase 7 切片 12 新增独立版本化 `IPluginUiBackendSecretsV1` C++ 服务与 Host bridge 的显式 backend-only Secret 绑定：完整 Schema 用于原有安全事务，展示投影隐藏业务字段，普通 QML 读写/清除接口不接受这些字段。服务支持有界 UTF-8 记录读写/清除、实例身份约束及 Context 失效；另补成功通知中销毁服务的重入保护。全目标构建、九项专项及最终 **79/79 CTest（82.74 秒）** 通过，安装产物包含新头文件。Source SDK v2/旧 UI 接口虚表/磁盘格式不变。生产 Provider 声明发现、Management Session 和其他 Host 设置表单尚未接线，酷狗生产 Schema 仍为空，真实扫码/Keychain/音频仍未验收；后续须统一所有展示入口再启用认证字段，见 [C++ 存储契约](plugin-ui-backend-secrets-v1.md)。

@@ -27,7 +27,7 @@ Host 以固定 package/source/account 身份、完整 Schema 和 backend-only Se
 
 切片 13 已接入生产 PluginManagementUiSession 与普通 PluginSettingsController 两处 Host 表单来源。普通表单、实例 configuredSecretFieldIds 展示使用投影；普通保存、连接测试/设置动作的 Secret 草稿拒绝业务字段。完整 Schema 仍交给原保存/测试/动作事务，以保留并校验既有业务凭证。非法声明阻止表单、保存/测试和 Management UI 创建，不回退为普通可输入 Secret。测试通过 native fixture 设置加载前声明，生产声明不允许动态改变。
 
-酷狗生产 Schema 仍为空，尚未实现该声明或认证 Backend，不开放人工 token 表单；不能据此宣称生产扫码持久登录完成。后续将酷狗凭证 Schema/声明、认证 Backend、Context invalidation/lease 及存储后的 Session 绑定一起接入。真实 Keychain、服务端 token 验证和扫码另行验收。
+酷狗生产 Schema 仍为空，工厂尚未实现该声明或接入认证 Backend，不开放人工 token 表单。切片 14 已实现私有 Backend 与真实 Host 服务的夹具绑定流程，包含完整记录快照、用户冲突、存储读回、Context invalidation 和通知重入保护；stored 不是认证/Session Ready。后续将酷狗凭证 Schema/声明、Management Provider/QML、Context lease 及存储后的 Session 配置绑定一起接入。真实 Keychain、服务端 token 验证和扫码另行验收，不能据此宣称生产扫码持久登录完成。
 
 当前夹具验收覆盖新 IID、C++ 查询且不出现在 Qt metaobject、字段/区块隐藏、四条普通写入路径拒绝、普通配置保存保留业务记录、UTF-8/大小/空/NUL 拒绝、非法声明、实例/包身份冲突、失效服务、保存/清除通知中立即销毁服务，以及酷狗私有凭证记录经服务读写/清除。
 

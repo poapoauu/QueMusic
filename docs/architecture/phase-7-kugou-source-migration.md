@@ -154,6 +154,20 @@ Qt 6.11.1/macOS x86_64 Debug 正常全目标构建成功。首次构建发现集
 
 2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，九项专项 **9/9 通过（12.96 秒）**；最终全量 **79/79 CTest 通过（83.81 秒）**，含外部 SDK 安装/加载、Local/Navidrome、原 UI 与 macOS 打包/重定位。已检查外部安装产物包含新 Provider 声明头文件；测试没有连接真实平台或系统 Secret backend。酷狗生产仍为空 Schema、没有声明/认证 Backend/Management UI；本切片只完成通用 Host 接线，不宣称真实扫码、Keychain 或 Phase 7 完成。
 
+## 切片 14：插件私有认证 Backend 与持久绑定流程
+
+新增 `KugouAuthBackend` 私有 C++/QObject 管理后端，生产构造使用插件自有网络，测试注入网络；只依赖稳定 Plugin UI Context/SettingsBridge/Backend Secrets 服务，不链接 Host 私有账号类。固定 package/source/instance/account/settings 绑定，Context 身份/服务改变、失效或销毁后永久停止认证、取消请求并拒绝晚写。
+
+Backend 提供扫码启动/取消和清除账号候选记录；公开属性只有 state、qrUrl、errorKey、credentialStored，没有 token、用户 ID、设备记录或完整账号 DTO。读取既有记录必须通过插件私有 codec 的完整实例校验；损坏/不可读配置阻止认证启动。确认时及 storing 通知之后重新核对完整记录快照，连同用户的另一笔 token/设备轮换也不能覆盖；已有用户不允许通过重扫隐式切换账号。必须显式清除，再开启新绑定。
+
+候选凭证按当前控制器代次一次性交接，状态先进入 storing，Host 事务成功并读回完全匹配的规范记录后才进入 stored。写入/清除失败读取并保留真实当前绑定，公开错误使用固定脱敏键。stored/credentialStored 只表示候选凭证记录持久化，不表示服务端认证、Session 登录、Source Ready 或额外平台权限；不调用播放器或旧登录路径。事务已经同步提交时取消不能承诺回滚，Context 失效只能阻止后续操作/结果投递。
+
+Backend 状态通知后检查对象存活/代次，防止 UI 通知中重入、失效或销毁。Host 完成信号可能在通知中的嵌套事件循环提前到达，提交期间暂存结果，在取得请求 UUID 后精确匹配处理，不丢完成信号或把其他操作结果当作成功。
+
+新增专用测试目标使用真实 Host bridge/SourceAccountStore、临时 INI、内存 SecretStore 和无外网网络夹具，覆盖规范记录/设备绑定、写入失败与清除失败、用户冲突、认证期间绑定变化、损坏配置、取消/重试/晚响应、多实例、Context 失效、通知销毁及嵌套 Host 完成通知。Backend 目前为私有静态实现和测试接线；生产酷狗工厂仍为空 Schema，尚无 Management UI Provider/QML 或认证 Session 接线，不改变默认 Source 或旧 Host 登录入口。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 最新全目标构建成功，十项专项 **10/10 通过（9.14 秒）**；最终全量 **80/80 CTest 通过（67.48 秒）**，含旧 UI、Local/Navidrome、外部 SDK 与 macOS 打包/重定位。新增认证目标含八个业务用例；均为无外网/内存 SecretStore 夹具，不读取真实账号。未改 SDK v2/IID、Plugin UI API 或磁盘格式。后续接生产凭证 Schema/声明、Management UI 与 Session 配置绑定，再另行验证真实服务 token/扫码；不将存储夹具成功当作 Phase 7 完成。
+
 ## 推荐的后续切片与验收
 
 1. v2 Session/mapper：当前匿名搜索、解析、同步 Item Lookup、未知媒体异步验证及隔离实验包已实现；Registry 工厂/生命周期、拒绝路径及受控传输成功/恢复/切换链进入测试。后续补真实业务响应验证和实际动作能力，再对应用公开；保持 Lookup 无 I/O，不以恢复快照授予当前权限，不把解析 URL 或旧路径交给 QML。
