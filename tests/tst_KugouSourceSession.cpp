@@ -81,6 +81,27 @@ MediaRefV2 media(const QString &account = "one", const QString &id = hash)
 class KugouSourceSessionTest final : public QObject {
     Q_OBJECT
 private slots:
+    void rankProjectionUsesStandardTrackMapperWithoutGrantingUnknownRights()
+    {
+        for (int variant = 0; variant < 5; ++variant) {
+            QJsonObject row{{"hash", hash}, {"songname", "Rank Song"}, {"duration", 60},
+                {"authors", QJsonArray{QJsonObject{{"author_name", "Rank Artist"}}}},
+                {"url", "https://private/?token=PRIVATE"}, {"token", "PRIVATE"}};
+            if (variant == 1) row.insert("pay_type", 0);
+            if (variant == 2) row.insert("pay_type", 1);
+            if (variant == 3) row.insert("pay_type", "0");
+            if (variant == 4) row.insert("pay_type", false);
+            const auto projected = KugouRankProtocol::tracks(page({row}, 1), 20); QVERIFY(projected);
+            const auto item = KugouMappers::track(projected->rows[0].toObject(),
+                {"kugou", "kugou/one", "one", "Kugou"});
+            QVERIFY(item); QCOMPARE(item->ref, media());
+            QCOMPARE(item->subtitle, "Rank Artist"); QCOMPARE(item->durationMs, 60000);
+            QCOMPARE(item->availableActions.value(SourceActionV2::Play).state,
+                variant == 1 ? AvailabilityV2::Available : AvailabilityV2::Unavailable);
+            QVERIFY(item->metadata.isEmpty()); QVERIFY(item->externalIds.isEmpty());
+            QVERIFY(!item->title.contains("PRIVATE"));
+        }
+    }
     void boundCredentialRecordDoesNotGrantAuthenticationOrLeaveAnonymousTransport()
     {
         const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);

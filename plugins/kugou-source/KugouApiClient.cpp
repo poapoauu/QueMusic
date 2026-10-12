@@ -85,6 +85,20 @@ QUuid KugouApiClient::getQr(KugouQrRequests::Operation operation,
     return id;
 }
 
+QUuid KugouApiClient::getRank(KugouRankProtocol::Operation operation, const QString &rankId,
+                            int page, int limit)
+{
+    const QUuid id = QUuid::createUuid();
+    m_pending.insert(id, {});
+    const auto request = KugouRankProtocol::build(operation, rankId, page, limit);
+    if (!request) {
+        scheduleFailure(id, error(SourceErrorKindV2::InvalidRequest, "kugou.rankInvalidRequest", false));
+        return id;
+    }
+    dispatch(id, *request);
+    return id;
+}
+
 void KugouApiClient::dispatch(const QUuid &id, QNetworkRequest request)
 {
     if (!m_network) {

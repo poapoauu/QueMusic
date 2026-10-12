@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 16）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。普通 Host 表单仍为空，实际服务端认证尚未验收。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 17）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已补私有请求/响应协议，但尚未开放 Session 页面；普通 Host 表单仍为空，实际服务端认证尚未验收。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -197,6 +197,18 @@ Kit 保留旧图片 `source` 行为，追加离线 payload 编码和刷新/取�
 macOS QR 测试用独立 Vision 解码还原 URL 和较长 payload；该框架仅链接测试程序。外部 Qt-only 安装探针检验 Kit JS 资源完备。均使用测试数据/内存 SecretStore，无真实手机扫码、Keychain、服务端 token/账号权限或实际音频验收；实验包仍默认关闭、独立输出，无应用默认 Source/install/bundle 接线，不删除旧 Host 登录。本切片不是 Phase 7 出口，后续先补服务认证/数据能力与真实集成证据，再迁出旧登录并做启用/禁用/删除验收。
 
 2026-10-12，Qt 6.11.1/macOS x86_64 Debug 最终全目标构建成功，十四项专项 **14/14（31.12 秒）**，导入检查 **6/6（0.36 秒）**，最终全量 **82/82 CTest（74.83 秒）** 通过。第一次全量仅 public Kit 源码目录 lint 失败（打包 JS 不在该目录），改为检查实际独立模块目录后重建/全量复跑通过；私有/越界/远端导入拒绝测试不变。渲染截图已人工检查 QR/按钮完整，短视口滚动断言通过。检查 bundle manifest 仍只有 Local/Navidrome，没有酷狗实验包；这些证据不代表真实平台、手机或跨平台发行验收。
+
+## 切片 17：公开榜单请求与严格协议投影
+
+复核旧 `AccountManager::onKugouPoll/loadKugou` 与 `KugouApi`：旧实现直接把扫码候选/磁盘 cookie 当作已登录，没有独立 token 验证接口，不能据此建立新 Session 的认证事实。本切片转向有仓库接口证据的公开榜单，不编造服务认证端点；候选记录与实际登录/权限继续分离。
+
+新增私有 `KugouRankProtocol.h`，将旧 rank/list、rank/song 的固定路径/参数迁入 HTTPS 构造器，并接入已有可取消 `KugouApiClient::getRank`。白名单 rank ID 为正规范十进制且不超过旧 int 范围，页码/数量有界；请求不加载/保存 cookie、不复用认证、不跟随重定向，沿用 15 秒超时、1 MiB 响应上限和脱敏错误。HTTPS 可达性/实际服务字段尚未验证，不能把固定路径构造测试当作真实服务支持证据。
+
+Catalog 严格检查业务状态、数组、对象、ID 唯一性、展示文本类型/长度，成功空列表保持空，不复制旧内置榜单兜底。Tracks 检查 total/数量/hash/名称/作者形状，只投影标准 Track mapper 所需字段，剔除 token、资源 URL、原始作者字典和替代 hash；缺失/字符串/布尔/对象权限字段保持未知，不推断免费，嵌套 duration/pay 数据不留存。数值明确免费仍须后续资源解析验证，不表示付费或账号能力。
+
+测试新增请求策略/并发 UUID/取消晚包/异步参数拒绝、Catalog 畸形/重复/空态/边界、Track 页形状与白名单、标准 Track DTO 身份/权限映射。全部受控网络，无真实账号/外网/音频。本切片仅协议基础；Session 的公开 PageProvider 仍只有 Search，未向 UI 宣告榜单可用。下一步接标准榜单页面/ref/filter/游标身份与权限交集、取消/重开/多实例测试，之后再验真实 HTTPS 响应；不改变 Source SDK v2/IID/Plugin UI API/存储格式或默认实验包隔离状态。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，修正夹具并重建后的十四项专项 **14/14（25.15 秒）**，最终全量 **82/82 CTest（95.54 秒）** 通过，含原 UI、Local/Navidrome、外部 SDK、动态管理 UI/卸载和 macOS 打包/重定位。首次专项新夹具误选 parent-only 生产构造，未实际注入受控网络，已明确使用双参数注入并重新构建/全量复跑；失败运行不作为验收或真实端点可达性证据。最终用例使用模拟响应，未验证真实账号、服务字段、手机扫码、Keychain 或音频。
 
 ## 推荐的后续切片与验收
 

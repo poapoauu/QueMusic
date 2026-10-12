@@ -2,6 +2,7 @@
 
 #include "v2/SourceV2Types.h"
 #include "KugouQrRequests.h"
+#include "KugouRankProtocol.h"
 #include <QHash>
 #include <QNetworkAccessManager>
 #include <QPointer>
@@ -23,6 +24,8 @@ public:
     ~KugouApiClient() override;
 
     QUuid get(Endpoint endpoint, const QUrlQuery &query = {});
+    QUuid getRank(KugouRankProtocol::Operation operation, const QString &rankId = {},
+                  int page = 1, int limit = 20);
     QUuid getQr(KugouQrRequests::Operation operation,
                 const KugouQrRequests::DeviceIdentity &identity,
                 qint64 epochSeconds, const QString &code = {});

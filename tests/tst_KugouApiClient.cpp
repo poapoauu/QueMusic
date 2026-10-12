@@ -64,6 +64,114 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void rankRequestsAreAnonymousBoundedAndCancellable()
+    {
+        using namespace KugouRankProtocol;
+        Network network; KugouApiClient client(&network, nullptr);
+        QSignalSpy success(&client, &KugouApiClient::succeeded);
+        QSignalSpy failed(&client, &KugouApiClient::failed);
+        const auto catalogId = client.getRank(Operation::Catalog);
+        const auto tracksId = client.getRank(Operation::Tracks, "8888", 2, 100);
+        QVERIFY(catalogId != tracksId); QCOMPARE(network.requests.size(), 2);
+        for (const auto &request : network.requests) {
+            QCOMPARE(request.url().scheme(), "https");
+            QCOMPARE(request.url().host(), "mobilecdnbj.kugou.com");
+            QVERIFY(request.rawHeader("Cookie").isEmpty());
+            QVERIFY(request.rawHeader("Authorization").isEmpty());
+            QCOMPARE(request.attribute(QNetworkRequest::RedirectPolicyAttribute).toInt(),
+                     int(QNetworkRequest::ManualRedirectPolicy));
+            QCOMPARE(request.attribute(QNetworkRequest::CookieLoadControlAttribute).toInt(), int(QNetworkRequest::Manual));
+            QCOMPARE(request.attribute(QNetworkRequest::CookieSaveControlAttribute).toInt(), int(QNetworkRequest::Manual));
+            QCOMPARE(request.attribute(QNetworkRequest::AuthenticationReuseAttribute).toInt(), int(QNetworkRequest::Manual));
+            QCOMPARE(request.transferTimeout(), 15000);
+        }
+        QCOMPARE(network.requests[0].url().path(), "/api/v3/rank/list");
+        const QUrlQuery query(network.requests[1].url());
+        QCOMPARE(query.queryItemValue("rankid"), "8888");
+        QCOMPARE(query.queryItemValue("page"), "2");
+        QCOMPARE(query.queryItemValue("pagesize"), "100");
+        QCOMPARE(query.queryItemValue("with_res_tag"), "1");
+        client.cancel(tracksId); QVERIFY(network.replies[1]->aborted);
+        network.replies[1]->deliver("{\"status\":1}"); QCOMPARE(success.size(), 0);
+        network.replies[0]->deliver("{\"status\":1,\"data\":{\"info\":[]}}");
+        QCOMPARE(success.size(), 1); QCOMPARE(success[0][0].toUuid(), catalogId);
+        const auto invalid = client.getRank(Operation::Tracks, "8888&token=PRIVATE");
+        QCOMPARE(failed.size(), 0); QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(failed[0][0].toUuid(), invalid); QCOMPARE(network.requests.size(), 2);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][1]).messageKey, "kugou.rankInvalidRequest");
+        for (const auto &id : {QString(), QString("0"), QString("01"), QString("-1"),
+                              QString("2147483648"), QString(" 8888"), QString("8888\n")})
+            QVERIFY(!build(Operation::Tracks, id));
+        QVERIFY(!build(Operation::Tracks, "8888", 0));
+        QVERIFY(!build(Operation::Tracks, "8888", 1000001));
+        QVERIFY(!build(Operation::Tracks, "8888", 1, 101));
+        QVERIFY(!build(Operation::Tracks, "8888", 1, 0));
+        QVERIFY(!build(Operation::Catalog, "8888"));
+        QVERIFY(!build(Operation::Catalog, {}, 2));
+        QVERIFY(!build(static_cast<Operation>(99)));
+        QVERIFY(build(Operation::Tracks, "2147483647", 1000000, 1));
+    }
+    void rankCatalogValidatesIdentityAndNeverManufacturesFallback()
+    {
+        using namespace KugouRankProtocol;
+        QJsonObject row{{"rankid", 8888}, {"rankname", "Top"}, {"update_frequency", "Daily"},
+                        {"intro", "Description"}, {"token", "PRIVATE"}, {"imgurl", "https://private/?token=PRIVATE"}};
+        auto response = [&](QJsonArray rows) { return QJsonObject{{"status", 1}, {"data", QJsonObject{{"info", rows}}}}; };
+        const auto result = catalog(response({row})); QVERIFY(result); QCOMPARE(result->size(), 1);
+        QCOMPARE(result->at(0).id, "8888"); QCOMPARE(result->at(0).title, "Top");
+        const auto empty = catalog(response({})); QVERIFY(empty); QVERIFY(empty->isEmpty());
+        QVERIFY(!catalog(response({row, row})));
+        for (const auto &id : {QJsonValue(), QJsonValue(true), QJsonValue(1.5), QJsonValue("01"),
+                              QJsonValue("0"), QJsonValue(2147483648.0)}) {
+            auto bad = row; bad.insert("rankid", id); QVERIFY(!catalog(response({bad})));
+        }
+        for (const auto &title : {QJsonValue(""), QJsonValue(" \t"), QJsonValue(1),
+                                 QJsonValue(QString(1025, 'X')), QJsonValue("bad\ntext")}) {
+            auto bad = row; bad.insert("rankname", title); QVERIFY(!catalog(response({bad})));
+        }
+        auto stringId = row; stringId.insert("rankid", "2147483647"); QVERIFY(catalog(response({stringId})));
+        QVERIFY(!catalog(response({1}))); QVERIFY(!catalog({}));
+        auto badStatus = response({row}); badStatus.insert("status", "1"); QVERIFY(!catalog(badStatus));
+        badStatus.insert("status", 0); QVERIFY(!catalog(badStatus));
+        QJsonArray many;
+        for (int i = 1; i <= 257; ++i) { auto entry = row; entry.insert("rankid", i); many.append(entry); }
+        QVERIFY(!catalog(response(many)));
+    }
+    void rankTrackProjectionPreservesUnknownRightsAndRejectsMalformedPages()
+    {
+        using namespace KugouRankProtocol;
+        QJsonObject row{{"hash", QString(32, 'a')}, {"songname", "Song"}, {"duration", 123},
+            {"authors", QJsonArray{QJsonObject{{"author_name", "Artist"}, {"token", "PRIVATE"}}}},
+            {"token", "PRIVATE"}, {"url", "https://private/?token=PRIVATE"}, {"320hash", QString(32, 'b')}};
+        auto response = [&](QJsonArray rows, QJsonValue total = 1) {
+            return QJsonObject{{"status", 1}, {"data", QJsonObject{{"total", total}, {"info", rows}}}};
+        };
+        auto result = tracks(response({row}), 20); QVERIFY(result); QCOMPARE(result->total, 1);
+        const auto projected = result->rows[0].toObject(); QCOMPARE(projected.size(), 4);
+        QCOMPARE(projected.value("singername").toString(), "Artist");
+        QVERIFY(!projected.contains("pay_type")); QVERIFY(!projected.contains("token"));
+        QVERIFY(!projected.contains("authors")); QVERIFY(!projected.contains("url"));
+        for (const auto &pay : {QJsonValue(0), QJsonValue(1), QJsonValue("0"), QJsonValue(true),
+                               QJsonValue(QJsonObject{{"token", "PRIVATE"}})}) {
+            auto candidate = row; candidate.insert("pay_type", pay);
+            const auto mapped = tracks(response({candidate}), 1); QVERIFY(mapped);
+            QCOMPARE(mapped->rows[0].toObject().value("pay_type"),
+                     pay.isDouble() ? pay : QJsonValue(QJsonValue::Undefined));
+        }
+        for (const auto &total : {QJsonValue(), QJsonValue("1"), QJsonValue(-1), QJsonValue(0),
+                                  QJsonValue(1.5), QJsonValue(2147483648.0)})
+            QVERIFY(!tracks(response({row}, total), 20));
+        QVERIFY(!tracks(response({row, row}, 2), 1));
+        QVERIFY(!tracks(response({1}), 20)); QVERIFY(!tracks(response({row}), 0));
+        auto bad = row; bad.insert("hash", "bad"); QVERIFY(!tracks(response({bad}), 20));
+        bad = row; bad.insert("authors", "Artist"); QVERIFY(!tracks(response({bad}), 20));
+        bad = row; bad.insert("authors", QJsonArray{QJsonObject{}}); QVERIFY(!tracks(response({bad}), 20));
+        bad = row; bad.insert("songname", ""); QVERIFY(!tracks(response({bad}), 20));
+        bad = row; bad.insert("duration", QJsonObject{{"token", "PRIVATE"}});
+        const auto clean = tracks(response({bad}), 20); QVERIFY(clean);
+        QVERIFY(!clean->rows[0].toObject().contains("duration"));
+        auto empty = tracks(response({}, 0), 20); QVERIFY(empty); QVERIFY(empty->rows.isEmpty());
+    }
     void qrControllerSerializesPollingAndHandsOffCredentialsOnce()
     {
         using State = KugouQrController::State;
