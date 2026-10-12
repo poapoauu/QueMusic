@@ -6,6 +6,8 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
+最新状态（切片 15）：生产工厂已有 backend-only 凭证 Schema/声明，Session 可校验同实例的命名凭证记录。普通 Host 表单仍为空；Management Provider/QML 与真实认证尚未接入。以下各切片是完成当时的历史快照，早期“空 Schema/拒绝所有 secret”不再描述最新生产工厂。
+
 本轮按已有代码检查：
 
 - `api/KugouApi.*` 在 Host 内承担搜索、分类、榜单、歌手、资源和 KRC 歌词请求，使用平台整数结果协议；没有可供 v2 Session 使用的每请求身份与取消机制。
@@ -167,6 +169,20 @@ Backend 状态通知后检查对象存活/代次，防止 UI 通知中重入、�
 新增专用测试目标使用真实 Host bridge/SourceAccountStore、临时 INI、内存 SecretStore 和无外网网络夹具，覆盖规范记录/设备绑定、写入失败与清除失败、用户冲突、认证期间绑定变化、损坏配置、取消/重试/晚响应、多实例、Context 失效、通知销毁及嵌套 Host 完成通知。Backend 目前为私有静态实现和测试接线；生产酷狗工厂仍为空 Schema，尚无 Management UI Provider/QML 或认证 Session 接线，不改变默认 Source 或旧 Host 登录入口。
 
 2026-10-12，Qt 6.11.1/macOS x86_64 Debug 最新全目标构建成功，十项专项 **10/10 通过（9.14 秒）**；最终全量 **80/80 CTest 通过（67.48 秒）**，含旧 UI、Local/Navidrome、外部 SDK 与 macOS 打包/重定位。新增认证目标含八个业务用例；均为无外网/内存 SecretStore 夹具，不读取真实账号。未改 SDK v2/IID、Plugin UI API 或磁盘格式。后续接生产凭证 Schema/声明、Management UI 与 Session 配置绑定，再另行验证真实服务 token/扫码；不将存储夹具成功当作 Phase 7 完成。
+
+## 切片 15：生产凭证声明与 Session 配置绑定
+
+生产 `KugouSourcePlugin` 通过已有可选 `IPluginUiBackendSecretProviderV1` 声明 `credentialBundle`；完整 Schema 中仅有该可选 Secret 字段，Host 普通表单投影为空，匿名实例仍可创建。测试工厂同步该声明，避免测试 Schema 与生产的展示契约不一致。实验包仍隔离、默认关闭，无应用默认来源/bundle/install 接线；未添加 Management manifest、Provider 或 QML，也未把静态 AuthBackend 作为生产管理后端创建。
+
+Session 不再拒绝全部秘密，而是只接受 SourceSecrets v2 命名 envelope 的单一 `credentialBundle`，并通过插件私有 codec 验证规范记录及完整实例/账号绑定。原始 Host cookie、未封装记录、损坏内容、跨账号、额外/未知字段、未知公开参数和非法账号范围在 open 阶段拒绝，不发网络请求。空秘密继续表示匿名配置。记录仅保存在私有配置中，不投影到媒体 DTO 或普通 QML，也不导入旧 Host Account.ini。
+
+凭证本地格式有效不等于 token 经服务验证：Ready 仍仅表示匿名配置就绪，账号专用能力仍 Unsupported，搜索/媒体解析依旧使用匿名请求，不携带候选 token/cookie/Authorization。不因记录存在启用付费权限、收藏、scrobble 或隐式登录。
+
+新增 Session 验收覆盖有效绑定、八类拒绝配置、匿名请求无凭证及 DTO 隔离；真实动态生产包测试覆盖 Schema/声明发现、Host 普通表单/实例字段隐藏、拒绝手工业务 Secret、普通重命名保留记录、Registry 同实例打开及匿名第二实例、INI 不含候选 token/设备标识。采用受控网络/内存 SecretStore，不代表 Keychain 或服务端账号认证。
+
+兼容性：没有变更 Source SDK v2/既有 UI 接口虚表、IID 或 envelope 格式；新增可选声明与字段仅影响实验酷狗包。完整 Schema 必须随工厂一起更新，旧纯匿名实例无需补凭证。尚未接入管理后端，因此本切片只完成生产存储/Session 边界；下一切片接 Management Provider、独立 QML、二维码编码/显示及 Context/lease 卸载测试，之后才做服务端 token/真实扫码验收并迁出旧 Host 登录。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，十项专项 **10/10（10.48 秒）**、最终全量 **80/80 CTest（69.77 秒）** 通过，含外部 SDK、Local/Navidrome、原 UI 和 macOS 增量打包/重定位回归。首次构建的测试目标缺少私有头文件搜索路径，补齐并重新生成后完整重建/测试正常，不以旧二进制作为新测试证据。无真实外网、Keychain 或账号读取；未宣称可扫码登录或 Phase 7 完成。
 
 ## 推荐的后续切片与验收
 

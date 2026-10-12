@@ -1,6 +1,7 @@
 // Test-only native factory: real Kugou Session/client/mapper, no sockets.
 #include "KugouSourceDefinition.h"
 #include "KugouSourceSession.h"
+#include "plugin-ui/v1/IPluginUiBackendSecretProviderV1.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -74,15 +75,17 @@ private:
 };
 }
 class KugouSourceFixture final : public QObject, public IMusicSourcePluginV2,
-                                 public IPluginSettingsProviderV2 {
+                                 public IPluginSettingsProviderV2,
+                                 public IPluginUiBackendSecretProviderV1 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID QUEMUSIC_MUSIC_SOURCE_PLUGIN_V2_IID FILE "../../plugins/kugou-source/plugin.json")
-    Q_INTERFACES(IMusicSourcePluginV2 IPluginSettingsProviderV2)
+    Q_INTERFACES(IMusicSourcePluginV2 IPluginSettingsProviderV2 IPluginUiBackendSecretProviderV1)
     Q_PROPERTY(int sourceSdkAbi READ sourceSdkAbi CONSTANT)
 public:
     int sourceSdkAbi() const { return QUEMUSIC_MUSIC_SOURCE_SDK_V2_ABI; }
     SourceDescriptorV2 descriptor() const override { return KugouSourceDefinition::descriptor(); }
     SettingsSchemaV2 settingsSchema() const override { return KugouSourceDefinition::settingsSchema(); }
+    QStringList backendSecretFieldIds() const override { return {QStringLiteral("credentialBundle")}; }
     IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &configuration, QObject *parent) override
     {
         auto *network = new Network(this);

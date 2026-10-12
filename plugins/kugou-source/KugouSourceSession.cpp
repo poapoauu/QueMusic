@@ -1,5 +1,7 @@
 #include "KugouSourceSession.h"
 #include "KugouMappers.h"
+#include "KugouCredentialRecord.h"
+#include "v2/SourceSecretsV2.h"
 #include <QJsonArray>
 #include <QTimer>
 #include <cmath>
@@ -40,10 +42,17 @@ SourceIdentityV2 KugouSourceSession::identity() const
 }
 bool KugouSourceSession::validConfiguration() const
 {
-    return m_configuration.pluginPackageId == "org.quemusic.source.kugou"
-        && m_configuration.sourceId == "kugou" && !m_configuration.accountId.trimmed().isEmpty()
-        && m_configuration.sourceInstanceId == "kugou/" + m_configuration.accountId
-        && m_configuration.secret.isEmpty() && m_configuration.parameters.isEmpty();
+    if (m_configuration.pluginPackageId != "org.quemusic.source.kugou"
+        || m_configuration.sourceId != "kugou"
+        || !KugouQrProtocol::validScope(m_configuration.sourceInstanceId, m_configuration.accountId)
+        || !m_configuration.parameters.isEmpty()) return false;
+    if (m_configuration.secret.isEmpty()) return true;
+    const auto secrets = decodeSourceSecretsV2(m_configuration.secret);
+    if (!secrets || secrets->size() != 1 || !secrets->contains(QStringLiteral("credentialBundle"))) return false;
+    // Validate ownership/encoding only. Until a service verification endpoint
+    // is implemented, transport and permissions remain strictly anonymous.
+    return KugouCredentialRecord::decode(secrets->value(QStringLiteral("credentialBundle")),
+        m_configuration.sourceInstanceId, m_configuration.accountId).has_value();
 }
 CapabilitySetV2 KugouSourceSession::capabilities() const
 {

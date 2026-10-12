@@ -5,7 +5,12 @@
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/item-lookup/v1/IItemLookupProviderV1.h"
+#include "plugin-ui/v1/IPluginUiBackendSecretProviderV1.h"
+#include "SettingsSchemaPresentation.h"
+#include "PluginSettingsController.h"
+#include "KugouCredentialRecord.h"
 #include <QNetworkAccessManager>
+#include <QFile>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -13,6 +18,13 @@
 
 namespace {
 const QString packageId = "org.quemusic.source.kugou";
+struct Secrets final : ISecretStore {
+    QHash<QString, QByteArray> values;
+    bool write(const QString &id, const QByteArray &bytes, QString *) override { values[id] = bytes; return true; }
+    std::optional<QByteArray> read(const QString &id, QString *) const override
+    { return values.contains(id) ? std::optional<QByteArray>(values.value(id)) : std::nullopt; }
+    bool remove(const QString &id, QString *) override { values.remove(id); return true; }
+};
 struct Sink final : PlaybackSink {
     int prepares = 0;
     int plays = 0;
@@ -23,7 +35,7 @@ struct Sink final : PlaybackSink {
 struct Harness {
     QTemporaryDir storage;
     QSettings settings{storage.filePath("accounts.ini"), QSettings::IniFormat};
-    UnavailableSecretStore secrets;
+    Secrets secrets;
     SourceAccountStore accounts{&settings, &secrets};
     PluginManager plugins;
     SourceRegistry registry{&plugins, &accounts};
@@ -56,6 +68,38 @@ MediaRefV2 media()
 class KugouSourceRegistrationTest final : public QObject {
     Q_OBJECT
 private slots:
+    void realHostFormHidesCredentialAndPreservesBoundRecord()
+    {
+        Harness h; QVERIFY(h.load());
+        auto *provider = qobject_cast<IPluginSettingsProviderV2 *>(h.plugins.pluginInstance(packageId)); QVERIFY(provider);
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto record = KugouCredentialRecord::encode({*device, {"123", "PRIVATE_CANDIDATE"}}); QVERIFY(record);
+        QVERIFY(h.accounts.saveValidatedV2({packageId, "kugou", "one", "Candidate", true, 1,
+            provider->settingsSchema(), {{"credentialBundle", QString::fromUtf8(*record)}}}));
+        PluginSettingsController controller(&h.plugins, &h.registry, &h.accounts);
+        QVERIFY(controller.selectPlugin(packageId));
+        QVERIFY(controller.settingsSections().isEmpty());
+        QVERIFY(controller.selectInstance("kugou/one"));
+        QVERIFY(controller.settingsSections().isEmpty());
+        for (const auto &entry : controller.instances())
+            QVERIFY(entry.toMap().value("configuredSecretFieldIds").toStringList().isEmpty());
+        const auto saved = h.accounts.resolvedAccountV2("kugou", "one"); QVERIFY(saved);
+        QVERIFY(!controller.saveInstance("Forged", {{"credentialBundle", "PRIVATE_FORGED"}}));
+        QVERIFY(controller.saveInstance("Renamed", {}));
+        const auto preserved = h.accounts.resolvedAccountV2("kugou", "one"); QVERIFY(preserved);
+        QCOMPARE(preserved->secret, saved->secret);
+        auto *session = h.registry.sessionFor("kugou/one"); QVERIFY(session);
+        QTRY_COMPARE(session->state(), SourceSessionStateV2::Ready);
+        QCOMPARE(session->capabilities().accountActions.value(SourceActionV2::Favorite).state, AvailabilityV2::Unsupported);
+        QVERIFY(h.save("two"));
+        auto *second = h.registry.sessionFor("kugou/two"); QVERIFY(second);
+        QTRY_COMPARE(second->state(), SourceSessionStateV2::Ready);
+        QVERIFY(h.accounts.resolvedAccountV2("kugou", "two")->secret.isEmpty());
+        h.settings.sync();
+        QFile file(h.storage.filePath("accounts.ini")); QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto ini = file.readAll(); QVERIFY(!ini.contains("PRIVATE_CANDIDATE")); QVERIFY(!ini.contains(device->guid.toUtf8()));
+        h.registry.closeAll();
+    }
     void realModuleFactoryAndRegistryCreateIsolatedInstances()
     {
         Harness h; QVERIFY(h.load());
@@ -69,7 +113,15 @@ private slots:
         QCOMPARE(descriptor.version, "0.1.0"); QCOMPARE(descriptor.sdkAbi, 2);
         QCOMPARE(descriptor.declaredActions.size(), 1);
         QCOMPARE(descriptor.declaredActions.value(SourceActionV2::Play).state, AvailabilityV2::Available);
-        QVERIFY(settings->settingsSchema().isEmpty());
+        auto *backendSecrets = qobject_cast<IPluginUiBackendSecretProviderV1 *>(root);
+        QVERIFY(backendSecrets);
+        QCOMPARE(backendSecrets->backendSecretFieldIds(), QStringList{"credentialBundle"});
+        const auto schema = settings->settingsSchema();
+        QCOMPARE(schema.size(), 1); QCOMPARE(schema[0].fields.size(), 1);
+        QCOMPARE(schema[0].fields[0].type, SettingsFieldTypeV2::Secret);
+        QVERIFY(!schema[0].fields[0].required);
+        const auto presentation = backendSecretPresentationV1(schema, backendSecrets->backendSecretFieldIds());
+        QVERIFY(presentation); QVERIFY(presentation->schema.isEmpty());
         QVERIFY(h.registry.enabledInstances().isEmpty());
         QVERIFY(h.save("one")); QVERIFY(h.save("two"));
         auto *first = h.registry.sessionFor("kugou/one");

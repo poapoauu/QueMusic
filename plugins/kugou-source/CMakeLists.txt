@@ -19,7 +19,7 @@ target_link_libraries(quemusic_kugou_auth PUBLIC quemusic_kugou_client quemusic_
 option(QUEMUSIC_BUILD_EXPERIMENTAL_KUGOU_SOURCE "Build isolated anonymous Kugou prototype" OFF)
 if(BUILD_TESTING OR QUEMUSIC_BUILD_EXPERIMENTAL_KUGOU_SOURCE)
     add_library(quemusic_kugou_source MODULE KugouSourcePlugin.cpp KugouSourcePlugin.h plugin.json)
-    target_link_libraries(quemusic_kugou_source PRIVATE quemusic_kugou_session)
+    target_link_libraries(quemusic_kugou_source PRIVATE quemusic_kugou_session quemusic_plugin_ui_sdk)
     set(kugou_package_root "${CMAKE_BINARY_DIR}/experimental-source-packages")
     set_target_properties(quemusic_kugou_source PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${kugou_package_root}/kugou"
@@ -47,7 +47,7 @@ endif()
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_library(quemusic_kugou_source_fixture MODULE ../../tests/fixtures/KugouSourceFixture.cpp)
-    target_link_libraries(quemusic_kugou_source_fixture PRIVATE quemusic_kugou_session)
+    target_link_libraries(quemusic_kugou_source_fixture PRIVATE quemusic_kugou_session quemusic_plugin_ui_sdk)
     set(kugou_fixture_root "${CMAKE_BINARY_DIR}/tests/kugou-source-fixture")
     set_target_properties(quemusic_kugou_source_fixture PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${kugou_fixture_root}/kugou"
@@ -66,10 +66,11 @@ if(BUILD_TESTING)
     target_link_libraries(quemusic_kugou_session_test PRIVATE quemusic_kugou_session Qt6::Test)
     add_test(NAME quemusic_kugou_session_test COMMAND quemusic_kugou_session_test)
     qt_add_executable(quemusic_kugou_registration_test ../../tests/tst_KugouSourceRegistration.cpp)
+    target_include_directories(quemusic_kugou_registration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(quemusic_kugou_registration_test PRIVATE
         QUEMUSIC_KUGOU_PACKAGE_ROOT="${kugou_package_root}")
     target_link_libraries(quemusic_kugou_registration_test PRIVATE
-        quemusic_playback_coordinator Qt6::Network Qt6::Test)
+        quemusic_playback_coordinator quemusic_plugin_settings Qt6::Network Qt6::Test)
     add_dependencies(quemusic_kugou_registration_test quemusic_kugou_source)
     add_test(NAME quemusic_kugou_registration_test COMMAND quemusic_kugou_registration_test)
     qt_add_executable(quemusic_kugou_integration_test ../../tests/tst_KugouSourceIntegration.cpp)

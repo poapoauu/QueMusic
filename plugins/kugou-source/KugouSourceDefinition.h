@@ -15,5 +15,13 @@ inline SourceDescriptorV2 descriptor()
     result.declaredActions.insert(SourceActionV2::Play, {AvailabilityV2::Available, {}, {}});
     return result;
 }
-inline SettingsSchemaV2 settingsSchema() { return {}; }
+inline SettingsSchemaV2 settingsSchema()
+{
+    // Optional, backend-only storage. Anonymous instances remain supported;
+    // storing a record never certifies its token or grants account capabilities.
+    SettingsFieldV2 credential{QStringLiteral("credentialBundle"),
+        QStringLiteral("kugou.settings.credentialBundle"), SettingsFieldTypeV2::Secret};
+    credential.secret = true;
+    return {{QStringLiteral("account"), QStringLiteral("kugou.settings.account"), {credential}, {}}};
+}
 }

@@ -1,5 +1,7 @@
 #include "KugouSourceSession.h"
 #include "KugouMappers.h"
+#include "KugouCredentialRecord.h"
+#include "v2/SourceSecretsV2.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -79,6 +81,54 @@ MediaRefV2 media(const QString &account = "one", const QString &id = hash)
 class KugouSourceSessionTest final : public QObject {
     Q_OBJECT
 private slots:
+    void boundCredentialRecordDoesNotGrantAuthenticationOrLeaveAnonymousTransport()
+    {
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto bytes = KugouCredentialRecord::encode({*device, {"123", "PRIVATE_CANDIDATE"}}); QVERIFY(bytes);
+        const auto envelope = encodeSourceSecretsV2({{"credentialBundle", *bytes}}); QVERIFY(envelope);
+        Network network;
+        auto configuration = config(); configuration.secret = *envelope;
+        KugouSourceSession session(configuration, &network, nullptr);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        QVERIFY(network.requests.isEmpty());
+        QCOMPARE(session.identity().accountId, QString("one"));
+        QCOMPARE(session.capabilities().accountActions.value(SourceActionV2::Favorite).state, AvailabilityV2::Unsupported);
+        QCOMPARE(session.capabilities().accountActions.value(SourceActionV2::Scrobble).state, AvailabilityV2::Unsupported);
+        session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 1);
+        const auto request = network.requests[0];
+        QVERIFY(!request.url().toEncoded().contains("PRIVATE_CANDIDATE"));
+        for (const auto &header : request.rawHeaderList()) {
+            QVERIFY(!request.rawHeader(header).contains("PRIVATE_CANDIDATE"));
+            QVERIFY(header.toLower() != "cookie"); QVERIFY(header.toLower() != "authorization");
+        }
+        network.replies[0]->deliver(page());
+        const auto item = session.lookupItem(media()); QVERIFY(item);
+        QVERIFY(item->metadata.isEmpty()); QVERIFY(item->externalIds.isEmpty());
+    }
+    void credentialConfigurationRejectsForeignCorruptAndLegacyRecordsBeforeTransport()
+    {
+        const auto device = KugouQrProtocol::createDevice("kugou/one", "one"); QVERIFY(device);
+        const auto bytes = KugouCredentialRecord::encode({*device, {"123", "PRIVATE_CANDIDATE"}}); QVERIFY(bytes);
+        for (int variant = 0; variant < 8; ++variant) {
+            Network network; auto configuration = config();
+            SourceNamedSecretsV2 secrets{{"credentialBundle", *bytes}};
+            if (variant == 0) { configuration.accountId = "two"; configuration.sourceInstanceId = "kugou/two"; }
+            if (variant == 1) secrets["credentialBundle"] = "broken";
+            if (variant == 2) secrets.insert("extra", "PRIVATE");
+            if (variant == 3) secrets = {{"token", "PRIVATE"}};
+            if (variant == 4) secrets["credentialBundle"] += '\n';
+            if (variant == 5) configuration.parameters.insert("userId", "123");
+            configuration.secret = *encodeSourceSecretsV2(secrets);
+            if (variant == 6) configuration.secret = *bytes;
+            if (variant == 7) { configuration.accountId = " one"; configuration.sourceInstanceId = "kugou/ one"; }
+            KugouSourceSession session(configuration, &network, nullptr);
+            QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+            session.open(); QTRY_COMPARE(failed.size(), 1);
+            QCOMPARE(session.state(), SourceSessionStateV2::Failed);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][1]).messageKey, QString("kugou.config.invalid"));
+            QVERIFY(network.requests.isEmpty());
+        }
+    }
     void unknownMediaNeedsExplicitResourceVerificationBeforeIndexing()
     {
         Network network; KugouSourceSession session(config(), &network, nullptr);

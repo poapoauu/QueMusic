@@ -8,8 +8,8 @@ SourceDescriptorV2 KugouSourcePlugin::descriptor() const
 }
 SettingsSchemaV2 KugouSourcePlugin::settingsSchema() const
 {
-    // There are no ordinary settings in the anonymous prototype. Credentials,
-    // device identity and QR business must belong to a future Plugin UI API.
+    // The Host retains the full secure schema, but never renders this payload
+    // as an ordinary editable setting. Management UI is a separate extension.
     return KugouSourceDefinition::settingsSchema();
 }
 IMusicSourceSessionV2 *KugouSourcePlugin::createSession(
