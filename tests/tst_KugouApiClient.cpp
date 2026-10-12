@@ -64,6 +64,21 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void rankTlsFailureNeverPublishesOrDowngradesToHttp()
+    {
+        Network network; KugouApiClient client(&network, nullptr);
+        QSignalSpy ready(&client, &KugouApiClient::succeeded);
+        QSignalSpy failed(&client, &KugouApiClient::failed);
+        const auto id = client.getRank(KugouRankProtocol::Operation::Catalog);
+        QCOMPARE(network.requests.size(), 1);
+        QCOMPARE(network.requests[0].url().scheme(), "https");
+        network.replies[0]->deliver("PRIVATE_BODY", 0, true, QNetworkReply::SslHandshakeFailedError);
+        QCOMPARE(ready.size(), 0); QCOMPARE(failed.size(), 1); QCOMPARE(failed[0][0].toUuid(), id);
+        const auto error = qvariant_cast<SourceErrorV2>(failed[0][1]);
+        QCOMPARE(error.kind, SourceErrorKindV2::Network); QVERIFY(error.detail.isEmpty());
+        QVERIFY(!error.httpStatus); QCOMPARE(error.messageKey, "kugou.requestFailed");
+        QCoreApplication::processEvents(); QCOMPARE(network.requests.size(), 1);
+    }
     void rankRequestsAreAnonymousBoundedAndCancellable()
     {
         using namespace KugouRankProtocol;

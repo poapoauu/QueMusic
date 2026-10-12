@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+2026-10-12，Phase 7 切片 19 开始真实公开协议核验，本机两个已知 CDN 域名均在 TLS 主机名校验阶段失败，没有可信业务 JSON。新增显式匿名 Qt Session smoke（不读取账号/秘密/不播放），实际运行返回 `catalog/kugou.requestFailed`、无页面/HTTP 状态；该失败不算业务验收通过。普通 CTest 只测试帮助/未显式启用，另增无外网 TLS 拒绝与无降级回归；全目标构建成功，离线专项 **16/16（25.81 秒）**、最终全量 **84/84 CTest（71.82 秒）** 通过。没有放宽校验、改固定端点或默认包接线。真实公开响应、认证、手机/Keychain/音频与旧登录迁出仍未完成，见[工具与网络记录](kugou-public-protocol-smoke.md)及[切片记录](phase-7-kugou-source-migration.md)。
+
 2026-10-12，Phase 7 切片 18 已接标准 Category/Playlists 榜单与 playlistId/Category/Tracks 导航。单个有界列表快照本地分页，刷新代次使旧游标失效；歌曲游标绑定模式/榜单/数量/实例，关闭重开清除。榜单与搜索共用 Track 索引、权限交集及资源完成前再验证，不撤销已观察的限制。受控 Session 和动态 Registry/Coordinator/Sink 链新增验收；全目标构建成功，专项 **14/14（21.04 秒）**、全量 **82/82 CTest（70.70 秒）** 通过。没有新增 Host 专用导航或修改 SDK v2。真实 HTTPS 字段/认证/手机/音频与旧登录迁出仍未完成，实验包继续隔离，详见[切片记录](phase-7-kugou-source-migration.md)。
 
 2026-10-12，Phase 7 切片 17 补充插件私有公开榜单请求与严格协议投影：固定 HTTPS、匿名策略、有界 ID/分页、Catalog 唯一身份/空态、Track 白名单和未知权限保留。复核确认旧登录没有独立 token 验证接口，不把 cookie/扫码候选当作服务认证。全目标构建、重跑专项 **14/14（25.15 秒）**、最终全量 **82/82 CTest（95.54 秒）** 通过。该切片只完成协议基础，Session 尚未开放榜单页面；后续接标准页面/ref/游标、权限交集和生命周期，再做真实服务响应验收。实验包隔离与旧 Host 登录保留状态不变，详见[切片记录](phase-7-kugou-source-migration.md)。

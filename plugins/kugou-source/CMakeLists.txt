@@ -105,4 +105,11 @@ if(BUILD_TESTING)
         quemusic_playback_coordinator quemusic_plugin_settings Qt6::Network Qt6::Test)
     add_dependencies(quemusic_kugou_integration_test quemusic_kugou_source_fixture)
     add_test(NAME quemusic_kugou_integration_test COMMAND quemusic_kugou_integration_test)
+    qt_add_executable(quemusic_kugou_public_smoke ../../tests/KugouPublicSmoke.cpp)
+    target_link_libraries(quemusic_kugou_public_smoke PRIVATE quemusic_kugou_session)
+    # These two checks must exit before constructing a Session/network manager.
+    # Never register --live-public with CTest or run it during normal CI.
+    add_test(NAME quemusic_kugou_public_smoke_help COMMAND quemusic_kugou_public_smoke --help)
+    add_test(NAME quemusic_kugou_public_smoke_requires_opt_in COMMAND quemusic_kugou_public_smoke)
+    set_tests_properties(quemusic_kugou_public_smoke_requires_opt_in PROPERTIES WILL_FAIL TRUE)
 endif()

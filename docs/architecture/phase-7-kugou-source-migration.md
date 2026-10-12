@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 18）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准 Category/Playlists 与 Category/Tracks 页面、实例绑定导航和游标；普通 Host 表单仍为空，实际服务响应与认证尚未验收。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 19）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标，新增显式真实 Session smoke；当前网络的公开 HTTPS 核验失败、未取得可信业务响应，实际服务和认证仍未验收。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -221,6 +221,16 @@ Catalog 严格检查业务状态、数组、对象、ID 唯一性、展示文本
 新增受控 Session 用例覆盖列表/空态/快照本地分页、取消、刷新游标失效、标准 ref、榜单歌曲映射、跨上下文/实例/重开游标拒绝、错误参数与畸形响应、重复/迟到权限和在途降级、关闭/迟到回包及通知重入。真实动态测试模块增加榜单响应，验证 Registry Session→榜单→同实例歌曲→Coordinator→模拟 Sink，确认不触发搜索/旧平台路径且展示 DTO 不带资源/凭证。没有真实 HTTPS 响应、手机、Keychain、账号权限或音频验收；不改变默认实验包隔离、旧 Host 登录入口、Source SDK v2/IID、Plugin UI API 或持久格式。下一步验证真实公开服务协议，并补剩余数据能力/真实认证证据，随后才启用应用来源或迁出旧登录。
 
 2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，最后新增边界用例重建后十四项专项 **14/14（21.04 秒）**，最终全量 **82/82 CTest（70.70 秒）** 通过。覆盖原 UI、Local/Navidrome、外部 SDK、Plugin UI/卸载和 macOS 增量打包/重定位；均为受控公开协议与模拟播放 Sink，不是实际平台或音频验收。Source SDK v2/公共 UI 接口及磁盘格式不变，新增协议/导航不对实验包之外的来源生效。
+
+## 切片 19：显式匿名真实协议 smoke 与 TLS 拒绝验收
+
+开始真实公开接口核验后，本机 `mobilecdnbj.kugou.com` 的 HTTPS 主机名校验失败；同族、仓库已使用的 `mobilecdn.kugou.com` 也失败。Python/OpenSSL verify code 62、curl 60/HTTP 000，未取得可信业务响应；不能判断全局服务故障或据此放宽协议字段。没有忽略 TLS、HTTP 降级、跟随重定向或切换未经验证的服务；原固定端点和严格权限判断保持不变。
+
+新增仅 BUILD_TESTING 下构建的 `quemusic_kugou_public_smoke`，精确显式参数才访问外网，真实插件 Session 采样榜单/本地分页/歌曲及最多下一页，验证标准身份/白名单与数量，45 秒总限时。既不加载 Host 账号/SecretStore，也不解析媒体或播放音频；只输出有界阶段/数量/固定错误键，无原始响应、URL、歌名/hash或 Qt 错误。成功也固定说明未认证/未测试音频，不能充当平台账号或 Phase 7 出口。正常 CTest 仅测试 help/未启用，无真实网络；请求层增补模拟 TLS 握手失败的脱敏、无页面成功与无 HTTP 降级回归。运行及网络证据见[公开协议 smoke](kugou-public-protocol-smoke.md)。
+
+本机真实 Qt smoke 已执行：返回 1，JSON 为 `outcome: failed`、`stage: catalog`、`errorKey: kugou.requestFailed`、`pages: []`，无 HTTP 状态；`authenticated/audioTested` 均 false。独立 TLS 诊断是网络证据，Qt 报告仅证明生产链安全失败且没有页面，不能从固定错误键独自推断 TLS 根因。失败不计作真实平台验收通过；未验证后续榜单/歌曲字段、分页或权限。没有用户凭证、二维码或音频访问，不因为失败启用新 Source/删除旧实现。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，离线专项 **16/16（25.81 秒）**；工具再补单调计时的晚响应拒绝、重建并复测真实失败路径后，最终全量 **84/84 CTest（71.82 秒）** 通过，含原 UI、Local/Navidrome、外部 SDK、管理 UI/卸载和 macOS 打包/重定位。额外参数 `--live-public --help` 返回 2、未启动网络。真实 smoke 两次均失败于 catalog，不计入通过数；仍无业务 JSON、认证或音频证据。下一步继续可独立开发的数据能力，同时把可验证 HTTPS 服务响应保留为 Phase 7 的未关闭验收项，不改本机网络/证书配置以绕过失败。
 
 ## 推荐的后续切片与验收
 
