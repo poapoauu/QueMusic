@@ -1,5 +1,6 @@
 #include "plugin-ui/v1/ISourceManagementUiProvider.h"
 #include "plugin-ui/v1/IPluginUiBackendSecretsV1.h"
+#include "plugin-ui/v1/IPluginUiBackendSecretProviderV1.h"
 #include "v2/IMusicSourcePluginV2.h"
 
 #include <QTest>
@@ -22,6 +23,8 @@ void PluginUiContractTest::freezesVersionedIdentifiers()
     QCOMPARE(QUEMUSIC_MUSIC_SOURCE_SDK_V2_ABI, 2);
     QCOMPARE(QString::fromLatin1(QUEMUSIC_PLUGIN_UI_BACKEND_SECRETS_V1_IID),
              QStringLiteral("org.quemusic.PluginUI.BackendSecrets/1.0"));
+    QCOMPARE(QString::fromLatin1(QUEMUSIC_PLUGIN_UI_BACKEND_SECRET_PROVIDER_V1_IID),
+             QStringLiteral("org.quemusic.PluginUI.BackendSecretProvider/1.0"));
 }
 
 void PluginUiContractTest::descriptorDefaultsFailClosed()

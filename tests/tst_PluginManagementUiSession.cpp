@@ -1,6 +1,10 @@
 #include "PluginManagementUiSession.h"
 #include "PluginManager.h"
 #include "SourceAccountStore.h"
+#include "SettingsSchemaPresentation.h"
+#include "PluginUiSettingsBridge.h"
+#include "plugin-ui/v1/IPluginUiBackendSecretsV1.h"
+#include "v2/ISourceProvidersV2.h"
 
 #include <QPointer>
 #include <QSettings>
@@ -12,9 +16,11 @@ namespace {
 const QString validPackage = QStringLiteral("org.quemusic.source.ui-valid");
 class Secrets final : public ISecretStore {
 public:
-    bool write(const QString &, const QByteArray &, QString *) override { return true; }
-    std::optional<QByteArray> read(const QString &, QString *) const override { return {}; }
-    bool remove(const QString &, QString *) override { return true; }
+    QHash<QString, QByteArray> values;
+    bool write(const QString &id, const QByteArray &bytes, QString *) override { values[id] = bytes; return true; }
+    std::optional<QByteArray> read(const QString &id, QString *) const override
+    { return values.contains(id) ? std::optional<QByteArray>(values.value(id)) : std::nullopt; }
+    bool remove(const QString &id, QString *) override { values.remove(id); return true; }
 };
 struct Fixture {
     QTemporaryDir dir;
@@ -36,7 +42,49 @@ private slots:
     void rejectsUnsupportedModeAndInvalidComponentPath();
     void releasesLeaseAfterBackendIsDestroyed();
     void ignoresResultsAfterSessionInvalidation();
+    void discoversBackendSecretsAndInvalidatesService();
+    void rejectsInvalidBackendDeclarationsBeforeCreatingBackend();
 };
+
+void PluginManagementUiSessionTest::discoversBackendSecretsAndInvalidatesService()
+{
+    Fixture f; QVERIFY(f.manager.load(validPackage));
+    auto *plugin = f.manager.pluginInstance(validPackage);
+    plugin->setProperty("backendSecretFieldIds", QStringList{"token"});
+    auto *provider = qobject_cast<IPluginSettingsProviderV2 *>(plugin); QVERIFY(provider);
+    const auto schema = detachSettingsSchemaV2(provider->settingsSchema()); QVERIFY(schema);
+    PluginUiContextData identity{validPackage, "ui-valid", {}, {}, PluginUiMode::Create};
+    PluginManagementUiSession session(&f.manager, &f.store, nullptr, identity, *schema);
+    QCOMPARE(session.state(), QString("ready"));
+    auto *settings = qobject_cast<PluginUiSettingsBridge *>(session.context()->settings()); QVERIFY(settings);
+    auto *service = qobject_cast<IPluginUiBackendSecretsV1 *>(settings); QVERIFY(service);
+    QCOMPARE(settings->sections().size(), 1);
+    QSignalSpy finished(settings, &PluginUiSettingsBridge::operationFinished);
+    service->saveBackendSecret("token", "PRIVATE-record"); QTRY_COMPARE(finished.size(), 1); QVERIFY(finished[0][1].toBool());
+    const auto record = service->readBackendSecret("token"); QVERIFY(record); QCOMPARE(*record, QByteArray("PRIVATE-record"));
+    settings->saveSecret("token", "PRIVATE-QML"); QTRY_COMPARE(finished.size(), 2); QVERIFY(!finished[1][1].toBool());
+    session.invalidateContext(); QVERIFY(!service->readBackendSecret("token"));
+    service->saveBackendSecret("token", "PRIVATE-late"); QCoreApplication::processEvents(); QCOMPARE(finished.size(), 2);
+    session.release(); QCOMPARE(f.manager.plugin(validPackage).activeLeases, 0);
+    QCOMPARE(f.manager.unload(validPackage), PluginOperationResult::Success);
+}
+
+void PluginManagementUiSessionTest::rejectsInvalidBackendDeclarationsBeforeCreatingBackend()
+{
+    for (const auto &ids : {QStringList{"missing"}, QStringList{"nickname"}, QStringList{"token", "token"}}) {
+        Fixture f; QVERIFY(f.manager.load(validPackage));
+        auto *plugin = f.manager.pluginInstance(validPackage);
+        plugin->setProperty("backendSecretFieldIds", ids);
+        auto *provider = qobject_cast<IPluginSettingsProviderV2 *>(plugin); QVERIFY(provider);
+        const auto schema = detachSettingsSchemaV2(provider->settingsSchema()); QVERIFY(schema);
+        PluginUiContextData identity{validPackage, "ui-valid", {}, {}, PluginUiMode::Create};
+        PluginManagementUiSession session(&f.manager, &f.store, nullptr, identity, *schema);
+        QCOMPARE(session.state(), QString("error"));
+        QCOMPARE(session.errorKey(), QString("plugin.ui.invalidBackendSecretDeclaration"));
+        QVERIFY(!session.context()); QCOMPARE(f.manager.plugin(validPackage).activeLeases, 0);
+        QVERIFY(f.store.accounts().isEmpty());
+    }
+}
 
 void PluginManagementUiSessionTest::createsEditContextFromHostIdentity()
 {

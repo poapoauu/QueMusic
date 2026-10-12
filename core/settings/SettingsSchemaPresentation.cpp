@@ -72,6 +72,29 @@ SourceDescriptorV2 detachSettingsDescriptorV2(const SourceDescriptorV2 &descript
     return result;
 }
 
+std::optional<BackendSecretPresentationV1> backendSecretPresentationV1(
+    const SettingsSchemaV2 &schema, const QStringList &backendSecretFields)
+{
+    const auto detached = detachSettingsSchemaV2(schema);
+    if (!detached) return std::nullopt;
+    BackendSecretPresentationV1 result{{}, *detached};
+    for (const auto &id : backendSecretFields) {
+        if (result.fieldIds.contains(id)) return std::nullopt;
+        bool secret = false;
+        for (const auto &section : *detached) for (const auto &field : section.fields)
+            if (field.id == id) secret = field.secret || field.type == SettingsFieldTypeV2::Secret;
+        if (!secret) return std::nullopt;
+        result.fieldIds.append(copyString(id));
+    }
+    for (auto &section : result.schema)
+        section.fields.removeIf([&result](const auto &field) { return result.fieldIds.contains(field.id); });
+    // Without a declaration preserve legacy empty sections exactly as before.
+    if (!result.fieldIds.isEmpty()) result.schema.removeIf([](const auto &section) {
+        return section.fields.isEmpty() && section.actions.isEmpty();
+    });
+    return result;
+}
+
 QVariantList settingsSectionsPresentationV2(const SettingsSchemaV2 &schema,
     const QVariantMap &draft, const QVariantMap &previous, const QStringList &configured)
 {

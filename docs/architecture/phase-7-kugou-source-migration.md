@@ -144,6 +144,16 @@ Qt 6.11.1/macOS x86_64 Debug 正常全目标构建成功。首次构建发现集
 
 2026-10-12，Qt 6.11.1/macOS x86_64 Debug 最新全目标构建成功，九项专项复跑 **9/9 通过（11.30 秒）**；补齐通知销毁保护后的最终全量 **79/79 CTest 通过（82.74 秒）**，含外部 SDK 安装/加载、macOS 打包/重定位。已检查安装产物包含新服务头文件；验证仍使用无外网/内存 SecretStore 夹具。真实扫码、Keychain、实际音频和 Host 平台登录迁出仍未验收。
 
+## 切片 13：Provider 声明与 Host 双入口统一
+
+新增独立可选 `IPluginUiBackendSecretProviderV1`（加载期间不可变的 Secret 字段 ID 声明），不改变 Source SDK v2、SettingsSchemaV2 或旧 Management Provider。Host 共用 `backendSecretPresentationV1` 验证、深复制和展示投影；Host bridge、普通 PluginSettingsController 与 PluginManagementUiSession 不再分别维护规则。
+
+普通控制器在 plugin lease 内发现声明，展示投影隐藏业务字段/空区块及实例配置字段 ID；普通保存与连接测试/设置动作的 Secret 草稿拒绝这些字段。存储、校验、配置与 Provider 操作仍保留完整 Schema，公共配置保存不会删掉既有业务凭证。Management Session 自动发现声明并构造 C++ 服务；非法未知/公共/重复声明阻止两处表单/写入和创建 Backend，不回退为 Host 人工输入框。Provider 返回临时值在可能释放 lease 前销毁，缓存只保留 Host 拷贝。
+
+动态 fixture 验证 Create/Edit Context、双入口投影、手工业务 Secret 草稿及连接测试拒绝、通过 Backend 服务存储、普通字段修改后凭证保留、Context 失效/卸载保护、非法声明的双入口拒绝；默认无声明的旧 fixture/Local/Navidrome 行为继续复验。首次构建仅发现新测试遗漏 saveInstance 的空 Secret 草稿实参，补齐后重建，未改旧签名。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，九项专项 **9/9 通过（12.96 秒）**；最终全量 **79/79 CTest 通过（83.81 秒）**，含外部 SDK 安装/加载、Local/Navidrome、原 UI 与 macOS 打包/重定位。已检查外部安装产物包含新 Provider 声明头文件；测试没有连接真实平台或系统 Secret backend。酷狗生产仍为空 Schema、没有声明/认证 Backend/Management UI；本切片只完成通用 Host 接线，不宣称真实扫码、Keychain 或 Phase 7 完成。
+
 ## 推荐的后续切片与验收
 
 1. v2 Session/mapper：当前匿名搜索、解析、同步 Item Lookup、未知媒体异步验证及隔离实验包已实现；Registry 工厂/生命周期、拒绝路径及受控传输成功/恢复/切换链进入测试。后续补真实业务响应验证和实际动作能力，再对应用公开；保持 Lookup 无 I/O，不以恢复快照授予当前权限，不把解析 URL 或旧路径交给 QML。

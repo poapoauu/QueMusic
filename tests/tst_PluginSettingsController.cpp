@@ -3,6 +3,8 @@
 #include "SourceAccountStore.h"
 #include "fixtures/SettingsV2FixturePlugin.h"
 #include "PluginManagementUiSession.h"
+#include "PluginUiSettingsBridge.h"
+#include "plugin-ui/v1/IPluginUiBackendSecretsV1.h"
 #include <QSettings>
 #include <QDir>
 #include <QSignalSpy>
@@ -50,9 +52,10 @@ struct UiHarness {
     SourceRegistry registry{&manager, &store};
     std::unique_ptr<PluginSettingsController> controller;
     const QString id = QStringLiteral("org.quemusic.source.ui-valid");
-    bool load() {
+    bool load(const QStringList &backendFields = {}) {
         manager.addSearchPath(QUEMUSIC_UI_FIXTURE_ROOT);
         if (manager.discover() != 7 || !manager.load(id)) return false;
+        manager.pluginInstance(id)->setProperty("backendSecretFieldIds", backendFields);
         controller = std::make_unique<PluginSettingsController>(&manager, &registry, &store);
         return controller->selectPlugin(id);
     }
@@ -102,7 +105,54 @@ private slots:
     void selectionWaitsForPageTeardown();
     void activeInstanceMutationWaitsForPage();
     void managementUiFallbackAndReload();
+    void backendSecretDeclarationUnifiesFormsAndRejectsDrafts();
+    void invalidBackendSecretDeclarationFailsClosed();
 };
+void PluginSettingsControllerTest::backendSecretDeclarationUnifiesFormsAndRejectsDrafts()
+{
+    UiHarness h; QVERIFY(h.load({"token"})); auto &c = *h.controller;
+    QVERIFY(field(c, "token").isEmpty()); QVERIFY(!field(c, "nickname").isEmpty());
+    QVERIFY(!c.setDraftValues({{"token", "PRIVATE-public"}}));
+    QVERIFY(!c.saveInstance("Test", {{"token", "PRIVATE-manual"}}));
+    QCOMPARE(c.lastErrorKey(), QString("source.settings.invalidSecretDraft"));
+    QVERIFY(c.testConnection({{"token", "PRIVATE-probe"}}).isNull());
+    QVERIFY(h.store.accounts().isEmpty()); QCOMPARE(h.secrets.writes, 0);
+    QVERIFY(c.openManagementUi(PluginUiMode::Create));
+    auto *context = c.managementUiSession()->context(); QVERIFY(context);
+    auto *settings = qobject_cast<PluginUiSettingsBridge *>(context->settings()); QVERIFY(settings);
+    auto *service = qobject_cast<IPluginUiBackendSecretsV1 *>(settings); QVERIFY(service);
+    QCOMPARE(settings->sections().size(), 1);
+    QCOMPARE(settings->sections()[0].toMap().value("fields").toList()[0].toMap().value("id").toString(), QString("nickname"));
+    const QString instance = context->sourceInstanceId();
+    const QString account = context->accountId();
+    QSignalSpy finished(settings, &PluginUiSettingsBridge::operationFinished);
+    service->saveBackendSecret("token", "PRIVATE-backend"); QTRY_COMPARE(finished.size(), 1); QVERIFY(finished[0][1].toBool());
+    QVERIFY(service->backendSecretConfigured("token"));
+    const auto record = service->readBackendSecret("token"); QVERIFY(record); QCOMPARE(*record, QByteArray("PRIVATE-backend"));
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+    QVERIFY(c.selectInstance(instance));
+    QVERIFY(field(c, "token").isEmpty());
+    QVERIFY(c.instances().first().toMap().value("configuredSecretFieldIds").toStringList().isEmpty());
+    QVERIFY(c.setDraftValues({{"nickname", "Updated"}})); QVERIFY(c.saveInstance("Updated", {}));
+    QCOMPARE(h.store.storedAccount("ui-valid", account)->parameters.value("nickname").toString(), QString("Updated"));
+    QVERIFY(c.openManagementUi(PluginUiMode::Edit));
+    settings = qobject_cast<PluginUiSettingsBridge *>(c.managementUiSession()->context()->settings()); QVERIFY(settings);
+    service = qobject_cast<IPluginUiBackendSecretsV1 *>(settings); QVERIFY(service);
+    const auto kept = service->readBackendSecret("token"); QVERIFY(kept); QCOMPARE(*kept, QByteArray("PRIVATE-backend"));
+    QVERIFY(!privateData(c.instances())); QVERIFY(!privateData(c.settingsSections()));
+    c.beginCloseManagementUi(); c.finishCloseManagementUi();
+}
+void PluginSettingsControllerTest::invalidBackendSecretDeclarationFailsClosed()
+{
+    for (const auto &ids : {QStringList{"missing"}, QStringList{"nickname"}, QStringList{"token", "token"}}) {
+        UiHarness h; QVERIFY(h.load(ids)); auto &c = *h.controller;
+        QVERIFY(c.settingsSections().isEmpty()); QVERIFY(!c.managementUiAvailable());
+        QCOMPARE(c.selectedPlugin().value("reasonKey").toString(), QString("source.settings.invalidBackendSecretDeclaration"));
+        QVERIFY(!c.saveInstance("Rejected", {{"token", "PRIVATE-rejected"}}));
+        QVERIFY(!c.openManagementUi(PluginUiMode::Create));
+        QCOMPARE(h.manager.plugin(h.id).activeLeases, 0); QVERIFY(h.store.accounts().isEmpty());
+    }
+}
 void PluginSettingsControllerTest::managementUiCreateEditAndClose()
 {
     UiHarness h; QVERIFY(h.load()); auto &c = *h.controller;

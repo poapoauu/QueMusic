@@ -28,14 +28,12 @@ HostPluginUiSettingsBridge::HostPluginUiSettingsBridge(SourceAccountStore *store
     if (!detached) m_valid = false;
     else m_request.schema = *detached;
     m_request.draft.clear();
-    for (const auto &id : backendSecretFields) {
-        if (!isSecretField(id) || m_backendSecretFields.contains(id)) m_valid = false;
-        m_backendSecretFields.insert(QString(id.constData(), id.size()));
+    const auto presentation = backendSecretPresentationV1(m_request.schema, backendSecretFields);
+    if (!presentation) m_valid = false;
+    else {
+        m_presentationSchema = presentation->schema;
+        for (const auto &id : presentation->fieldIds) m_backendSecretFields.insert(id);
     }
-    m_presentationSchema = m_request.schema;
-    for (auto &section : m_presentationSchema)
-        section.fields.removeIf([this](const auto &field) { return m_backendSecretFields.contains(field.id); });
-    m_presentationSchema.removeIf([](const auto &section) { return section.fields.isEmpty() && section.actions.isEmpty(); });
     m_existingRequired = store && store->storedAccount(request.sourceId, request.accountId).has_value();
 }
 

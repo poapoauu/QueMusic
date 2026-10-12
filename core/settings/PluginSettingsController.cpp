@@ -8,6 +8,7 @@
 #include "v2/ISourceProvidersV2.h"
 #include "PluginManagementUiSession.h"
 #include "plugin-ui/v1/ISourceManagementUiProvider.h"
+#include "plugin-ui/v1/IPluginUiBackendSecretProviderV1.h"
 #include <QTimer>
 #include <utility>
 
@@ -33,6 +34,8 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
         QPointer<QObject> object;
         SourceDescriptorV2 descriptor;
         SettingsSchemaV2 schema;
+        SettingsSchemaV2 presentationSchema;
+        QStringList backendSecretFields;
         bool available = false;
         bool managementCreate = false;
         bool managementEdit = false;
@@ -113,7 +116,20 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
                     if (detached) { next.schema = *detached; next.available = true; next.reason.clear(); }
                     else next.reason = QStringLiteral("source.settings.invalidSchema");
                 }
-                if (auto *ui = qobject_cast<ISourceManagementUiProvider *>(object.data())) {
+                QStringList backendFields;
+                if (auto *secrets = qobject_cast<IPluginUiBackendSecretProviderV1 *>(object.data()))
+                    backendFields = secrets->backendSecretFieldIds();
+                if (!owner || !manager || !object) return {};
+                const auto presentation = backendSecretPresentationV1(next.schema, backendFields);
+                const bool declarationValid = presentation && (next.available || backendFields.isEmpty());
+                if (!declarationValid) {
+                    next.available = false;
+                    next.reason = QStringLiteral("source.settings.invalidBackendSecretDeclaration");
+                } else {
+                    next.presentationSchema = presentation->schema;
+                    next.backendSecretFields = presentation->fieldIds;
+                }
+                if (auto *ui = declarationValid ? qobject_cast<ISourceManagementUiProvider *>(object.data()) : nullptr) {
                     const auto descriptor = ui->managementUi();
                     next.managementCreate = descriptor.supportsCreate;
                     next.managementEdit = descriptor.supportsEdit;
@@ -209,12 +225,12 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
                 instances.append(QVariantMap{{"sourceInstanceId", id}, {"accountId", account.accountId},
                     {"displayName", account.displayName}, {"enabled", account.enabled}, {"state", int(state)},
                     {"credentialConfigured", !account.secretReference.isEmpty()},
-                    {"configuredSecretFieldIds", configured(account, current.schema)}});
+                    {"configuredSecretFieldIds", configured(account, current.presentationSchema)}});
             }
         }
         if (current.available && object) {
-            sections = settingsSectionsPresentationV2(current.schema, draft,
-                previous ? previous->parameters : QVariantMap(), previous ? configured(*previous, current.schema) : QStringList());
+            sections = settingsSectionsPresentationV2(current.presentationSchema, draft,
+                previous ? previous->parameters : QVariantMap(), previous ? configured(*previous, current.presentationSchema) : QStringList());
             actions = probed ? probeActions : settingsActionsPresentationV2(current.schema);
         }
         if (object && !current.descriptor.sourceId.isEmpty())
@@ -246,7 +262,8 @@ struct PluginSettingsController::State : std::enable_shared_from_this<State> {
         QStringList secretIds;
         for (const auto &s : cache.schema) for (const auto &f : s.fields) if (isSecret(f)) secretIds.append(f.id);
         for (auto it = secrets.cbegin(); it != secrets.cend(); ++it) {
-            if (!secretIds.contains(it.key()) || it.value().metaType().id() != QMetaType::QString) {
+            if (!secretIds.contains(it.key()) || cache.backendSecretFields.contains(it.key())
+                || it.value().metaType().id() != QMetaType::QString) {
                 fail(QStringLiteral("source.settings.invalidSecretDraft")); return {};
             }
         }

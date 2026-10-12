@@ -4,6 +4,8 @@
 #include "PluginManifest.h"
 #include "SourceAccountStore.h"
 #include "plugin-ui/v1/ISourceManagementUiProvider.h"
+#include "plugin-ui/v1/IPluginUiBackendSecretProviderV1.h"
+#include "SettingsSchemaPresentation.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -89,7 +91,17 @@ PluginManagementUiSession::PluginManagementUiSession(PluginManager *manager,
         save.enabled = account->enabled;
         save.configurationVersion = qMax(1, account->configurationVersion);
     }
-    m_settings = new HostPluginUiSettingsBridge(store, registry, save, this);
+    // Destroy provider-owned temporaries before fail() can release the lease.
+    const auto presentation = [&] {
+        if (auto *secrets = qobject_cast<IPluginUiBackendSecretProviderV1 *>(manager->pluginInstance(identity.pluginPackageId)))
+            return backendSecretPresentationV1(schema, secrets->backendSecretFieldIds());
+        return backendSecretPresentationV1(schema, {});
+    }();
+    if (!presentation) {
+        fail(QStringLiteral("plugin.ui.invalidBackendSecretDeclaration"));
+        return;
+    }
+    m_settings = new HostPluginUiSettingsBridge(store, registry, save, presentation->fieldIds, this);
     m_host = new HostPluginUiHostServices(this);
     m_context = new PluginUiContext(this);
     m_context->setContext(data, nullptr, m_settings, nullptr, m_host);

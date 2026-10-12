@@ -37,7 +37,19 @@ SettingsSchemaV2 PluginUiFixturePlugin::settingsSchema() const
     SettingsFieldV2 token;
     token.id = QStringLiteral("token"); token.type = SettingsFieldTypeV2::Secret;
     token.labelKey = QStringLiteral("plugin.ui.token");
+    if (!backendSecretFieldIds().isEmpty()) {
+        SettingsFieldV2 nickname;
+        nickname.id = QStringLiteral("nickname"); nickname.type = SettingsFieldTypeV2::Text;
+        return {{QStringLiteral("authentication"), QStringLiteral("plugin.ui.authentication"), {token}},
+            {QStringLiteral("general"), QStringLiteral("plugin.ui.general"), {nickname}}};
+    }
     return {{QStringLiteral("authentication"), QStringLiteral("plugin.ui.authentication"), {token}}};
+}
+QStringList PluginUiFixturePlugin::backendSecretFieldIds() const
+{
+    // Native test controls only, set before inspection; production declarations
+    // must be immutable until unloading/reloading the package.
+    return property("backendSecretFieldIds").toStringList();
 }
 ManagementUiDescriptor PluginUiFixturePlugin::managementUi() const
 {
