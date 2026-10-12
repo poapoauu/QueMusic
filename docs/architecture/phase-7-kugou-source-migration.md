@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 17）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已补私有请求/响应协议，但尚未开放 Session 页面；普通 Host 表单仍为空，实际服务端认证尚未验收。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 18）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准 Category/Playlists 与 Category/Tracks 页面、实例绑定导航和游标；普通 Host 表单仍为空，实际服务响应与认证尚未验收。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -209,6 +209,18 @@ Catalog 严格检查业务状态、数组、对象、ID 唯一性、展示文本
 测试新增请求策略/并发 UUID/取消晚包/异步参数拒绝、Catalog 畸形/重复/空态/边界、Track 页形状与白名单、标准 Track DTO 身份/权限映射。全部受控网络，无真实账号/外网/音频。本切片仅协议基础；Session 的公开 PageProvider 仍只有 Search，未向 UI 宣告榜单可用。下一步接标准榜单页面/ref/filter/游标身份与权限交集、取消/重开/多实例测试，之后再验真实 HTTPS 响应；不改变 Source SDK v2/IID/Plugin UI API/存储格式或默认实验包隔离状态。
 
 2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，修正夹具并重建后的十四项专项 **14/14（25.15 秒）**，最终全量 **82/82 CTest（95.54 秒）** 通过，含原 UI、Local/Navidrome、外部 SDK、动态管理 UI/卸载和 macOS 打包/重定位。首次专项新夹具误选 parent-only 生产构造，未实际注入受控网络，已明确使用双参数注入并重新构建/全量复跑；失败运行不作为验收或真实端点可达性证据。最终用例使用模拟响应，未验证真实账号、服务字段、手机扫码、Keychain 或音频。
+
+## 切片 18：标准榜单页面、导航与统一权限索引
+
+`KugouSourceSession` 接已有 IPageProviderV2：Category/Playlists 映射公开榜单，返回同实例/账号的 Playlist ref `rank/<canonical-id>`，Play 明确 Unsupported；Category/Tracks 只接受单一字符串 `playlistId` 及该命名空间。沿用 Host `MusicHub::browse` 的 Playlist→playlistId 契约，无新平台编号、专用导航或 SDK 枚举。其它页面/动作继续按既有 fail-closed 处理，公共榜单不冒充私人推荐。
+
+榜单列表响应最多 256 条，Session 只保留单个严格验证的快照，并按 query.limit 本地分页；不为每个游标复制整份响应。每次成功刷新更换快照代次，旧列表游标拒绝；失败/取消不伪造新快照。所有分页保持异步 requestStarted/pageReady 语义，本地翻页可在派发前取消且无额外 I/O。歌曲游标绑定模式、榜单 ID、搜索上下文和数量；游标为实例内不透明 UUID，关闭/重开清除快照/索引/游标，跨实例、跨页面、跨榜单、修改数量或伪造参数在网络前拒绝。页码上限一百万，达到上限不再发下一页游标；游标集合仍有 1024 上限。
+
+榜单歌曲先走切片 17 严格投影，再复用标准 Track mapper、4096 条当前索引和搜索路径的权限交集/重复 hash 去重。未知或付费权限不能被另一榜单、搜索或迟到免费回包撤销；资源解析完成前再次查当前索引，权限降级后不发 streamReady。标准 Lookup 仍无 I/O，Catalog 不进入 Track 索引；资源解析由 Source 提供，实际播放由现有 Coordinator/Core 承担。
+
+新增受控 Session 用例覆盖列表/空态/快照本地分页、取消、刷新游标失效、标准 ref、榜单歌曲映射、跨上下文/实例/重开游标拒绝、错误参数与畸形响应、重复/迟到权限和在途降级、关闭/迟到回包及通知重入。真实动态测试模块增加榜单响应，验证 Registry Session→榜单→同实例歌曲→Coordinator→模拟 Sink，确认不触发搜索/旧平台路径且展示 DTO 不带资源/凭证。没有真实 HTTPS 响应、手机、Keychain、账号权限或音频验收；不改变默认实验包隔离、旧 Host 登录入口、Source SDK v2/IID、Plugin UI API 或持久格式。下一步验证真实公开服务协议，并补剩余数据能力/真实认证证据，随后才启用应用来源或迁出旧登录。
+
+2026-10-12，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，最后新增边界用例重建后十四项专项 **14/14（21.04 秒）**，最终全量 **82/82 CTest（70.70 秒）** 通过。覆盖原 UI、Local/Navidrome、外部 SDK、Plugin UI/卸载和 macOS 增量打包/重定位；均为受控公开协议与模拟播放 Sink，不是实际平台或音频验收。Source SDK v2/公共 UI 接口及磁盘格式不变，新增协议/导航不对实验包之外的来源生效。
 
 ## 推荐的后续切片与验收
 

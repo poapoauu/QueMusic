@@ -53,15 +53,20 @@ protected:
     QNetworkReply *createRequest(Operation, const QNetworkRequest &request, QIODevice * = nullptr) override
     {
         const bool resource = request.url().path().endsWith("getSongInfo.php");
-        const char *counter = resource ? "resourceCount" : "searchCount";
+        const bool catalog = request.url().path().endsWith("/rank/list");
+        const bool rank = request.url().path().endsWith("/rank/song");
+        const char *counter = resource ? "resourceCount" : catalog ? "catalogCount" : rank ? "rankCount" : "searchCount";
         m_control->setProperty(counter, m_control->property(counter).toInt() + 1);
         const int pay = m_control->property("pay").toInt();
         QJsonObject row{{"hash", hash}, {"songname", "Fixture Song"}, {"singername", "Fixture Artist"},
                         {"duration", 61}, {"pay_type", pay}, {"token", "PRIVATE"}};
+        if (rank) { row.remove("singername"); row.insert("authors",
+            QJsonArray{QJsonObject{{"author_name", "Fixture Artist"}}}); }
         QJsonObject data = resource ? QJsonObject{{"hash", hash}, {"songName", "Verified Fixture Song"},
             {"author_name", "Fixture Artist"}, {"timeLength", 61}, {"pay_type", pay},
             {"url", "https://cdn.kugou.com/fixture?key=PRIVATE"}, {"token", "PRIVATE"}}
             : QJsonObject{{"info", QJsonArray{row}}, {"total", 1}};
+        if (catalog) data = QJsonObject{{"info", QJsonArray{QJsonObject{{"rankid", 8888}, {"rankname", "Fixture Rank"}}}}};
         if (resource && m_control->property("missingRights").toBool()) data.remove("pay_type");
         if (resource && m_control->property("unsafeUrl").toBool()) data["url"] = "file:///private";
         if (resource && m_control->property("wrongHash").toBool()) data["hash"] = QString(32, 'F');

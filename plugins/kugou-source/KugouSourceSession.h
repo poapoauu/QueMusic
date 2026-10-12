@@ -28,6 +28,7 @@ public:
     QUuid fetchLyrics(const MediaRefV2 &media) override;
 private:
     enum class Kind { Open, Page, Stream, Unsupported };
+    enum class PageMode { Search, RankCatalog, RankTracks };
     struct Request {
         Kind kind;
         PageQueryV2 query;
@@ -35,8 +36,15 @@ private:
         QUuid clientId;
         int page = 1;
         bool needsVerification = false;
+        PageMode pageMode = PageMode::Search;
+        QString rankId;
     };
-    struct Cursor { QString search; int limit; int page; };
+    struct Cursor {
+        QString search; int limit; int page;
+        PageMode mode = PageMode::Search;
+        QString rankId;
+        QUuid catalogGeneration;
+    };
     QUuid enqueue(Request request);
     void dispatch(const QUuid &id);
     void succeeded(const QUuid &clientId, const QJsonObject &response);
@@ -44,6 +52,8 @@ private:
     void clearRequests();
     void bindClient();
     bool validConfiguration() const;
+    void publishCatalog(const QUuid &id);
+    void publishPage(const QUuid &id, PageSectionV2 section);
 
     SourceConfigurationV2 m_configuration;
     KugouApiClient *m_client;
@@ -52,6 +62,8 @@ private:
     QHash<QUuid, QUuid> m_clientIds;
     QHash<QString, Cursor> m_cursors;
     QHash<QString, MediaItemV2> m_tracks;
+    QVector<KugouRankProtocol::Entry> m_catalog;
+    QUuid m_catalogGeneration;
     QUuid m_openId;
     bool m_closing = false;
 };

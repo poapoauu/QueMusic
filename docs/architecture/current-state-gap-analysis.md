@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+2026-10-12，Phase 7 切片 18 已接标准 Category/Playlists 榜单与 playlistId/Category/Tracks 导航。单个有界列表快照本地分页，刷新代次使旧游标失效；歌曲游标绑定模式/榜单/数量/实例，关闭重开清除。榜单与搜索共用 Track 索引、权限交集及资源完成前再验证，不撤销已观察的限制。受控 Session 和动态 Registry/Coordinator/Sink 链新增验收；全目标构建成功，专项 **14/14（21.04 秒）**、全量 **82/82 CTest（70.70 秒）** 通过。没有新增 Host 专用导航或修改 SDK v2。真实 HTTPS 字段/认证/手机/音频与旧登录迁出仍未完成，实验包继续隔离，详见[切片记录](phase-7-kugou-source-migration.md)。
+
 2026-10-12，Phase 7 切片 17 补充插件私有公开榜单请求与严格协议投影：固定 HTTPS、匿名策略、有界 ID/分页、Catalog 唯一身份/空态、Track 白名单和未知权限保留。复核确认旧登录没有独立 token 验证接口，不把 cookie/扫码候选当作服务认证。全目标构建、重跑专项 **14/14（25.15 秒）**、最终全量 **82/82 CTest（95.54 秒）** 通过。该切片只完成协议基础，Session 尚未开放榜单页面；后续接标准页面/ref/游标、权限交集和生命周期，再做真实服务响应验收。实验包隔离与旧 Host 登录保留状态不变，详见[切片记录](phase-7-kugou-source-migration.md)。
 
 2026-10-12，Phase 7 切片 16 已接入生产实验酷狗工厂的 Management Provider/manifest/包内 QML，固定 Host Context/所有者、Create/Edit 与 backend-only 凭证服务。页面复用独立 Plugin UI 1.0 Kit/Theme，离线编码公开 QR URL，不引用 Host 私有 QML，不自动发起扫码/保存或导入旧账号。Kit 追加有界 ASCII payload 与按钮 enable，安装资源独立；保留旧 Host QR 路径和 source 图片接口。生产动态模块验证身份、失效、页面/lease 释放、实际卸载和卸载后管理入口不可用；受控静态 Backend+同一页面验证按钮、候选存储、清除、晚响应与滚动/截图。空绑定清除幂等且不制造账号。实际手机扫码、服务端 token/账号能力、Keychain、音频及旧 Host 登录迁出尚未验收；仍为默认关闭的隔离实验包，不是 Phase 7 出口。新页面依赖本次更新后的 UI Kit，不能假设所有历史 1.0 Host 均提供新增属性；发行前须收敛最低运行时要求，见 [QR 控件契约](plugin-ui-qr-payload-v1.md)。

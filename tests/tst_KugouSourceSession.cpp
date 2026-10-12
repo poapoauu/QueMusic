@@ -66,6 +66,27 @@ QJsonObject page(const QJsonArray &rows = {track()}, int total = 2)
 {
     return {{"status", 1}, {"data", QJsonObject{{"info", rows}, {"total", total}}}};
 }
+PageQueryV2 ranks(const QString &account = "one")
+{
+    auto query = search(account); query.page = MusicPageKindV2::Category;
+    query.section = PageSectionKindV2::Playlists; query.searchText.clear(); return query;
+}
+PageQueryV2 rankTracks(const QString &id = "rank/8888", const QString &account = "one")
+{
+    auto query = ranks(account); query.section = PageSectionKindV2::Tracks;
+    query.filters = {{"playlistId", id}}; return query;
+}
+QJsonObject catalog()
+{
+    return {{"status", 1}, {"data", QJsonObject{{"info", QJsonArray{
+        QJsonObject{{"rankid", 8888}, {"rankname", "Top"}, {"update_frequency", "Daily"}},
+        QJsonObject{{"rankid", 6666}, {"rankname", "Rising"}}}}}}};
+}
+QJsonObject rankTrack(int pay = 0)
+{
+    auto row = track(pay); row.remove("singername");
+    row.insert("authors", QJsonArray{QJsonObject{{"author_name", "Rank Artist"}}}); return row;
+}
 QJsonObject verifiedResource()
 {
     return {{"status", 1}, {"data", QJsonObject{{"hash", hash}, {"songName", "Verified Song"},
@@ -81,6 +102,151 @@ MediaRefV2 media(const QString &account = "one", const QString &id = hash)
 class KugouSourceSessionTest final : public QObject {
     Q_OBJECT
 private slots:
+    void rankCatalogPublishesStandardIdentityAndPagesOneBoundedSnapshot()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        auto query = ranks(); const auto id = session.fetchPage(query);
+        QCOMPARE(ready.size(), 0); QTRY_COMPARE(network.requests.size(), 1);
+        QCOMPARE(network.requests[0].url().path(), "/api/v3/rank/list");
+        network.replies[0]->deliver(catalog()); QCOMPARE(ready.size(), 1); QCOMPARE(ready[0][0].toUuid(), id);
+        auto section = qvariant_cast<PageResultV2>(ready[0][1]).sections[0];
+        QCOMPARE(section.kind, PageSectionKindV2::Playlists); QCOMPARE(section.items.size(), 1);
+        const MediaRefV2 ref{"kugou", "kugou/one", "one", MediaEntityTypeV2::Playlist, "rank/8888"};
+        QCOMPARE(section.items[0].ref, ref); QCOMPARE(section.items[0].title, "Top");
+        QCOMPARE(section.items[0].availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unsupported);
+        QVERIFY(section.items[0].metadata.isEmpty()); QVERIFY(section.hasMore); QVERIFY(!session.lookupItem(ref));
+        query.cursor = section.nextCursor;
+        const auto cancelled = session.fetchPage(query); session.cancel(cancelled);
+        QCoreApplication::processEvents(); QCOMPARE(ready.size(), 1); QCOMPARE(network.requests.size(), 1);
+        session.fetchPage(query); QCOMPARE(ready.size(), 1);
+        QTRY_COMPARE(ready.size(), 2); QCOMPARE(network.requests.size(), 1);
+        section = qvariant_cast<PageResultV2>(ready[1][1]).sections[0];
+        QCOMPARE(section.items[0].ref.entityId, "rank/6666"); QVERIFY(!section.hasMore);
+        session.fetchPage(ranks()); QTRY_COMPARE(network.requests.size(), 2);
+        network.replies[1]->deliver(catalog()); session.fetchPage(query); QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][1]).messageKey, "kugou.cursor.invalid");
+        QCOMPARE(network.requests.size(), 2);
+        session.fetchPage(ranks()); QTRY_COMPARE(network.requests.size(), 3);
+        network.replies[2]->deliver({{"status", 1}, {"data", QJsonObject{{"info", QJsonArray{}}}}});
+        const auto empty = qvariant_cast<PageResultV2>(ready.last()[1]);
+        QVERIFY(empty.sections[0].items.isEmpty()); QVERIFY(!empty.sections[0].hasMore);
+        QCOMPARE(empty.sourceStates.value("kugou/one").state, SourcePageLoadStateV2::Empty);
+    }
+    void rankTrackCursorBindsRankModeLimitAndInstance()
+    {
+        Network network, otherNetwork;
+        KugouSourceSession session(config(), &network, nullptr), other(config("two"), &otherNetwork, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+        QSignalSpy otherFailed(&other, &IMusicSourceSessionV2::requestFailed);
+        session.open(); other.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        QTRY_COMPARE(other.state(), SourceSessionStateV2::Ready);
+        auto query = rankTracks(); session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 1);
+        network.replies[0]->deliver(page({rankTrack()}, 2));
+        const auto section = qvariant_cast<PageResultV2>(ready[0][1]).sections[0];
+        QCOMPARE(section.items[0].ref, media()); QCOMPARE(section.items[0].subtitle, "Rank Artist");
+        QVERIFY(section.hasMore); query.cursor = section.nextCursor;
+        for (int variant = 0; variant < 4; ++variant) {
+            auto wrong = query;
+            if (variant == 0) wrong.filters = {{"playlistId", "rank/6666"}};
+            if (variant == 1) wrong.limit = 2;
+            if (variant == 2) { wrong = search(); wrong.cursor = query.cursor; }
+            if (variant == 3) { wrong = ranks(); wrong.cursor = query.cursor; }
+            session.fetchPage(wrong); QTRY_COMPARE(failed.size(), variant + 1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[1]).messageKey, "kugou.cursor.invalid");
+        }
+        auto foreign = query; foreign.scope.sourceInstanceId = "kugou/two";
+        other.fetchPage(foreign); QTRY_COMPARE(otherFailed.size(), 1); QVERIFY(otherNetwork.requests.isEmpty());
+        session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 2);
+        const QUrlQuery wire(network.requests[1].url()); QCOMPARE(wire.queryItemValue("rankid"), "8888");
+        QCOMPARE(wire.queryItemValue("page"), "2"); QCOMPARE(wire.queryItemValue("pagesize"), "1");
+        network.replies[1]->deliver(page({}, 2)); QVERIFY(!qvariant_cast<PageResultV2>(ready.last()[1]).sections[0].hasMore);
+        session.close(); session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        session.fetchPage(query); QTRY_COMPARE(failed.size(), 5); QCOMPARE(network.requests.size(), 2);
+    }
+    void rankRightsIntersectSearchAndLateFreeResponses()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        session.fetchPage(rankTracks()); session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 2);
+        network.replies[1]->deliver(page({track(1)}, 1));
+        network.replies[0]->deliver(page({rankTrack(0)}, 1));
+        QCOMPARE(ready.size(), 2);
+        QCOMPARE(qvariant_cast<PageResultV2>(ready.last()[1]).sections[0].items[0]
+            .availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+        QVERIFY(session.lookupItem(media()));
+        session.resolveStream(media()); QTRY_COMPARE(failed.size(), 1); QCOMPARE(network.requests.size(), 2);
+        session.close(); session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        auto query = rankTracks(); query.limit = 2; session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 3);
+        network.replies[2]->deliver(page({rankTrack(0), rankTrack(1)}, 2));
+        const auto items = qvariant_cast<PageResultV2>(ready.last()[1]).sections[0].items;
+        QCOMPARE(items.size(), 1); QCOMPARE(items[0].availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+        QCOMPARE(session.lookupItem(media())->availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+    }
+    void rankPermissionDowngradeWhileResourceIsPendingBlocksTheStream()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy streams(&session, &IMusicSourceSessionV2::streamReady);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        session.fetchPage(rankTracks()); QTRY_COMPARE(network.requests.size(), 1);
+        network.replies[0]->deliver(page({rankTrack()}, 1));
+        const auto id = session.resolveStream(media()); QTRY_COMPARE(network.requests.size(), 2);
+        session.fetchPage(rankTracks()); QTRY_COMPARE(network.requests.size(), 3);
+        network.replies[2]->deliver(page({rankTrack(1)}, 1));
+        network.replies[1]->deliver(verifiedResource()); QCOMPARE(streams.size(), 0);
+        QCOMPARE(failed.size(), 1); QCOMPARE(failed[0][0].toUuid(), id);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][1]).kind, SourceErrorKindV2::Authorization);
+    }
+    void rankQueriesRejectForgedFiltersAndMalformedResponsesWithoutFallback()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        for (int variant = 0; variant < 8; ++variant) {
+            auto query = rankTracks();
+            if (variant == 0) query.filters.clear();
+            if (variant == 1) query.filters = {{"playlistId", "8888"}};
+            if (variant == 2) query.filters = {{"playlistId", "rank/01"}};
+            if (variant == 3) query.filters = {{"playlistId", "rank/8888&token=PRIVATE"}};
+            if (variant == 4) query.filters.insert("token", "PRIVATE");
+            if (variant == 5) query.searchText = "other";
+            if (variant == 6) query.scope.sourceInstanceId = "kugou/two";
+            if (variant == 7) query.filters = {{"playlistId", 8888}};
+            session.fetchPage(query); QTRY_COMPARE(failed.size(), variant + 1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[1]).kind, SourceErrorKindV2::InvalidRequest);
+        }
+        QVERIFY(network.requests.isEmpty());
+        session.fetchPage(ranks()); QTRY_COMPARE(network.requests.size(), 1);
+        auto bad = catalog(); bad.insert("status", "1"); network.replies[0]->deliver(bad);
+        QCOMPARE(failed.size(), 9); QCOMPARE(ready.size(), 0);
+        session.fetchPage(rankTracks()); QTRY_COMPARE(network.requests.size(), 2);
+        bad = rankTrack(); bad.insert("authors", QJsonArray{QJsonObject{}});
+        network.replies[1]->deliver(page({bad}, 1)); QCOMPARE(failed.size(), 10); QCOMPARE(ready.size(), 0);
+        QVERIFY(!session.lookupItem(media()));
+    }
+    void rankCancelCloseAndNotificationsFenceLateResults()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        const auto id = session.fetchPage(ranks()); QTRY_COMPARE(network.requests.size(), 1);
+        session.cancel(id); QVERIFY(network.replies[0]->aborted);
+        network.replies[0]->deliver(catalog()); QCOMPARE(ready.size(), 0);
+        session.fetchPage(rankTracks()); QTRY_COMPARE(network.requests.size(), 2);
+        session.close(); QVERIFY(network.replies[1]->aborted); network.replies[1]->deliver(page({rankTrack()}, 1));
+        QVERIFY(!session.lookupItem(media())); QCOMPARE(ready.size(), 0);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        connect(&session, &IMusicSourceSessionV2::pageReady, &session, [&session] { session.close(); });
+        session.fetchPage(ranks()); QTRY_COMPARE(network.requests.size(), 3);
+        network.replies[2]->deliver(catalog()); QCOMPARE(session.state(), SourceSessionStateV2::Closed);
+    }
     void rankProjectionUsesStandardTrackMapperWithoutGrantingUnknownRights()
     {
         for (int variant = 0; variant < 5; ++variant) {

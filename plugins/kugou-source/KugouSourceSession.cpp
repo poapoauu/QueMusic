@@ -135,21 +135,53 @@ void KugouSourceSession::dispatch(const QUuid &id)
             || query.limit < 1 || query.limit > 100) {
             fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
         }
-        if (query.page != MusicPageKindV2::Search || query.section != PageSectionKindV2::Tracks) {
+        PageMode mode;
+        QString rankId;
+        if (query.page == MusicPageKindV2::Search && query.section == PageSectionKindV2::Tracks) {
+            mode = PageMode::Search;
+            if (query.searchText.trimmed().isEmpty() || query.searchText.size() > 512 || !query.filters.isEmpty()) {
+                fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
+            }
+        } else if (query.page == MusicPageKindV2::Category && query.section == PageSectionKindV2::Playlists) {
+            mode = PageMode::RankCatalog;
+            if (!query.searchText.isEmpty() || !query.filters.isEmpty()) {
+                fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
+            }
+        } else if (query.page == MusicPageKindV2::Category && query.section == PageSectionKindV2::Tracks) {
+            mode = PageMode::RankTracks;
+            const auto value = query.filters.value("playlistId");
+            const auto playlist = value.toString();
+            rankId = playlist.mid(5);
+            if (!query.searchText.isEmpty() || query.filters.size() != 1
+                || value.metaType().id() != QMetaType::QString || !playlist.startsWith("rank/")
+                || rankId.isEmpty() || KugouRankProtocol::rankId(QJsonValue(rankId)) != rankId) {
+                fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
+            }
+        } else {
             fail(id, failure(SourceErrorKindV2::Unsupported, "source.operation.unsupported")); return;
-        }
-        if (query.searchText.trimmed().isEmpty() || query.searchText.size() > 512 || !query.filters.isEmpty()) {
-            fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
         }
         int page = 1;
         if (!query.cursor.isEmpty()) {
             const auto it = m_cursors.constFind(query.cursor);
-            if (it == m_cursors.cend() || it->search != query.searchText.trimmed() || it->limit != query.limit) {
+            if (it == m_cursors.cend() || it->search != query.searchText.trimmed() || it->limit != query.limit
+                || it->mode != mode || it->rankId != rankId
+                || (mode == PageMode::RankCatalog && it->catalogGeneration != m_catalogGeneration)) {
                 fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.cursor.invalid")); return;
             }
             page = it->page;
         }
         m_requests[id].page = page;
+        m_requests[id].pageMode = mode;
+        m_requests[id].rankId = rankId;
+        if (mode == PageMode::RankCatalog && !query.cursor.isEmpty()) {
+            publishCatalog(id); return; // bounded snapshot pagination, no I/O
+        }
+        if (mode != PageMode::Search) {
+            const auto clientId = mode == PageMode::RankCatalog
+                ? m_client->getRank(KugouRankProtocol::Operation::Catalog)
+                : m_client->getRank(KugouRankProtocol::Operation::Tracks, rankId, page, query.limit);
+            m_requests[id].clientId = clientId; m_clientIds.insert(clientId, id); return;
+        }
         parameters.addQueryItem("keyword", query.searchText.trimmed());
         parameters.addQueryItem("page", QString::number(page));
         parameters.addQueryItem("pagesize", QString::number(query.limit));
@@ -203,17 +235,29 @@ void KugouSourceSession::succeeded(const QUuid &clientId, const QJsonObject &res
         }
         m_requests.remove(id); emit streamReady(id, *stream); return;
     }
+    if (request.pageMode == PageMode::RankCatalog) {
+        const auto catalog = KugouRankProtocol::catalog(response);
+        if (!catalog) { fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return; }
+        m_catalog = *catalog; m_catalogGeneration = QUuid::createUuid();
+        publishCatalog(id); return;
+    }
     const auto data = response.value("data").toObject();
     const auto total = data.value("total"); const double count = total.toDouble(-1);
-    const auto rows = data.value("info").toArray();
+    auto rows = data.value("info").toArray();
     if (response.value("status").toDouble(-1) != 1 || !data.value("info").isArray()
         || !total.isDouble() || !std::isfinite(count) || count < 0 || count > INT_MAX
         || std::floor(count) != count || rows.size() > request.query.limit) {
         fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return;
     }
+    if (request.pageMode == PageMode::RankTracks) {
+        const auto projected = KugouRankProtocol::tracks(response, request.query.limit);
+        if (!projected) { fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return; }
+        rows = projected->rows;
+    }
     PageSectionV2 section;
     section.sectionId = "tracks"; section.kind = PageSectionKindV2::Tracks;
-    section.titleKey = "source.search.tracks"; section.layoutHint = "list";
+    section.titleKey = request.pageMode == PageMode::Search ? "source.search.tracks" : "kugou.rank.tracks";
+    section.layoutHint = "list";
     QSet<QString> hashes;
     for (const auto &row : rows) {
         auto item = KugouMappers::track(row.toObject(), identity());
@@ -240,12 +284,46 @@ void KugouSourceSession::succeeded(const QUuid &clientId, const QJsonObject &res
         section.items.append(*item);
     }
     const qint64 offset = qint64(request.page) * request.query.limit;
-    section.hasMore = !rows.isEmpty() && rows.size() == request.query.limit && offset < qint64(count);
+    section.hasMore = !rows.isEmpty() && rows.size() == request.query.limit && offset < qint64(count)
+        && request.page < 1000000;
     if (section.hasMore) {
         if (m_cursors.size() >= 1024) m_cursors.clear();
         section.nextCursor = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        m_cursors.insert(section.nextCursor, {request.query.searchText.trimmed(), request.query.limit, request.page + 1});
+        m_cursors.insert(section.nextCursor, {request.query.searchText.trimmed(), request.query.limit,
+            request.page + 1, request.pageMode, request.rankId, {}});
     }
+    publishPage(id, std::move(section));
+}
+void KugouSourceSession::publishCatalog(const QUuid &id)
+{
+    if (!m_requests.contains(id)) return;
+    const auto request = m_requests.value(id);
+    PageSectionV2 section;
+    section.sectionId = "ranks"; section.kind = PageSectionKindV2::Playlists;
+    section.titleKey = "kugou.ranks"; section.layoutHint = "grid";
+    const int offset = (request.page - 1) * request.query.limit;
+    const int end = qMin(offset + request.query.limit, int(m_catalog.size()));
+    for (int i = offset; i < end; ++i) {
+        const auto &entry = m_catalog[i];
+        MediaItemV2 item;
+        item.ref = {m_configuration.sourceId, m_configuration.sourceInstanceId, m_configuration.accountId,
+            MediaEntityTypeV2::Playlist, "rank/" + entry.id};
+        item.title = entry.title; item.subtitle = entry.subtitle;
+        item.availableActions.insert(SourceActionV2::Play,
+            {AvailabilityV2::Unsupported, "source.operation.unsupported", {}});
+        section.items.append(item);
+    }
+    section.hasMore = end < m_catalog.size();
+    if (section.hasMore) {
+        if (m_cursors.size() >= 1024) m_cursors.clear();
+        section.nextCursor = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        m_cursors.insert(section.nextCursor, {{}, request.query.limit, request.page + 1,
+            PageMode::RankCatalog, {}, m_catalogGeneration});
+    }
+    publishPage(id, std::move(section));
+}
+void KugouSourceSession::publishPage(const QUuid &id, PageSectionV2 section)
+{
     PageResultV2 result;
     result.sections.append(section);
     result.sourceStates.insert(m_configuration.sourceInstanceId,
@@ -275,7 +353,7 @@ void KugouSourceSession::cancel(const QUuid &id)
 void KugouSourceSession::clearRequests()
 {
     m_requests.clear(); m_clientIds.clear(); m_openId = {};
-    m_client->cancelAll(); m_cursors.clear(); m_tracks.clear();
+    m_client->cancelAll(); m_cursors.clear(); m_tracks.clear(); m_catalog.clear(); m_catalogGeneration = {};
 }
 void KugouSourceSession::close()
 {

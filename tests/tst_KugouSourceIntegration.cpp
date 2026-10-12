@@ -107,6 +107,30 @@ QVariantMap row(const MediaItemV2 &item)
 class KugouSourceIntegrationTest final : public QObject {
     Q_OBJECT
 private slots:
+    void rankCatalogToTrackToCoordinatorUsesTheSameSourceSession()
+    {
+        Harness h; QVERIFY(h.load()); QVERIFY(h.save("one"));
+        auto *session = h.registry.sessionFor("kugou/one"); QVERIFY(session);
+        QTRY_COMPARE(session->state(), SourceSessionStateV2::Ready);
+        auto *provider = qobject_cast<IPageProviderV2 *>(session); QVERIFY(provider);
+        QSignalSpy ready(session, &IMusicSourceSessionV2::pageReady);
+        auto query = search(); query.page = MusicPageKindV2::Category;
+        query.section = PageSectionKindV2::Playlists; query.searchText.clear();
+        provider->fetchPage(query); QTRY_COMPARE(ready.size(), 1);
+        const auto rank = qvariant_cast<PageResultV2>(ready[0][1]).sections[0].items[0];
+        QCOMPARE(rank.ref.entityType, MediaEntityTypeV2::Playlist); QCOMPARE(rank.ref.entityId, "rank/8888");
+        query.section = PageSectionKindV2::Tracks; query.filters = {{"playlistId", rank.ref.entityId}};
+        provider->fetchPage(query); QTRY_COMPARE(ready.size(), 2);
+        const auto item = qvariant_cast<PageResultV2>(ready[1][1]).sections[0].items[0];
+        QCOMPARE(item.ref, media()); QVERIFY(item.metadata.isEmpty()); QVERIFY(item.externalIds.isEmpty());
+        QSignalSpy playing(&h.coordinator, &PlaybackCoordinator::playbackStarted);
+        h.coordinator.play(row(item)); QTRY_COMPARE(playing.size(), 1);
+        QCOMPARE(h.sink.prepares, 1); QCOMPARE(h.sink.plays, 1); QCOMPARE(h.sink.stream.media, media());
+        QCOMPARE(h.control->property("catalogCount").toInt(), 1);
+        QCOMPARE(h.control->property("rankCount").toInt(), 1);
+        QCOMPARE(h.control->property("searchCount").toInt(), 0);
+        QCOMPARE(h.control->property("resourceCount").toInt(), 1);
+    }
     void privateCredentialRecordRejectsIdentityDeviceAndEncodingConflicts()
     {
         using namespace KugouCredentialRecord;
