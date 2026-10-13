@@ -112,6 +112,7 @@ public:
 #else
 #include "PageRepository.h"
 #include "MusicPageModel.h"
+#include "extensions/browse-facets/v1/IBrowseFacetsProviderV1.h"
 #include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
 #include "SourceAccountStore.h"
 #include "extensions/discovery/v1/IDiscoveryProviderV1.h"
@@ -172,6 +173,46 @@ static PageSectionV2 favoriteSection(QString source, PageSectionKindV2 kind, QSt
 class PageRepositoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void browseFacetsAreReservedBeforeCacheCursorOrOldProviderDispatch()
+    {
+        PageHarness h; QVERIFY(h.init()); auto *home=h.session("home"), *office=h.session("office");
+        home->setProperty("inline",true); office->setProperty("inline",true);
+        QSignalSpy failed(&h.repo,&PageRepository::pageFailed),ready(&h.repo,&PageRepository::pageReady);
+        PageQueryV2 good; good.page=MusicPageKindV2::Category; good.section=PageSectionKindV2::Artists;
+        good.scope={"task5/home"};
+        good.filters={{browseFacetsFilterKeyV1(),"selected"},{"facetRevision","catalog-v1"},
+                      {"facetValues",QVariantMap{{"origin","alpha"}}}};
+        const auto id=h.repo.requestPage(good,77); QCOMPARE(failed.count(),0);
+        QTRY_COMPARE(failed.count(),1); QCOMPARE(failed[0][0].toUuid(),id);
+        QCOMPARE(failed[0][1].toULongLong(),quint64(77));
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][2]).kind,SourceErrorKindV2::Unsupported);
+        // Continuation/refresh cannot bypass the unimplemented execution gate.
+        auto continued=good; continued.cursor="untrusted-cursor";
+        h.repo.requestPage(continued,78); QTRY_COMPARE(failed.count(),2);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::Unsupported);
+        for (int variant=0;variant<9;++variant) {
+            auto malformed=good;
+            if (variant==0) malformed.filters={{browseFacetsFilterKeyV1(),"selected"}};
+            if (variant==1) malformed.filters[browseFacetsFilterKeyV1()]=true;
+            if (variant==2) malformed.filters[browseFacetsFilterKeyV1()]="unknown";
+            if (variant==3) malformed.filters.remove(browseFacetsFilterKeyV1());
+            if (variant==4) malformed.filters={{"facetRevision","catalog-v1"}};
+            if (variant==5) malformed.filters={{"facetValues","scalar"}};
+            if (variant==6) malformed.scope.sourceInstanceId.clear();
+            if (variant==7) malformed.section=PageSectionKindV2::Tracks;
+            if (variant==8) malformed.filters.insert(artistBrowseFilterKeyV1(),"tracks");
+            const auto before=failed.count(); h.repo.requestPage(malformed,79);
+            QTRY_COMPARE(failed.count(),before+1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::InvalidRequest);
+        }
+        QVERIFY(ready.isEmpty()); QCOMPARE(home->property("calls").toInt(),0);
+        QCOMPARE(office->property("calls").toInt(),0);
+        const auto cancelled=h.repo.requestPage(good,80); h.repo.cancel(cancelled);
+        QCoreApplication::processEvents(); QCOMPARE(failed.count(),11); QVERIFY(ready.isEmpty());
+        auto ordinary=good; ordinary.filters.clear(); h.repo.requestPage(ordinary,81);
+        QTRY_COMPARE(ready.count(),1); QCOMPARE(home->property("calls").toInt(),1);
+        QCOMPARE(office->property("calls").toInt(),0); QCOMPARE(failed.count(),11);
+    }
     void artistTracksSelectorNeverFallsThroughToOldProvider()
     {
         PageHarness h; QVERIFY(h.init()); auto *session = h.session("home");

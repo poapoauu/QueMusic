@@ -4,6 +4,8 @@
 > 原始审计日期：2026-09-17；进展复核：2026-10-03
 > 设计基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 
+最新 Host 入口进展（2026-10-13，Phase 7 切片 27）：Repository 已保留 Browse Facets selector/revision/values，合法形状在完整执行守卫实现前返回 Unsupported，非法/不完整/Provider 形状直接重放返回 InvalidRequest；拒绝在普通过滤/缓存/游标/Session 派发前完成，不向旧 Provider 发送未知 filters。动态旧 Provider 的零调用、异步身份/代次、续页/取消与普通无过滤页回归已加入并单独实际执行通过，全目标构建、专项 **23/23（11.07 秒）**、最终全量 **84/84 CTest（70.10 秒）** 通过。此切片不等于 Registry 活跃声明、lease/响应验证、Host 筛选 UI 或插件分类接线完成；同名非标准外部过滤器有语义碰撞风险，见[契约](source-browse-facets-v1.md)。下一步实现完整活跃复核后才开放执行，旧登录/默认实验隔离不变。
+
 最新契约进展（2026-10-13，Phase 7 切片 26）：已新增独立可选 Browse Facets v1 头文件/IID、schema/selection 与严格纯验证、PluginSdk 安装规则。声明/类型/上限/保留字段/Unicode、Host 与 Provider 查询形状及当前 revision/选择匹配有契约测试；四个新增函数单独实际执行通过，全目标构建成功，专项 **23/23（9.27 秒）**、最终全量 **84/84 CTest（83.02 秒）** 通过。v2 ABI/IID/虚表、Artist Browse v1、Plugin UI API 和存储不变。形状合法不是权限或派发依据；Registry/Repository 守卫、Host 快照/筛选 UI 和插件生产分类路由仍未实现，旧业务/实验隔离不变。下一步接活跃 schema/lease/身份、逐次执行复核和严格响应，不给旧 Provider 未知 filters fallback；见[实际契约](source-browse-facets-v1.md)与[切片记录](phase-7-kugou-source-migration.md)。
 
 最新设计（2026-10-13，Phase 7 切片 25）：[Browse Facets v1 实施设计](source-browse-facets-v1-design.md) 已记录下一阶段顺序：独立可选契约/严格纯验证、Registry/Repository 守卫、Hub/Adapter 快照与选择、插件分类/游标、通用 QML、真实 smoke。初版限定具体实例 Category/Artists 单选，Host 不解析平台编号，旧插件保留无筛选且拒绝未知筛选 fallback；查询带 revision 并逐次复核，明确生命周期/卸载与 UI 验收。当前仅文档，没有新头文件/IID/运行时/UI 功能，不把设计当实现或真实服务验收；代码证据仍为切片 24 的 **84/84 CTest（90.40 秒）**。

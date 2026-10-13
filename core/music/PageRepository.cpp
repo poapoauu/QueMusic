@@ -2,6 +2,7 @@
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/discovery/v1/IDiscoveryProviderV1.h"
 #include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
+#include "extensions/browse-facets/v1/IBrowseFacetsProviderV1.h"
 #include <QFutureWatcher>
 #include <QTimer>
 #include <QtConcurrentRun>
@@ -112,6 +113,14 @@ void PageRepository::begin(const QUuid &id)
     if (q.limit<1 || q.limit>1000 || int(q.page)<0 || int(q.page)>int(MusicPageKindV2::Search)
         || int(q.section)<0 || int(q.section)>int(PageSectionKindV2::SearchResults)) {
         fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
+    }
+    if (q.filters.contains(browseFacetsFilterKeyV1()) || q.filters.contains(QStringLiteral("facetRevision"))
+        || q.filters.contains(QStringLiteral("facetValues"))) {
+        // Reserve the complete protocol before cache/cursor/session dispatch.
+        // No Host execution support yet: never let an old provider ignore a
+        // scalar/malformed selector, or repair it by dropping a field.
+        fail(id,error(browseFacetSelectionV1(q) ? SourceErrorKindV2::Unsupported : SourceErrorKindV2::InvalidRequest));
+        return;
     }
     const bool discovery=q.filters.contains(discoveryFilterKeyV1());
     if (discovery && !discoveryKindV1(q)) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }

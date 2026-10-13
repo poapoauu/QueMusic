@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新代码状态（切片 24，切片 25 为后续设计）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单/歌手已接标准页面/游标及独立显式真实 Session smoke；真实歌手 smoke 本机失败，无可信页面，实际服务和认证仍未验收。酷狗 Session 已实现独立可选 Artist Browse v1，发布标准热门歌手与歌手歌曲页面；新增歌手地区分类的插件私有请求基础，尚未接通用分类筛选 UI/Session 路由。旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 27）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单/歌手已接标准页面/游标及独立显式真实 Session smoke；真实歌手 smoke 本机失败，无可信页面，实际服务和认证仍未验收。酷狗 Session 已实现 Artist Browse v1，发布标准热门歌手/歌手歌曲页面，私有地区分类基础已存在；通用 Browse Facets v1 契约/纯验证/安装测试及 Repository 入口拒绝门已实现，完整活跃守卫、筛选 UI/分类 Session 路由尚未接线。旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -14,6 +14,14 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - `cpp/AccountManager.*` 在 Host 内进行签名、设备标识持久化、QR 获取/轮询、账号状态和 cookie 写入；`SettingsView.qml` 仍有酷狗专用 UI。
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
+
+## 切片 27：Repository 保留协议拒绝门
+
+2026-10-13，继续切片 26，PageRepository 在缓存/游标/Session 派发与普通过滤处理之前保留 Browse Facets selector、facetRevision、facetValues。当前 Host 尚无活跃声明/lease/响应验证，因此合法 Host 形状明确 Unsupported，非法/不完整/已移除 selector 的 Provider 形状重放为 InvalidRequest；不将 scalar selector 或未知字段交给旧 Provider 忽略，也不删除字段尝试“修复”。错误仍经既有 request ID/代次异步终态，取消不投递。
+
+新增实际动态旧 Provider 的 Repository 回归：合法首请求/续页拒绝、请求 ID/代次关联，scalar/未知 selector、缺失字段、Provider 形状、aggregate、错误 section、混合 Artist Browse 拒绝；两个实例 Provider calls 均为零、无成功/缓存预览，取消后无终态。显式清除过滤后原 Artists 页仍可请求。只新增入口拒绝，不代表 Registry 发现/schema 复核、动态卸载、严格 Artists 回包、Host 筛选模型或插件分类已完成。
+
+公开 v2/扩展 IID/UI API/存储不变，仅 Host 私有代码与测试增量，需同步重编译；同名 facetRevision/facetValues 的外部非标准过滤器存在语义碰撞风险，实际契约已记录，原 Host 查询不使用这些字段。实验包/账号/播放/旧登录不变，不访问外网。Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，新增 Repository 用例另单独实际执行通过，相关专项 **23/23（11.07 秒）**、最终全量 **84/84 CTest（70.10 秒）** 通过，包括安装 SDK、原 UI、Local/Navidrome、动态管理 UI/卸载与 macOS 打包/重定位。下一步以活跃 Registry/schema/身份/lease 与每次执行复核替换临时 Unsupported 分支，再验证响应/分页/卸载，不直接开放普通 Provider fallback。
 
 ## 切片 26：可选 Browse Facets v1 与严格纯验证
 

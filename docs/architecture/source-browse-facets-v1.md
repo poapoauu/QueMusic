@@ -2,7 +2,7 @@
 
 日期：2026-10-13。基线：[最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md)与[实施设计](source-browse-facets-v1-design.md)。
 
-当前切片仅实现可选接口、纯验证器和 PluginSdk 安装/外部编译测试。Registry、Repository、Hub/Adapter、生产 Session 和原 UI 尚未接该扩展；不表示应用已经支持分类筛选。实验酷狗包不声明该接口，不改变默认隔离或旧登录。
+切片 26 实现可选接口、纯验证器和 PluginSdk 安装/外部编译测试；切片 27 增加 Repository 保留过滤字段的拒绝门。活跃 Registry/schema/lease 执行守卫、Hub/Adapter、生产 Session 和原 UI 尚未接该扩展；不表示应用已经支持分类筛选。实验酷狗包不声明该接口，不改变默认隔离或旧登录。
 
 ## 可选接口与数据
 
@@ -37,6 +37,10 @@ Host 只有在未来的活跃扩展/schema/身份/lease 复核通过后，才移
 非法 Host selector 被删掉后可能形成合法 Provider 形状，这并不允许 Host 删除非法 selector 再重试：Host 必须先验证和复核，不能通过投影“修复”恶意请求。纯函数没有自动移除 selector 或回退 helper，亦不会调用 fetchPage。
 
 ## 后续执行与兼容边界
+
+切片 27：PageRepository 在普通过滤/缓存/游标/Session 派发前保留 selector、facetRevision、facetValues。形状合法返回 Unsupported（执行能力尚未实现），形状非法、Provider 投影直接重放或保留字段不完整返回 InvalidRequest，均异步终态且零 Provider 调用。不删除 selector、不回退普通页；取消仍无终态。未使用这些保留字段的普通查询保持原行为。后续只能以完整活跃复核/响应守卫替换 Unsupported 分支，不能直接移除拒绝门。
+
+过滤字段语义的兼容风险：此前外部非标准查询若自行使用同名 facetRevision/facetValues，现在会明确拒绝；已检查的 Host 现有查询不使用它们，普通来源/UI 回归必须持续验证。保留这些名字不修改 v2 结构 ABI，但不是对任意未知过滤器语义的二进制功能兼容承诺。
 
 执行守卫、响应形状、内存快照/导航、分页复核/撤回、cancel/unload、SourceSession 分类游标及 QML 按实施设计顺序补齐。筛选结果须一个完整非 cached Artists section、同实例/账号 Artist ref；当前头文件不实现响应验证或生命周期检查。
 
