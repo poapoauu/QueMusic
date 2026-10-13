@@ -249,6 +249,10 @@ install(DIRECTORY sdk/plugin-ui/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/plugin-ui/v1
     COMPONENT PluginSdk
     FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY sdk/source/extensions/browse-facets/v1/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/browse-facets/v1
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.h")
 install(FILES plugin-ui/PluginTheme.h plugin-ui/PluginUiContext.h
     plugin-ui/PluginUiSettingsBridge.h plugin-ui/PluginUiHostServices.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/runtime

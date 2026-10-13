@@ -15,6 +15,18 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
 
+## 切片 26：可选 Browse Facets v1 与严格纯验证
+
+2026-10-13，按切片 25 设计新增独立 `IBrowseFacetsProviderV1`、schema/choice/selection 与 header-only 纯验证器，IID 为 `org.quemusic.source.extensions.BrowseFacetsProvider/1.0`。声明仅支持 Category/Artists 根列表单实例单选，不继承 QObject/v2 Session，不修改现有 v2 类型/虚表/IID、Artist Browse v1 或 Plugin UI API。实际规则见[Browse Facets v1 契约](source-browse-facets-v1.md)。
+
+schema 限定 1–8 facet、每 facet 1–64 choice、64 字符 ASCII 不透明标识、256 UTF-16 unit PlainText 标题；验证整体合法、保留 facet id、重复、控制/孤立代理项与 Unicode 边界，不截断、不转换平台编号。查询分别验证 Host 三字段 selector/revision/values 与 Provider 两字段 revision/values，严格 QVariantMap/QString，限具体非空白 scope、无搜索、Artists 和 limit 1–100。另匹配当前完整合法 schema、revision、每个已声明 facet/choice；未知/撤回/非法类型无 fallback。
+
+纯形状验证不查询插件，不承担身份/lease/权限或 Host 执行守卫。不能删除非法 selector 后把合法 Provider 形状当作获准执行；两个解析器无自动投影/回退。Host 守卫、响应验证、快照/选择、UI 与生产 Session 分类声明尚未实现，实验包仍不提供该扩展，不改变默认可用来源或旧登录。
+
+CMake 为 PluginSdk 增加新扩展安装规则。既有 discovery 契约测试/外部 Qt-only 安装工程共同覆盖可选 qobject_cast/IID、旧 Session 缺少扩展、v2 ABI=2、pure validators 零 Provider 调用、schema 超限/重复/非法/Unicode、Host/Provider 形状隔离、类型/组合字段拒绝、revision/撤回/未知选择及不透明数字字符串。四个新增函数已单独实际执行通过；Qt 6.11.1/macOS x86_64 Debug 全目标重建成功，专项 **23/23（9.27 秒）**、最终全量 **84/84 CTest（83.02 秒）** 通过，包括最终安装产物的独立工程、原 UI、Local/Navidrome、动态管理 UI/卸载与 macOS 打包/重定位。
+
+首次编译的夹具 `QVector::append` 初始化重载歧义已改显式类型，未放宽规则；同时复核并修正“删除非法 Host selector 后 Provider 形状也应非法”的测试预期，明确 Host 必须先验证再移除。失败编译不计验收。没有访问真实服务、读取账号或播放；真实 HTTPS/分类字段/分页、认证、手机/Keychain/音频和最低 Host 功能版本仍未验收。下一代码切片接 Registry/Repository 的活跃声明/执行拒绝、生命周期/lease 与响应边界，再接 Hub/插件/UI。
+
 ## 切片 25：通用 Browse Facets 的下一阶段设计
 
 2026-10-13，完成[Source Browse Facets v1 实施设计](source-browse-facets-v1-design.md)，明确独立可选接口/有界 schema、稳定不透明选项和 revision、版本化查询 selector、每次执行复核及旧 Provider 不 fallback。第一版限定具体实例的 Category/Artists 根列表单选，不混入 Artist Browse/详情/搜索，不改变 SDK v2/Plugin UI API；Host 不解析酷狗地区编号。已有无筛选列表和旧插件行为保留，getter 只读 Host 快照，明确生命周期、分页/撤回/游标与 UI 边界。

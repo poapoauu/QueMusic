@@ -4,6 +4,8 @@
 > 原始审计日期：2026-09-17；进展复核：2026-10-03
 > 设计基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 
+最新契约进展（2026-10-13，Phase 7 切片 26）：已新增独立可选 Browse Facets v1 头文件/IID、schema/selection 与严格纯验证、PluginSdk 安装规则。声明/类型/上限/保留字段/Unicode、Host 与 Provider 查询形状及当前 revision/选择匹配有契约测试；四个新增函数单独实际执行通过，全目标构建成功，专项 **23/23（9.27 秒）**、最终全量 **84/84 CTest（83.02 秒）** 通过。v2 ABI/IID/虚表、Artist Browse v1、Plugin UI API 和存储不变。形状合法不是权限或派发依据；Registry/Repository 守卫、Host 快照/筛选 UI 和插件生产分类路由仍未实现，旧业务/实验隔离不变。下一步接活跃 schema/lease/身份、逐次执行复核和严格响应，不给旧 Provider 未知 filters fallback；见[实际契约](source-browse-facets-v1.md)与[切片记录](phase-7-kugou-source-migration.md)。
+
 最新设计（2026-10-13，Phase 7 切片 25）：[Browse Facets v1 实施设计](source-browse-facets-v1-design.md) 已记录下一阶段顺序：独立可选契约/严格纯验证、Registry/Repository 守卫、Hub/Adapter 快照与选择、插件分类/游标、通用 QML、真实 smoke。初版限定具体实例 Category/Artists 单选，Host 不解析平台编号，旧插件保留无筛选且拒绝未知筛选 fallback；查询带 revision 并逐次复核，明确生命周期/卸载与 UI 验收。当前仅文档，没有新头文件/IID/运行时/UI 功能，不把设计当实现或真实服务验收；代码证据仍为切片 24 的 **84/84 CTest（90.40 秒）**。
 
 最新协议进展（2026-10-13，Phase 7 切片 24）：已迁入插件私有 singer/list 分类请求，四地区白名单、固定 sex=0、分页及匿名 HTTPS 策略，复用严格 Catalog 投影与 UUID/取消边界。缺失/非法 region、混合 ID 或向 Popular/Tracks 夹带 region 均拒绝，不默认分类、不 fallback 热门页。当前 Host 无通用 facets 声明/渲染/执行契约，因此尚未接 Session 分类路由或筛选 UI；直接 area/region/type/sex 过滤的 Artists 查询继续零 I/O 拒绝。全目标构建成功，五个新增测试函数单独实际执行通过，专项 **23/23（10.32 秒）**、最终全量 **84/84 CTest（90.40 秒）** 通过。公开 v2/Artist Browse/UI API 与存储不变，私有 client 增量需模块一起重编译。下一步先演进独立可选通用 facets 契约，再接分类游标/Registry/Repository/原 UI；真实服务与旧登录迁出缺口未关闭，见[切片记录](phase-7-kugou-source-migration.md)。
