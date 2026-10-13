@@ -28,7 +28,8 @@ public:
     QUuid getRank(KugouRankProtocol::Operation operation, const QString &rankId = {},
                   int page = 1, int limit = 20);
     QUuid getArtist(KugouArtistProtocol::Operation operation, const QString &artistId = {},
-                    int page = 1, int limit = 20);
+                    int page = 1, int limit = 20,
+                    std::optional<KugouArtistProtocol::Region> region = {});
     QUuid getQr(KugouQrRequests::Operation operation,
                 const KugouQrRequests::DeviceIdentity &identity,
                 qint64 epochSeconds, const QString &code = {});

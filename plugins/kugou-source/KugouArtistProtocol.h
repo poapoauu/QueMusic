@@ -5,7 +5,17 @@
 // Private wire protocol. Session publishes standard Artist/Track DTOs and
 // selects Tracks through the optional Artist Browse v1 extension.
 namespace KugouArtistProtocol {
-enum class Operation { Popular, Tracks };
+enum class Operation { Popular, Tracks, Category };
+// Private legacy wire values, not Host facets or source selectors. Keep the
+// regional taxonomy inside the plugin until generic browse facets are defined.
+enum class Region { Chinese = 1, Western = 2, Japanese = 3, Korean = 4 };
+inline bool validRegion(Region region)
+{
+    switch (region) {
+    case Region::Chinese: case Region::Western: case Region::Japanese: case Region::Korean: return true;
+    default: return false;
+    }
+}
 struct Entry { QString id, name; };
 struct Catalog { QVector<Entry> entries; std::optional<int> total; };
 struct TrackPage { QJsonArray rows; std::optional<int> total; };
@@ -25,7 +35,8 @@ inline QString artistId(const QJsonValue &value)
     return pattern.match(text).hasMatch() && ok ? text : QString();
 }
 inline std::optional<QNetworkRequest> build(Operation operation, const QString &id = {},
-                                           int page = 1, int limit = 20)
+                                           int page = 1, int limit = 20,
+                                           std::optional<Region> region = {})
 {
     if (page < 1 || page > 1000000 || limit < 1 || limit > 100) return {};
     QUrl url;
@@ -34,13 +45,18 @@ inline std::optional<QNetworkRequest> build(Operation operation, const QString &
     query.addQueryItem("page", QString::number(page)); query.addQueryItem("pagesize", QString::number(limit));
     switch (operation) {
     case Operation::Popular:
-        if (!id.isEmpty()) return {};
+        if (!id.isEmpty() || region) return {};
         url = QUrl(QStringLiteral("https://mobilecdnbj.kugou.com/api/v3/singer/rank"));
         query.addQueryItem("type", "1"); break;
     case Operation::Tracks:
-        if (id.isEmpty() || artistId(QJsonValue(id)) != id) return {};
+        if (id.isEmpty() || artistId(QJsonValue(id)) != id || region) return {};
         url = QUrl(QStringLiteral("https://mobilecdnbj.kugou.com/api/v3/singer/song"));
         query.addQueryItem("singerid", id); break;
+    case Operation::Category:
+        if (!id.isEmpty() || !region || !validRegion(*region)) return {};
+        url = QUrl(QStringLiteral("https://mobilecdnbj.kugou.com/api/v3/singer/list"));
+        query.addQueryItem("type", QString::number(int(*region)));
+        query.addQueryItem("sex", "0"); break;
     default: return {};
     }
     url.setQuery(query);

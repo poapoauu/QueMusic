@@ -64,6 +64,108 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void artistCategoryRequestsUsePrivateWhitelistedRegionsAndAnonymousPolicy()
+    {
+        using namespace KugouArtistProtocol;
+        Network network; KugouApiClient client(&network, nullptr);
+        QSignalSpy ready(&client, &KugouApiClient::succeeded), failed(&client, &KugouApiClient::failed);
+        QVector<QUuid> ids;
+        for (const auto region : {Region::Chinese, Region::Western, Region::Japanese, Region::Korean}) {
+            ids.append(client.getArtist(Operation::Category, {}, 2, 100, region));
+            const auto request = network.requests.last(); const QUrlQuery query(request.url());
+            QCOMPARE(request.url().scheme(), "https"); QCOMPARE(request.url().host(), "mobilecdnbj.kugou.com");
+            QCOMPARE(request.url().path(), "/api/v3/singer/list");
+            QCOMPARE(query.queryItems().size(), 6);
+            QCOMPARE(query.queryItemValue("type"), QString::number(int(region)));
+            QCOMPARE(query.queryItemValue("sex"), "0"); QCOMPARE(query.queryItemValue("page"), "2");
+            QCOMPARE(query.queryItemValue("pagesize"), "100"); QCOMPARE(query.queryItemValue("version"), "9108");
+            QCOMPARE(query.queryItemValue("plat"), "0");
+            QVERIFY(request.rawHeader("Cookie").isEmpty()); QVERIFY(request.rawHeader("Authorization").isEmpty());
+            QCOMPARE(request.attribute(QNetworkRequest::RedirectPolicyAttribute).toInt(), int(QNetworkRequest::ManualRedirectPolicy));
+            for (const auto attribute : {QNetworkRequest::CookieLoadControlAttribute,
+                 QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::AuthenticationReuseAttribute})
+                QCOMPARE(request.attribute(attribute).toInt(), int(QNetworkRequest::Manual));
+            QCOMPARE(request.transferTimeout(), 15000); QCOMPARE(request.rawHeader("Accept-Encoding"), "identity");
+        }
+        QCOMPARE(network.requests.size(), 4); QCOMPARE(QSet<QUuid>(ids.begin(), ids.end()).size(), 4);
+        // Deliberately reverse completion order: transport success is correlated
+        // by UUID, not an area number or legacy action name.
+        for (int i = 3; i >= 0; --i) {
+            network.replies[i]->deliver("{\"status\":1,\"data\":{\"singers\":[]}}");
+            QCOMPARE(ready.last()[0].toUuid(), ids[i]);
+        }
+        QCOMPARE(ready.size(), 4); QVERIFY(failed.isEmpty());
+        QVERIFY(build(Operation::Category, {}, 1000000, 1, Region::Korean));
+    }
+    void artistCategoryInvalidParametersFailAsynchronouslyWithoutFallback()
+    {
+        using namespace KugouArtistProtocol;
+        Network network; KugouApiClient client(&network, nullptr);
+        QSignalSpy failed(&client, &KugouApiClient::failed);
+        QVector<QUuid> ids;
+        ids.append(client.getArtist(Operation::Category)); // no implicit region
+        for (const auto number : {-1, 0, 5, 99})
+            ids.append(client.getArtist(Operation::Category, {}, 1, 20, static_cast<Region>(number)));
+        ids.append(client.getArtist(Operation::Category, "123", 1, 20, Region::Chinese));
+        ids.append(client.getArtist(Operation::Popular, {}, 1, 20, Region::Chinese));
+        ids.append(client.getArtist(Operation::Tracks, "123", 1, 20, Region::Chinese));
+        ids.append(client.getArtist(static_cast<Operation>(99), {}, 1, 20, Region::Chinese));
+        for (const auto page : {0, 1000001})
+            ids.append(client.getArtist(Operation::Category, {}, page, 20, Region::Chinese));
+        for (const auto limit : {0, 101})
+            ids.append(client.getArtist(Operation::Category, {}, 1, limit, Region::Chinese));
+        const auto cancelled = client.getArtist(Operation::Category); client.cancel(cancelled);
+        QVERIFY(failed.isEmpty()); QVERIFY(network.requests.isEmpty());
+        QTRY_COMPARE(failed.size(), ids.size());
+        for (int i = 0; i < ids.size(); ++i) {
+            QCOMPARE(failed[i][0].toUuid(), ids[i]);
+            const auto error = qvariant_cast<SourceErrorV2>(failed[i][1]);
+            QCOMPARE(error.kind, SourceErrorKindV2::InvalidRequest);
+            QCOMPARE(error.messageKey, "kugou.artistInvalidRequest"); QVERIFY(error.detail.isEmpty());
+        }
+        QVERIFY(network.requests.isEmpty());
+    }
+    void artistCategoryTransportCancellationAndTlsFailureDoNotRetryOrLeak()
+    {
+        using namespace KugouArtistProtocol;
+        Network network, otherNetwork;
+        KugouApiClient client(&network, nullptr), other(&otherNetwork, nullptr);
+        QSignalSpy ready(&client, &KugouApiClient::succeeded), failed(&client, &KugouApiClient::failed);
+        QSignalSpy otherReady(&other, &KugouApiClient::succeeded);
+        const auto cancelled = client.getArtist(Operation::Category, {}, 1, 20, Region::Chinese);
+        const auto pending = client.getArtist(Operation::Category, {}, 1, 20, Region::Western);
+        const auto separate = other.getArtist(Operation::Category, {}, 1, 20, Region::Japanese);
+        client.cancel(cancelled); QVERIFY(network.replies[0]->aborted);
+        network.replies[0]->deliver("{\"status\":1,\"token\":\"PRIVATE\"}"); QVERIFY(ready.isEmpty());
+        network.replies[1]->deliver("PRIVATE", 0, true, QNetworkReply::SslHandshakeFailedError);
+        QCOMPARE(failed.size(), 1); QCOMPARE(failed[0][0].toUuid(), pending);
+        const auto error = qvariant_cast<SourceErrorV2>(failed[0][1]);
+        QCOMPARE(error.kind, SourceErrorKindV2::Network); QVERIFY(error.detail.isEmpty()); QVERIFY(!error.httpStatus);
+        QCOMPARE(network.requests.size(), 2); QVERIFY(ready.isEmpty());
+        otherNetwork.replies[0]->deliver("{\"status\":1,\"data\":{\"info\":[]}}");
+        QCOMPARE(otherReady.size(), 1); QCOMPARE(otherReady[0][0].toUuid(), separate);
+        auto networkOwner = std::make_unique<Network>(); KugouApiClient owned(networkOwner.get(), nullptr);
+        QSignalSpy destroyed(&owned, &KugouApiClient::failed);
+        const auto gone = owned.getArtist(Operation::Category, {}, 1, 20, Region::Korean);
+        networkOwner.reset(); QTRY_COMPARE(destroyed.size(), 1); QCOMPARE(destroyed[0][0].toUuid(), gone);
+    }
+    void artistCategoryProjectionReusesStrictCatalogWithoutRawFieldsOrInventedTotal()
+    {
+        using namespace KugouArtistProtocol;
+        const QJsonArray rows{QJsonObject{{"singerid", "123"}, {"singername", "Category Artist"},
+            {"imgurl", "file:///PRIVATE"}, {"token", "PRIVATE"}, {"region", "PRIVATE"}}};
+        for (const auto *field : {"singers", "info"}) {
+            const QJsonObject response{{"status", 1}, {"data", QJsonObject{{field, rows}}}};
+            const auto projected = catalog(response, 20); QVERIFY(projected); QVERIFY(!projected->total);
+            QCOMPARE(projected->entries.size(), 1); QCOMPARE(projected->entries[0].id, "123");
+            QCOMPARE(projected->entries[0].name, "Category Artist");
+        }
+        QVERIFY(!catalog({{"status", 1}, {"data", QJsonObject{{"singers", rows}, {"info", QJsonArray{}}}}}, 20));
+        QVERIFY(!catalog({{"status", 1}, {"data", QJsonObject{{"singers", rows}, {"total", "1"}}}} , 20));
+        QVERIFY(!catalog({{"status", 1}, {"data", QJsonObject{{"singers", QJsonArray{rows[0], rows[0]}}}}}, 20));
+        const auto empty = catalog({{"status", 1}, {"data", QJsonObject{{"singers", QJsonArray{}}, {"total", 0}}}}, 20);
+        QVERIFY(empty); QVERIFY(empty->entries.isEmpty()); QCOMPARE(empty->total, std::optional<int>{0});
+    }
     void artistRequestsAreBoundedAnonymousAndFailClosed()
     {
         using namespace KugouArtistProtocol;

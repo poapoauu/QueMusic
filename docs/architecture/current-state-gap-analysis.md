@@ -4,6 +4,8 @@
 > 原始审计日期：2026-09-17；进展复核：2026-10-03
 > 设计基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 
+最新协议进展（2026-10-13，Phase 7 切片 24）：已迁入插件私有 singer/list 分类请求，四地区白名单、固定 sex=0、分页及匿名 HTTPS 策略，复用严格 Catalog 投影与 UUID/取消边界。缺失/非法 region、混合 ID 或向 Popular/Tracks 夹带 region 均拒绝，不默认分类、不 fallback 热门页。当前 Host 无通用 facets 声明/渲染/执行契约，因此尚未接 Session 分类路由或筛选 UI；直接 area/region/type/sex 过滤的 Artists 查询继续零 I/O 拒绝。全目标构建成功，五个新增测试函数单独实际执行通过，专项 **23/23（10.32 秒）**、最终全量 **84/84 CTest（90.40 秒）** 通过。公开 v2/Artist Browse/UI API 与存储不变，私有 client 增量需模块一起重编译。下一步先演进独立可选通用 facets 契约，再接分类游标/Registry/Repository/原 UI；真实服务与旧登录迁出缺口未关闭，见[切片记录](phase-7-kugou-source-migration.md)。
+
 最新验收工具（2026-10-13，Phase 7 切片 23）：公开 Session smoke 新增独立 `--live-public-artists`，不依赖榜单先成功；保持无账号/资源/音频，参数必须精确单一，额外/组合参数拒绝。真实运行失败 `catalog/kugou.requestFailed`、pages 空；固定歌手 HTTPS 路径 curl 独立校验退出 60、HTTP 000、证书主机名不匹配。未取得可信 JSON，不能宣称实际歌手链路或认证验收通过，不放宽校验/替换端点/迁出旧登录。全目标构建成功，最终离线 **84/84 CTest（87.00 秒）** 通过；完整线上正向采样仍待验收，详见[工具说明](kugou-public-protocol-smoke.md)与[切片记录](phase-7-kugou-source-migration.md)。
 
 最新插件进展（2026-10-13，Phase 7 切片 22）：酷狗实验 Session 已通过可选 Artist Browse v1 接标准热门歌手/歌手歌曲页面，保留旧插件 Artist→Albums；完整 `artist/<ID>` 身份、模式/歌手/limit/会话绑定游标、未知总数下一页探测、标准 Track 索引与共享权限交集已实现。不改 Source SDK v2 ABI、Plugin UI API 或默认包隔离，不迁出旧登录。全目标构建成功，相关专项 **23/23（10.98 秒）** 通过，新增 Session/动态 Registry→Provider→Coordinator 用例另单独实际执行通过；最终全量 **84/84 CTest（88.42 秒）** 通过。真实 HTTPS/业务响应、服务认证、手机/Keychain/音频和正式发布最低 Host 功能声明仍有缺口；下一步继续剩余公开页面与服务验收工具，见[迁移记录](phase-7-kugou-source-migration.md)。以下各日期段落是对应历史快照，早期“未发布 Artist 页面”不再代表最新状态。

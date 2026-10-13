@@ -102,6 +102,26 @@ MediaRefV2 media(const QString &account = "one", const QString &id = hash)
 class KugouSourceSessionTest final : public QObject {
     Q_OBJECT
 private slots:
+    void privateCategoryFoundationDoesNotSilentlyPublishPopularArtistsForFilters()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        auto query = ranks(); query.section = PageSectionKindV2::Artists;
+        const QList<QVariantMap> filters{{{"area", 1}}, {{"region", "chinese"}}, {{"type", 1}},
+            {{"sex", 0}}, {{"area", "1"}, {"sex", 0}}};
+        for (const auto &filter : filters) {
+            query.filters = filter; session.fetchPage(query);
+            QTRY_COMPARE(failed.size(), filters.indexOf(filter) + 1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[1]).kind, SourceErrorKindV2::InvalidRequest);
+        }
+        QVERIFY(network.requests.isEmpty()); QVERIFY(ready.isEmpty());
+        query.filters.clear(); session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 1);
+        QCOMPARE(network.requests[0].url().path(), "/api/v3/singer/rank");
+        network.replies[0]->deliver({{"status", 1}, {"data", QJsonObject{{"singers", QJsonArray{}}}}});
+        QCOMPARE(ready.size(), 1); QVERIFY(qvariant_cast<PageResultV2>(ready[0][1]).sections[0].items.isEmpty());
+    }
     void rankCatalogPublishesStandardIdentityAndPagesOneBoundedSnapshot()
     {
         Network network; KugouSourceSession session(config(), &network, nullptr);

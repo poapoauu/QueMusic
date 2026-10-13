@@ -100,11 +100,11 @@ QUuid KugouApiClient::getRank(KugouRankProtocol::Operation operation, const QStr
 }
 
 QUuid KugouApiClient::getArtist(KugouArtistProtocol::Operation operation, const QString &artistId,
-                              int page, int limit)
+                              int page, int limit, std::optional<KugouArtistProtocol::Region> region)
 {
     const QUuid id = QUuid::createUuid();
     m_pending.insert(id, {});
-    const auto request = KugouArtistProtocol::build(operation, artistId, page, limit);
+    const auto request = KugouArtistProtocol::build(operation, artistId, page, limit, region);
     if (!request) {
         scheduleFailure(id, error(SourceErrorKindV2::InvalidRequest, "kugou.artistInvalidRequest", false));
         return id;

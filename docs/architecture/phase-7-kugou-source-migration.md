@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 23）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单/歌手已接标准页面/游标及独立显式真实 Session smoke；真实歌手 smoke 本机失败，无可信页面，实际服务和认证仍未验收。酷狗 Session 已实现独立可选 Artist Browse v1，发布标准热门歌手与歌手歌曲页面；旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 24）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单/歌手已接标准页面/游标及独立显式真实 Session smoke；真实歌手 smoke 本机失败，无可信页面，实际服务和认证仍未验收。酷狗 Session 已实现独立可选 Artist Browse v1，发布标准热门歌手与歌手歌曲页面；新增歌手地区分类的插件私有请求基础，尚未接通用分类筛选 UI/Session 路由。旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -14,6 +14,20 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - `cpp/AccountManager.*` 在 Host 内进行签名、设备标识持久化、QR 获取/轮询、账号状态和 cookie 写入；`SettingsView.qml` 仍有酷狗专用 UI。
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
+
+## 切片 24：插件私有歌手分类协议与误路由拒绝
+
+2026-10-13，对照旧 `KugouApi::getSingerCategory`：固定 singer/list，type 为地区 1–4，sex 固定 0，分页及 version/plat；旧解析的“singers 空就 fallback info”不符合现有严格映射边界，不能直接复制。当前 `MusicHub::sectionsForPage` 提供通用 Artists section，但没有分类筛选声明/选项渲染契约。不能把地区整数写入 Host/QML 分支、伪装 Genre ref，或把未知分类请求当作热门歌手成功返回。
+
+私有 `KugouArtistProtocol` 增加 Category operation 和 Region 白名单（Chinese/Western/Japanese/Korean，对应既有 wire 1–4）；固定 HTTPS singer/list，只允许显式合法 region、空 artistId、页码 1..1000000 和 limit 1..100，sex 固定 0。Popular/Tracks 拒绝夹带 region，非法枚举/缺失 region/混合 ID 拒绝，不选择默认地区或 fallback 热门端点。使用现有 client 的 request UUID、异步失败/取消、15 秒超时、1 MiB 上限及无 cookie/认证复用/重定向策略。
+
+分类复用严格 `catalog` 投影：singers/info 只允许单一或相等数组，不 fallback 歧义；ID/名称校验及重复拒绝、敏感字段丢弃、缺失 total 保持未知、空列表不制造内置歌手。该解析是插件私有纯函数，不建立账号或播放权限，也不新增分类媒体实体。
+
+新增受控测试覆盖四地区路径/参数/策略、反序成功 UUID、无默认地区、operation/region/ID/分页非法组合、异步错误及取消错误通知、取消晚包、TLS 拒绝不降级、client 实例隔离/网络销毁、严格 DTO 投影。Session 新增过滤边界回归：直接携带 area/region/type/sex 的 Category/Artists 请求必须异步 InvalidRequest 且零 I/O，不被私有基础新增而默默支持；清除过滤后仍请求既有热门页面。没有修改 Session 生产路由。
+
+只修改插件私有协议/client 及已有测试，Source SDK v2/Artist Browse v1/Plugin UI API 和磁盘格式不变；既有 Popular/Tracks 调用可保留默认参数，私有静态库与模块需一起重编译，不承诺私有 C++ 符号二进制兼容。实验包仍默认关闭/隔离，无 Host 平台 UI 或旧登录删除。Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，五个新增测试函数单独实际执行通过，相关专项 **23/23（10.32 秒）**，最终全量 **84/84 CTest（90.40 秒）** 通过，包括原 UI、Local/Navidrome、外部 SDK、动态模块/UI 卸载及 macOS 打包/重定位。所有分类用例使用受控无外网传输，不是服务业务验收。
+
+下一步先定义通用、独立版本化的可选分类 facets 声明/验证/执行契约，保留旧无筛选 Provider 行为并拒绝其未知 facet fallback；再接 Registry/Repository、Session 分类游标绑定及原 UI 筛选。验收必须覆盖选项身份/边界、分页/刷新撤回、跨实例、取消/卸载和错误响应，不把声明当权限。真实 HTTPS/分类字段/分页、认证、手机/Keychain/音频和最低 Host 支持要求仍待独立验收；切片 23 的本机 TLS 失败不因本轮离线协议新增而关闭。本轮未重新访问外网。
 
 ## 切片 23：独立匿名歌手 Session smoke
 
