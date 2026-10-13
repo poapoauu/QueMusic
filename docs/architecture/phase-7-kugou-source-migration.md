@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 22）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标及显式真实 Session smoke；切片 19 的 HTTPS 核验失败，实际服务和认证仍未验收。酷狗 Session 已实现独立可选 Artist Browse v1，发布标准热门歌手与歌手歌曲页面；旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 23）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单/歌手已接标准页面/游标及独立显式真实 Session smoke；真实歌手 smoke 本机失败，无可信页面，实际服务和认证仍未验收。酷狗 Session 已实现独立可选 Artist Browse v1，发布标准热门歌手与歌手歌曲页面；旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -14,6 +14,16 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - `cpp/AccountManager.*` 在 Host 内进行签名、设备标识持久化、QR 获取/轮询、账号状态和 cookie 写入；`SettingsView.qml` 仍有酷狗专用 UI。
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
+
+## 切片 23：独立匿名歌手 Session smoke
+
+2026-10-13，开发工具新增精确单一 `--live-public-artists`，独立采样热门歌手/续页、首位歌手的标准 Tracks/续页；经可选扩展复核目标，不依赖榜单请求先成功。原 `--live-public` 榜单行为保留，摘要新增 `probe` 字段区分模式；工具不安装/打包、不读取账号/SecretStore、不解析资源或播放。无参数/未知/额外/组合参数在构造 Session 前返回 2，普通 CTest 不运行真实网络。边界见[运行说明](kugou-public-protocol-smoke.md)。
+
+全目标构建成功；help 实际返回 0，歌手额外参数及组合两个模式各返回 2、未构造网络请求。真实歌手运行返回 1，固定摘要为 `probe=artists / stage=catalog / errorKey=kugou.requestFailed / pages=[] / authenticated=false / audioTested=false`，不包含原始响应或敏感字段。该结果是失败证据，不是歌手字段/分页服务验收；通用错误不能单独确诊 TLS，网络路径仍需独立核验，也不能据此确定平台全局故障。最终离线全量 **84/84 CTest（87.00 秒）** 通过，包括工具 help/未启用、上一切片新增 Session/动态链路及外部 SDK/macOS 打包；没有覆盖真实服务成功后的工具完整正向采样链，不把离线通过视为线上成功。
+
+同日独立 curl 对固定 HTTPS singer/rank 校验返回 60：证书 SAN 与 `mobilecdnbj.kugou.com` 不匹配，HTTP 000，没有可信业务 JSON；不放宽 TLS、不换端点、不以失败回包填页面。该证据只描述本机连接，不确定全球服务状态。
+
+本切片只有工具和文档增量，无 SDK v2/Plugin UI API/Host 接线/凭证存储变化。后续继续歌手分类与剩余公开协议迁移；真实数据链、认证、扫码、Keychain、音频、最低 Host 版本和旧登录迁出仍保持未验收状态。
 
 ## 切片 22：酷狗歌手 PageProvider 与标准歌曲索引
 
