@@ -1,4 +1,5 @@
 #include <extensions/discovery/v1/IDiscoveryProviderV1.h>
+#include <extensions/artist-browse/v1/IArtistBrowseProviderV1.h>
 #include <v2/IMusicSourceSessionV2.h>
 #include <v2/ISourceProvidersV2.h>
 #include <v2/IMusicSourcePluginV2.h>
@@ -21,10 +22,12 @@ public:
     QUuid cancelled;
     int ordinaryCalls=0;
 };
-class ExtendedSession final : public OldSession, public IDiscoveryProviderV1 {
+class ExtendedSession final : public OldSession, public IDiscoveryProviderV1, public IArtistBrowseProviderV1 {
     Q_OBJECT
-    Q_INTERFACES(IDiscoveryProviderV1)
+    Q_INTERFACES(IDiscoveryProviderV1 IArtistBrowseProviderV1)
 public:
+    std::optional<ArtistBrowseTargetV1> artistBrowseTarget(const MediaRefV2 &ref) const override
+    { return ref.entityType == MediaEntityTypeV2::Artist ? std::optional(ArtistBrowseTargetV1::Tracks) : std::nullopt; }
     AvailabilityV2 discoveryAvailability(DiscoveryKindV1 kind) const override
     { return kind==DiscoveryKindV1::PersonalRadio ? AvailabilityV2::Available : AvailabilityV2::Forbidden; }
     QUuid fetchDiscovery(DiscoveryKindV1, const PageQueryV2 &) override
@@ -39,10 +42,29 @@ public:
 static_assert(!std::is_base_of_v<QObject,IDiscoveryProviderV1>);
 static_assert(!std::is_base_of_v<IDiscoveryProviderV1,IMusicSourceSessionV2>);
 static_assert(QUEMUSIC_MUSIC_SOURCE_SDK_V2_ABI==2);
+static_assert(!std::is_base_of_v<QObject,IArtistBrowseProviderV1>);
+static_assert(!std::is_base_of_v<IArtistBrowseProviderV1,IMusicSourceSessionV2>);
 
 class DiscoveryContractTest final : public QObject {
     Q_OBJECT
 private slots:
+    void installedArtistBrowseExtensionIsOptionalAndQueryIsExact()
+    {
+        OldSession old; QVERIFY(!qobject_cast<IArtistBrowseProviderV1 *>(&old));
+        ExtendedSession extended; auto *provider = qobject_cast<IArtistBrowseProviderV1 *>(&extended); QVERIFY(provider);
+        QCOMPARE(QString::fromLatin1(QUEMUSIC_ARTIST_BROWSE_PROVIDER_V1_IID),
+                 QString("org.quemusic.source.extensions.ArtistBrowseProvider/1.0"));
+        MediaRefV2 ref; ref.entityType = MediaEntityTypeV2::Artist;
+        QCOMPARE(provider->artistBrowseTarget(ref).value(), ArtistBrowseTargetV1::Tracks);
+        ref.entityType = MediaEntityTypeV2::Track; QVERIFY(!provider->artistBrowseTarget(ref));
+        PageQueryV2 query; query.page = MusicPageKindV2::Category; query.section = PageSectionKindV2::Tracks;
+        query.scope.sourceInstanceId = "source/account";
+        query.filters = {{"artistId", "artist"}, {artistBrowseFilterKeyV1(), "tracks"}};
+        QVERIFY(isArtistTracksQueryV1(query));
+        query.filters[artistBrowseFilterKeyV1()] = "albums"; QVERIFY(!isArtistTracksQueryV1(query));
+        query.filters[artistBrowseFilterKeyV1()] = "tracks"; query.scope.sourceInstanceId.clear();
+        QVERIFY(!isArtistTracksQueryV1(query)); QCOMPARE(extended.ordinaryCalls, 0);
+    }
     void interfaceRemainsOptionalAndSeparatelyVersioned()
     {
         QCOMPARE(QString::fromLatin1(QUEMUSIC_DISCOVERY_PROVIDER_V1_IID),

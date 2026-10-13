@@ -50,6 +50,9 @@ public:
                                           const ActionAvailabilityV2 &mediaAction) const;
     // Borrowed pointer. The registry owns every returned session and its plugin lease.
     IMusicSourceSessionV2 *sessionFor(const QString &sourceInstanceId);
+    // Explicit execution only, never a QML getter. Creation is opt-in for a
+    // user navigation from cached cards; page dispatch uses its existing session.
+    std::optional<PageSectionKindV2> artistBrowseSection(const MediaRefV2 &artist, bool createSession = false);
     bool enableInstance(const QString &sourceInstanceId);
     bool disableInstance(const QString &sourceInstanceId);
     bool closeInstance(const QString &sourceInstanceId);
@@ -113,6 +116,7 @@ private:
     QHash<QString, quint64> m_creationReservations;
     QHash<QString, quint64> m_instanceLifecycleGenerations;
     QSet<QString> m_closingInstances;
+    QSet<QString> m_artistBrowseReservations;
     quint64 m_lifecycleGeneration = 0;
     quint64 m_nextCreationToken = 0;
     bool m_closingAll = false;

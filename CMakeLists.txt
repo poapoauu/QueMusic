@@ -241,6 +241,10 @@ install(DIRECTORY sdk/source/extensions/discovery/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/discovery/v1
     COMPONENT PluginSdk
     FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY sdk/source/extensions/artist-browse/v1/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/source/extensions/artist-browse/v1
+    COMPONENT PluginSdk
+    FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY sdk/plugin-ui/v1/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/quemusic/plugin-ui/v1
     COMPONENT PluginSdk

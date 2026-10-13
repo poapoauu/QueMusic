@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+2026-10-13，Phase 7 切片 21 新增独立可选 Artist Browse v1 通用契约：旧插件默认 Albums，新扩展可声明 Tracks，拒绝/非法目标不 fallback；v2 ABI/类型/虚表与 Plugin UI API 不变。SourceRegistry 持 lease 检查 Ready、身份、退役与重入，MusicHub 不接受 QML metadata 路由；PageRepository 的版本化 Tracks selector 在每次分页/刷新前复核扩展，阻止旧 Provider 忽略过滤条件，严格检查 Tracks section 与同实例/账号 ref。修复缓存卡片首次导航兼容回归，保留旧 Connecting 延迟派发，getter 不创建会话。全目标构建及最终 **84/84 CTest（67.91 秒）** 通过。仅通用 Host 契约及受控夹具/外部安装验证，酷狗 Session 尚未发布 Artist 页面，真实服务/账号验收仍未关闭；后续接私有歌手协议、未知总数策略、游标与索引，见[契约](source-artist-browse-v1.md)及[切片记录](phase-7-kugou-source-migration.md)。
+
 2026-10-13，Phase 7 切片 20 已迁入插件私有热门歌手/歌手歌曲请求与严格协议投影，复用现有可取消 client、标准 Track mapper 和未知权限拒绝规则。ID 精度、兼容字段冲突、缺失总数、文件名连字符及敏感字段边界有离线回归。发现 Host Artist→Albums 与旧 singer→Songs 导航差距，暂未接 Session 歌手页面；无网络请求的 Unsupported 回归防止提前开放错误导航。全目标构建及最终 **84/84 CTest（72.57 秒）** 通过。后续先演进通用浏览契约并保留旧插件默认行为，再接歌手 PageProvider；不改 v2 ABI/IID、UI API、存储或默认实验包隔离。切片 19 的真实 HTTPS/认证/手机/Keychain/音频验收缺口仍未关闭，见[切片记录](phase-7-kugou-source-migration.md)。
 
 2026-10-12，Phase 7 切片 19 开始真实公开协议核验，本机两个已知 CDN 域名均在 TLS 主机名校验阶段失败，没有可信业务 JSON。新增显式匿名 Qt Session smoke（不读取账号/秘密/不播放），实际运行返回 `catalog/kugou.requestFailed`、无页面/HTTP 状态；该失败不算业务验收通过。普通 CTest 只测试帮助/未显式启用，另增无外网 TLS 拒绝与无降级回归；全目标构建成功，离线专项 **16/16（25.81 秒）**、最终全量 **84/84 CTest（71.82 秒）** 通过。没有放宽校验、改固定端点或默认包接线。真实公开响应、认证、手机/Keychain/音频与旧登录迁出仍未完成，见[工具与网络记录](kugou-public-protocol-smoke.md)及[切片记录](phase-7-kugou-source-migration.md)。

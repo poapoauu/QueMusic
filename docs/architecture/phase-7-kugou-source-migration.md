@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 20）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标及显式真实 Session smoke；切片 19 的 HTTPS 核验失败，实际服务和认证仍未验收。新增插件私有热门歌手/歌手歌曲协议基础，但未发布 Artist 页面：Host Artist→Albums 与旧 singer→Songs 契约不同。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 21）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标及显式真实 Session smoke；切片 19 的 HTTPS 核验失败，实际服务和认证仍未验收。插件私有歌手协议基础已存在，Host 新增独立可选 Artist Browse v1 通用契约，旧插件默认 Albums、新扩展可声明 Tracks；酷狗 Session 尚未实现该扩展或发布 Artist 页面。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -14,6 +14,22 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - `cpp/AccountManager.*` 在 Host 内进行签名、设备标识持久化、QR 获取/轮询、账号状态和 cookie 写入；`SettingsView.qml` 仍有酷狗专用 UI。
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
+
+## 切片 21：通用 Artist Browse v1 与 Host 执行隔离
+
+2026-10-13，新增独立版本化的可选 `IArtistBrowseProviderV1`，不向冻结 v2 接口添加虚方法/字段，不使用平台名或 QML metadata 路由。Ready Session 的完整 Artist ref 可声明 Albums/Tracks；旧插件缺少扩展仍保持 Albums，扩展 nullopt/非法枚举拒绝且不 fallback。详情及兼容边界见[浏览契约](source-artist-browse-v1.md)。
+
+SourceRegistry 仅在显式导航/执行时查询扩展，持有 callable lease，检查身份、线程、Ready/启用和回调后的退役/替换状态，拒绝递归；不从属性 getter 调插件。缓存卡片首次导航可显式走正常 Session 创建/open，旧插件 Connecting 保留 Albums 导航并延迟派发；扩展选择方法必须 Ready。MusicHub 在验证展示形状后选择标准目标，记录专用导航 revision/当前 scope，区分正常 Session 状态通知和实际导航变更，拒绝回调期间覆盖更新的导航。原 UI/QML 及其他实体导航不变，未新增平台专用 Host 分支或账号配置。
+
+Tracks 的 Host 查询带独立版本化 selector，绑定具体实例、artistId、section 和游标。PageRepository 在初次、分页、重试/刷新前复核活跃扩展，拒绝 malformed/aggregate/缺失扩展/撤回 Tracks，不能落入忽略未知过滤字段的旧 PageProvider；成功后只移除 selector，以标准 Category/Tracks + artistId 调原 v2 fetchPage。保留来源条目顺序，不入普通磁盘页缓存。回包必须完整且非 cached，恰好一个 Tracks section，同 source/instance/account 的 Track refs；之后仍走原 sanitizer/Registry/Router/Coordinator，不赋予 Play 或认证。
+
+动态夹具与外部 Qt-only 安装工程覆盖扩展发现/头文件、旧插件路径、目标拒绝/非法枚举、元数据无权、身份、分页/返回导航/刷新撤回、错误 section/异类/跨账号条目、关闭/卸载 lease 与重入。刷新或续页失败保留此前已验收行及错误信息，遵循现有 UI 行为，不把新错误回包当作有效数据。
+
+本切片不接酷狗 Artist 页面、不改实验包默认隔离、Plugin UI API、凭证格式或旧 Host 登录。下一步才将私有歌手协议接到标准列表/ref/artistId/游标与 Track 索引，明确缺失 total 时的分页策略并验证多实例/关闭/取消/权限交集；真实服务/认证验收仍不能用夹具替代。旧 Host 不理解新扩展，歌曲浏览发布前仍须明确最低 Host 支持要求，不能宣称旧 Host 已获得新能力。
+
+Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，修复后的相关专项 **23/23（11.98 秒）** 通过；追加冷启动/Connecting 用例并正常重生成测试目标后，两用例单独执行通过，最终全量 **84/84 CTest（67.91 秒）** 通过，包含最终测试产物、原 UI、Local/Navidrome、外部 SDK 安装、动态管理 UI/卸载及 macOS 打包/重定位。没有真实酷狗网络、账号或音频验收。
+
+初轮夹具使用未声明账号参数而被 Schema 正确拒绝，改为测试工厂内部开关，未放宽 Schema。另修正刷新失败应保留已验收行的测试预期。专项复核发现真实原 UI 缓存卡片首次 Artist 导航回归：要求会话预先存在会拒绝旧行为；已允许显式用户导航通过 Registry 正常创建/open，并用专用导航代次区分 Session 状态通知与真正导航变更，保持既有 Adapter 验收用例不变。追加用例时发现生成的测试元对象仍是旧快照，已正常重生成并实际执行新函数，最后全量复跑使用最终产物；失败运行和未包含新函数的旧产物不计最终验收。
 
 ## 切片 20：歌手协议基础与标准导航差距
 

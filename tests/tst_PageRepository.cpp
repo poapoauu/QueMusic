@@ -112,6 +112,7 @@ public:
 #else
 #include "PageRepository.h"
 #include "MusicPageModel.h"
+#include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
 #include "SourceAccountStore.h"
 #include "extensions/discovery/v1/IDiscoveryProviderV1.h"
 #include <QSettings>
@@ -171,6 +172,29 @@ static PageSectionV2 favoriteSection(QString source, PageSectionKindV2 kind, QSt
 class PageRepositoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void artistTracksSelectorNeverFallsThroughToOldProvider()
+    {
+        PageHarness h; QVERIFY(h.init()); auto *session = h.session("home");
+        QSignalSpy failed(&h.repo, &PageRepository::pageFailed), ready(&h.repo, &PageRepository::pageReady);
+        PageQueryV2 query; query.page = MusicPageKindV2::Category; query.section = PageSectionKindV2::Tracks;
+        query.scope.sourceInstanceId = "task5/home";
+        query.filters = {{"artistId", "artist"}, {artistBrowseFilterKeyV1(), "tracks"}};
+        h.repo.requestPage(query, 1); QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][2]).kind, SourceErrorKindV2::Unsupported);
+        for (int variant = 0; variant < 7; ++variant) {
+            auto bad = query;
+            if (variant == 0) bad.scope.sourceInstanceId.clear();
+            if (variant == 1) bad.section = PageSectionKindV2::Albums;
+            if (variant == 2) bad.filters[artistBrowseFilterKeyV1()] = true;
+            if (variant == 3) bad.filters["artistId"] = 123;
+            if (variant == 4) bad.filters["artistId"] = " ";
+            if (variant == 5) bad.filters["genre"] = "Rock";
+            if (variant == 6) bad.searchText = "search";
+            h.repo.requestPage(bad, 2); QTRY_COMPARE(failed.size(), variant + 2);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind, SourceErrorKindV2::InvalidRequest);
+        }
+        QCOMPARE(session->property("calls").toInt(), 0); QVERIFY(ready.isEmpty());
+    }
     void capabilityChangesInvalidateOrdinaryRequestsAndMatchingCaches() {
         PageHarness h; QVERIFY(h.init());
         auto *home=h.session("home"); auto *office=h.session("office");

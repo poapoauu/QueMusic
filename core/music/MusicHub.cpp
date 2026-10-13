@@ -3,6 +3,7 @@
 #include "DirectoryLibraryController.h"
 #include "PageRepository.h"
 #include "extensions/discovery/v1/IDiscoveryProviderV1.h"
+#include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
 #include <QDir>
 #include <QSettings>
 #include <QTimer>
@@ -102,6 +103,7 @@ struct MusicHub::Impl {
     QHash<QUuid, MediaRefV2> assetRequests;
     QVariantList options;
     QList<Context> stack;
+    quint64 navigationRevision = 0;
     QString searchText;
     int searchTab = 0;
     quint64 contextRevision = 0;
@@ -141,6 +143,7 @@ struct MusicHub::Impl {
         QObject::connect(assets.get(), &MediaAssetRepository::failed, q,
             [this](QUuid id, SourceErrorV2 error) { assetFailure(id, error); });
         if (scope) QObject::connect(scope, &SourceScopeStore::selectedSourceInstanceIdChanged, q, [this] {
+            ++navigationRevision;
             stack.clear();
             emit q->categoryContextChanged();
             options = makeOptions();
@@ -549,11 +552,23 @@ bool MusicHub::browse(const QVariantMap &item)
         typed.availableActions.insert(SourceActionV2(action), {AvailabilityV2(value.value("state").toInt()),
             value.value("reasonKey").toString(), value.value("constraints").toMap()});
     }
+    if (ref.entityType == MediaEntityTypeV2::Artist) {
+        const QPointer<MusicHub> guard(this);
+        const auto navigationRevision = d->navigationRevision;
+        const auto selected = d->selected();
+        const auto target = d->sources->artistBrowseSection(ref, true);
+        if (!guard || !target) return false;
+        if (d->navigationRevision != navigationRevision || d->selected() != selected || !d->owns(ref)) return false;
+        query.section = *target;
+        if (*target == PageSectionKindV2::Tracks)
+            query.filters.insert(artistBrowseFilterKeyV1(), QStringLiteral("tracks"));
+    }
     PageSectionV2 section; section.sectionId = "context"; section.items = {typed};
     MusicPageModel serializer(MusicPageKindV2::Category);
     const auto generation = serializer.beginRequest();
     serializer.applyResult(generation, PageCache::sanitized({{section}, {}, false, true}));
     d->stack.append({query, serializer.itemAt(0, 0)});
+    ++d->navigationRevision;
     if (d->stack.size() > 32) d->stack.removeFirst();
     d->invalidate(1, true);
     emit categoryContextChanged();
@@ -563,12 +578,14 @@ bool MusicHub::browse(const QVariantMap &item)
 bool MusicHub::navigateBack()
 {
     if (d->stack.isEmpty()) return false;
+    ++d->navigationRevision;
     d->stack.removeLast(); d->invalidate(1, true);
     emit categoryContextChanged(); d->refresh(1); return true;
 }
 void MusicHub::resetCategoryNavigation()
 {
     if (d->stack.isEmpty()) return;
+    ++d->navigationRevision;
     d->stack.clear();
     d->invalidate(1, true);
     emit categoryContextChanged();

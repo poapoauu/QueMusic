@@ -1,8 +1,9 @@
 #if defined(QUEMUSIC_HUB_FIXTURE)
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
+#include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
 
-class HubFixtureSession final : public IMusicSourceSessionV2, public IPageProviderV2,
+class HubFixtureSession : public IMusicSourceSessionV2, public IPageProviderV2,
                                 public IPlaybackProviderV2 {
     Q_OBJECT
     Q_INTERFACES(IPageProviderV2 IPlaybackProviderV2)
@@ -10,7 +11,9 @@ public:
     SourceConfigurationV2 config;
     HubFixtureSession(SourceConfigurationV2 c, QObject *p) : IMusicSourceSessionV2(p), config(c) {}
     SourceIdentityV2 identity() const override { return {"task7", config.sourceInstanceId, config.accountId, config.displayName}; }
-    SourceSessionStateV2 state() const override { return SourceSessionStateV2::Ready; }
+    SourceSessionStateV2 state() const override {
+        return property("connecting").toBool() ? SourceSessionStateV2::Connecting : SourceSessionStateV2::Ready;
+    }
     CapabilitySetV2 capabilities() const override { return {}; }
     QUuid open() override { auto id = QUuid::createUuid(); emit requestStarted(id); emit actionCompleted(id, {}); return id; }
     void close() override { emit stateChanged(SourceSessionStateV2::Closing); }
@@ -46,6 +49,9 @@ public:
                                         : insideDirectory ? "child-" + config.accountId
                                                           : QString::number(requests.size())};
             item.title = query.searchText.isEmpty() ? config.accountId : query.searchText;
+            if (property("badArtistRow").toBool()) item.ref.entityType = MediaEntityTypeV2::Album;
+            if (property("foreignArtistRow").toBool()) item.ref.accountId = "foreign";
+            if (property("badArtistSection").toBool()) section.kind = PageSectionKindV2::Albums;
             section.items = {item};
             section.hasMore = !rootDirectories && query.cursor.isEmpty();
             section.nextCursor = section.hasMore ? "provider-" + section.sectionId : QString{};
@@ -70,6 +76,24 @@ public:
         return id;
     }
 };
+class ArtistHubFixtureSession final : public HubFixtureSession, public IArtistBrowseProviderV1 {
+    Q_OBJECT
+    Q_INTERFACES(IArtistBrowseProviderV1)
+public:
+    using HubFixtureSession::HubFixtureSession;
+    std::optional<ArtistBrowseTargetV1> artistBrowseTarget(const MediaRefV2 &ref) const override
+    {
+        auto *self = const_cast<ArtistHubFixtureSession *>(this);
+        self->setProperty("browseChecks", property("browseChecks").toInt() + 1);
+        if (ref.sourcePluginId != "task7" || ref.sourceInstanceId != config.sourceInstanceId
+            || ref.accountId != config.accountId || ref.entityType != MediaEntityTypeV2::Artist) return {};
+        const auto target = property("browseTarget");
+        const auto result = target.isValid() ? ArtistBrowseTargetV1(target.toInt()) : ArtistBrowseTargetV1::Tracks;
+        if (property("denyBrowse").toBool()) return {};
+        if (property("notifyOnBrowse").toBool()) emit self->capabilitiesChanged({});
+        return result;
+    }
+};
 class HubFixturePlugin final : public QObject, public IMusicSourcePluginV2 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID QUEMUSIC_MUSIC_SOURCE_PLUGIN_V2_IID)
@@ -78,7 +102,13 @@ class HubFixturePlugin final : public QObject, public IMusicSourcePluginV2 {
 public:
     int sourceSdkAbi() const { return 2; }
     SourceDescriptorV2 descriptor() const override { return {"org.quemusic.source.task7", "task7", "Task7", "2.0.0", 2, {}}; }
-    IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &c, QObject *p) override { return new HubFixtureSession(c, p); }
+    IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &c, QObject *p) override {
+        setProperty("sessionCreates", property("sessionCreates").toInt() + 1);
+        auto *session = property("artistBrowse").toBool() && c.accountId == "home"
+            ? static_cast<HubFixtureSession *>(new ArtistHubFixtureSession(c, p)) : new HubFixtureSession(c, p);
+        session->setProperty("connecting", property("connecting"));
+        return session;
+    }
 };
 #else
 #include "MusicHub.h"
@@ -86,6 +116,7 @@ public:
 #include "PageCache.h"
 #include "PageRepository.h"
 #include "MediaAssetRepository.h"
+#include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -107,11 +138,12 @@ struct HubHarness {
     SourceRegistry registry{&plugins, &accounts};
     SourceScopeStore scope{&settings};
     std::unique_ptr<MusicHub> hub;
-    bool init()
+    bool init(bool artistBrowse = false)
     {
         plugins.addSearchPath(QUEMUSIC_TASK7_PACKAGES);
-        if (plugins.discover() != 1 || !plugins.load("org.quemusic.source.task7")
-            || !accounts.saveResolvedV2({"task7", "home", "Home", {}, {}})
+        if (plugins.discover() != 1 || !plugins.load("org.quemusic.source.task7")) return false;
+        plugins.pluginInstance("org.quemusic.source.task7")->setProperty("artistBrowse", artistBrowse);
+        if (!accounts.saveResolvedV2({"task7", "home", "Home", {}, {}})
             || !accounts.saveResolvedV2({"task7", "office", "Office", {}, {}})) return false;
         settings.setValue("MusicHub/cacheDirectory", dir.filePath("cache"));
         hub = std::make_unique<MusicHub>(&registry, &scope, &settings);
@@ -134,6 +166,121 @@ static int rowFor(MusicPageModel *model, PageSectionKindV2 kind)
 class MusicHubTest final : public QObject {
     Q_OBJECT
 private slots:
+    void artistColdNavigationCreatesSessionOnlyForExplicitBrowse()
+    {
+        // Cached cards may precede every session; ordinary getters stay inert.
+        for (const bool extended : {false, true}) {
+            HubHarness h; QVERIFY(h.init(extended));
+            auto *plugin = h.plugins.pluginInstance("org.quemusic.source.task7");
+            h.hub->categoryContext(); h.hub->sourceOptions();
+            QVERIFY(!h.registry.artistBrowseSection({"task7", "task7/home", "home", MediaEntityTypeV2::Artist, "entity"}));
+            QCOMPARE(plugin->property("sessionCreates").toInt(), 0);
+            auto artist = item(MediaEntityTypeV2::Artist); artist["metadata"] = QVariantMap{{"browseTarget", "tracks"}};
+            QVERIFY(h.hub->browse(artist)); QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+            QCOMPARE(plugin->property("sessionCreates").toInt(), 1);
+            QCOMPARE(h.requests().last().toMap()["section"].toInt(),
+                     int(extended ? PageSectionKindV2::Tracks : PageSectionKindV2::Albums));
+        }
+    }
+    void oldArtistConnectingSessionPreservesDeferredAlbumsBrowse()
+    {
+        HubHarness h; QVERIFY(h.init());
+        h.plugins.pluginInstance("org.quemusic.source.task7")->setProperty("connecting", true);
+        QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Artist)));
+        QCoreApplication::processEvents(); QVERIFY(h.requests().isEmpty());
+        auto *session = h.session(); session->setProperty("connecting", false);
+        emit session->stateChanged(SourceSessionStateV2::Ready);
+        QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+        QCOMPARE(h.requests().last().toMap()["section"].toInt(), int(PageSectionKindV2::Albums));
+    }
+    void artistBrowseNegotiatesTracksAndRechecksContinuation()
+    {
+        HubHarness h; QVERIFY(h.init(true)); auto *session = h.session();
+        QVERIFY(qobject_cast<IArtistBrowseProviderV1 *>(session));
+        QVERIFY(!qobject_cast<IArtistBrowseProviderV1 *>(h.session("office")));
+        auto artist = item(MediaEntityTypeV2::Artist);
+        artist["metadata"] = QVariantMap{{"browseTarget", "albums"}}; // not a routing authority
+        QVERIFY(h.hub->browse(artist)); QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+        QCOMPARE(session->property("browseChecks").toInt(), 2); // navigation + execution
+        QCOMPARE(h.requests().last().toMap()["section"].toInt(), int(PageSectionKindV2::Tracks));
+        QCOMPARE(h.requests().last().toMap()["filters"].toMap(), QVariantMap({{"artistId", "entity"}}));
+        const auto section = h.hub->category()->section(0).sectionId;
+        h.hub->loadMore(1, section); QTRY_COMPARE(h.hub->category()->section(0).items.size(), 2);
+        QCOMPARE(session->property("browseChecks").toInt(), 3);
+        QCOMPARE(h.requests().last().toMap()["cursor"].toString(), "provider-8");
+        QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Album)));
+        QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+        QVERIFY(h.hub->navigateBack()); QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+        const auto calls = h.requests().size(); const auto retained = h.hub->category()->itemAt(0, 0);
+        session->setProperty("denyBrowse", true);
+        h.hub->refresh(1); QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Failed);
+        QCOMPARE(h.requests().size(), calls);
+        QCOMPARE(h.hub->category()->itemAt(0, 0), retained); // preserve accepted rows under refresh failure
+    }
+    void artistBrowseDenialAndInvalidTargetDoNotMutateNavigation()
+    {
+        HubHarness h; QVERIFY(h.init(true)); auto *session = h.session();
+        for (const int target : {-1, 99}) {
+            session->setProperty("browseTarget", target);
+            QVERIFY(!h.hub->browse(item(MediaEntityTypeV2::Artist)));
+            QVERIFY(h.hub->categoryContext().isEmpty()); QVERIFY(h.requests().isEmpty());
+        }
+        session->setProperty("browseTarget", int(ArtistBrowseTargetV1::Albums));
+        QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Artist)));
+        QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Ready);
+        QCOMPARE(h.requests().last().toMap()["section"].toInt(), int(PageSectionKindV2::Albums));
+        const auto context = h.hub->categoryContext(); const auto calls = h.requests().size();
+        session->setProperty("denyBrowse", true);
+        QVERIFY(!h.hub->browse(item(MediaEntityTypeV2::Artist, "other")));
+        QCOMPARE(h.hub->categoryContext(), context); QCOMPARE(h.requests().size(), calls);
+        auto foreign = item(MediaEntityTypeV2::Artist); auto ref = foreign["ref"].toMap();
+        ref["accountId"] = "office"; foreign["ref"] = ref;
+        const auto checks = session->property("browseChecks").toInt();
+        QVERIFY(!h.hub->browse(foreign)); QCOMPARE(session->property("browseChecks").toInt(), checks);
+    }
+    void artistTracksRejectWrongSectionAndForeignOrNonTrackRows()
+    {
+        for (const auto *property : {"badArtistRow", "foreignArtistRow", "badArtistSection"}) {
+            HubHarness h; QVERIFY(h.init(true)); h.session()->setProperty(property, true);
+            QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Artist)));
+            QTRY_COMPARE(h.hub->category()->state(), PageLoadStateV2::Failed);
+            for (int row = 0; row < h.hub->category()->rowCount(); ++row) QVERIFY(h.hub->category()->section(row).items.isEmpty());
+        }
+    }
+    void artistBrowseCallbackRetirementIsSafeAndLeaseRemainsCallable()
+    {
+        HubHarness h; QVERIFY(h.init(true)); QPointer<IMusicSourceSessionV2> session = h.session();
+        session->setProperty("notifyOnBrowse", true);
+        connect(session, &IMusicSourceSessionV2::capabilitiesChanged, h.hub.get(), [&] {
+            QVERIFY(h.registry.closeInstance("task7/home"));
+            QCOMPARE(h.plugins.unload("org.quemusic.source.task7"), PluginOperationResult::Busy);
+        });
+        QVERIFY(!h.hub->browse(item(MediaEntityTypeV2::Artist)));
+        QVERIFY(!session); QVERIFY(h.hub->categoryContext().isEmpty());
+        QCOMPARE(h.plugins.unload("org.quemusic.source.task7"), PluginOperationResult::Success);
+    }
+    void artistBrowseWithdrawnBeforeLoadMoreRetainsItemsWithoutProviderFetch()
+    {
+        HubHarness h; QVERIFY(h.init(true)); auto *session = h.session();
+        QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Artist)));
+        auto *model = h.hub->category(); QTRY_COMPARE(model->state(), PageLoadStateV2::Ready);
+        const auto first = model->itemAt(0, 0); const auto calls = h.requests().size();
+        session->setProperty("browseTarget", int(ArtistBrowseTargetV1::Albums));
+        h.hub->loadMore(1, model->section(0).sectionId);
+        QTRY_VERIFY(!model->data(model->index(0), MusicPageModel::ErrorRole).toMap().isEmpty());
+        QCOMPARE(h.requests().size(), calls); QCOMPARE(model->itemAt(0, 0), first);
+        QVERIFY(!model->data(model->index(0), MusicPageModel::LoadingMoreRole).toBool());
+    }
+    void artistBrowseReentryCannotReplaceNewerNavigation()
+    {
+        HubHarness h; QVERIFY(h.init(true)); auto *session = h.session(); session->setProperty("notifyOnBrowse", true);
+        connect(session, &IMusicSourceSessionV2::capabilitiesChanged, h.hub.get(), [&] {
+            QVERIFY(!h.hub->browse(item(MediaEntityTypeV2::Artist))); // recursive extension call denied
+            QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Album, "newer")));
+        });
+        QVERIFY(!h.hub->browse(item(MediaEntityTypeV2::Artist)));
+        QCOMPARE(h.hub->categoryContext()["item"].toMap()["ref"].toMap()["entityId"].toString(), "newer");
+    }
     void capabilitiesInvalidateAllOrdinaryPagesOnlyInTheirScope() {
         HubHarness h; QVERIFY(h.init());
         auto *home=h.session("home"); auto *office=h.session("office");

@@ -1,6 +1,7 @@
 #include "PageRepository.h"
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/discovery/v1/IDiscoveryProviderV1.h"
+#include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
 #include <QFutureWatcher>
 #include <QTimer>
 #include <QtConcurrentRun>
@@ -114,7 +115,9 @@ void PageRepository::begin(const QUuid &id)
     }
     const bool discovery=q.filters.contains(discoveryFilterKeyV1());
     if (discovery && !discoveryKindV1(q)) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
-    g->sourceOrdered=q.filters.contains(QStringLiteral("playlistId")) || (discovery && !q.scope.isAggregate());
+    const bool artistTracks=q.filters.contains(artistBrowseFilterKeyV1());
+    if (artistTracks && !isArtistTracksQueryV1(q)) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
+    g->sourceOrdered=q.filters.contains(QStringLiteral("playlistId")) || artistTracks || (discovery && !q.scope.isAggregate());
     if (q.filters.contains(QStringLiteral("playlistId")) && q.scope.isAggregate()) {
         fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
     }
@@ -220,6 +223,15 @@ void PageRepository::dispatch(const QUuid &id,const QString &source)
                 : SourceErrorKindV2::Unavailable)); return;
         }
     } else if (!provider) { receive(id,source,{},error(SourceErrorKindV2::Unsupported)); return; }
+    if (g->key.query.filters.contains(artistBrowseFilterKeyV1())) {
+        const MediaRefV2 artist{req->sourceId, source, req->accountId, MediaEntityTypeV2::Artist,
+                               g->key.query.filters.value(QStringLiteral("artistId")).toString()};
+        const auto target=m_sources->artistBrowseSection(artist);
+        if (!guard || req->done || !m_groups.contains(id)) return;
+        if (!req->session || target != PageSectionKindV2::Tracks) {
+            receive(id,source,{},error(SourceErrorKindV2::Unsupported)); return;
+        }
+    }
     req->connections.append(connect(req->session,&IMusicSourceSessionV2::requestStarted,this,[req](QUuid pid) {
         if (req->invoking && req->providerId.isNull()) req->providerId=pid;
     }));
@@ -233,6 +245,7 @@ void PageRepository::dispatch(const QUuid &id,const QString &source)
     query.cursor=g->continuation?g->continuation->sourceCursors.value(source):QString{};
     req->dispatched=true; req->invoking=true;
     if (discovery) query.filters.clear();
+    query.filters.remove(artistBrowseFilterKeyV1());
     const auto returned=discovery ? discoveryProvider->fetchDiscovery(*discovery,query) : provider->fetchPage(query);
     req->invoking=false;
     if (!guard) return;
@@ -248,7 +261,8 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
     // multiple standard sections. Ruling12 continuations are section-specific.
     if (!failure && (!page.complete || page.cached)) failure=error(SourceErrorKindV2::InvalidRequest);
     const bool discovery=discoveryKindV1(g->key.query).has_value();
-    if (!failure && discovery && (page.sections.size()!=1 || page.sections.first().kind!=PageSectionKindV2::Tracks))
+    const bool artistTracks=isArtistTracksQueryV1(g->key.query);
+    if (!failure && (discovery || artistTracks) && (page.sections.size()!=1 || page.sections.first().kind!=PageSectionKindV2::Tracks))
         failure=error(SourceErrorKindV2::InvalidRequest);
     QSet<PageSectionKindV2> kinds;
     if (!failure) for (const auto &s:page.sections) {
@@ -258,7 +272,7 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
             failure=error(SourceErrorKindV2::InvalidRequest);
         kinds.insert(s.kind);
         for (const auto &i:s.items) if (i.ref.sourceInstanceId!=source
-            || (discovery && (i.ref.entityType!=MediaEntityTypeV2::Track
+            || ((discovery || artistTracks) && (i.ref.entityType!=MediaEntityTypeV2::Track
                 || i.ref.sourcePluginId!=req->sourceId || i.ref.accountId!=req->accountId
                 || i.ref.entityId.trimmed().isEmpty()))) failure=error(SourceErrorKindV2::InvalidRequest);
     }

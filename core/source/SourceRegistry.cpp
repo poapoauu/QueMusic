@@ -5,6 +5,8 @@
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/content-events/v1/ISourceContentEventsProviderV1.h"
 #include "extensions/content-events/v1/SourceContentEventsV1.h"
+#include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
+#include <QThread>
 
 #include <QVariantMap>
 #include <QRegularExpression>
@@ -446,6 +448,48 @@ std::optional<SourceInstanceDescriptorV2> SourceRegistry::presentationInstance(c
         && (account->pluginPackageId.isEmpty() || account->pluginPackageId == entry->packageId))
         result.state = entry->presentationState;
     return result;
+}
+
+std::optional<PageSectionKindV2> SourceRegistry::artistBrowseSection(const MediaRefV2 &artist, bool createSession)
+{
+    if (QThread::currentThread() != thread() || artist.entityType != MediaEntityTypeV2::Artist
+        || artist.entityId.trimmed().isEmpty() || m_artistBrowseReservations.contains(artist.sourceInstanceId)) return {};
+    const auto owner = presentationInstance(artist);
+    if (!owner || !owner->enabled) return {};
+    const QPointer<SourceRegistry> guard(this);
+    m_artistBrowseReservations.insert(artist.sourceInstanceId);
+    const auto cleanup = qScopeGuard([guard, id = artist.sourceInstanceId] {
+        if (guard) guard->m_artistBrowseReservations.remove(id);
+    });
+    if (createSession) {
+        sessionFor(artist.sourceInstanceId); // normal Registry create/open fencing
+        if (!guard) return {};
+    }
+    QPointer<IMusicSourceSessionV2> session;
+    PluginLease callLease;
+    {
+        const auto entry = m_sessions.constFind(artist.sourceInstanceId);
+        if (entry == m_sessions.cend() || !entry->session || !entry->lease.isValid()) return {};
+        session = entry->session; callLease = entry->lease;
+    }
+    const auto active = presentationInstance(artist);
+    if (session->thread() != thread() || !active || !active->enabled) return {};
+    auto *provider = qobject_cast<IArtistBrowseProviderV1 *>(session.data());
+    // Old plugins retain their deferred Albums navigation while opening.
+    if (!provider) return active->state == SourceSessionStateV2::Ready || active->state == SourceSessionStateV2::Connecting
+        ? std::optional(PageSectionKindV2::Albums) : std::nullopt;
+    if (active->state != SourceSessionStateV2::Ready) return {};
+    const auto target = provider->artistBrowseTarget(artist);
+    if (!guard || !session) return {};
+    const auto current = m_sessions.constFind(artist.sourceInstanceId);
+    const auto fresh = presentationInstance(artist);
+    if (current == m_sessions.cend() || current->session != session || !fresh || !fresh->enabled
+        || fresh->state != SourceSessionStateV2::Ready || !target) return {};
+    switch (*target) {
+    case ArtistBrowseTargetV1::Albums: return PageSectionKindV2::Albums;
+    case ArtistBrowseTargetV1::Tracks: return PageSectionKindV2::Tracks;
+    default: return {};
+    }
 }
 
 ActionAvailabilityV2 SourceRegistry::presentationAction(const MediaRefV2 &media, SourceActionV2 action,
