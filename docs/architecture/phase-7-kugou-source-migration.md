@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 21）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标及显式真实 Session smoke；切片 19 的 HTTPS 核验失败，实际服务和认证仍未验收。插件私有歌手协议基础已存在，Host 新增独立可选 Artist Browse v1 通用契约，旧插件默认 Albums、新扩展可声明 Tracks；酷狗 Session 尚未实现该扩展或发布 Artist 页面。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 22）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标及显式真实 Session smoke；切片 19 的 HTTPS 核验失败，实际服务和认证仍未验收。酷狗 Session 已实现独立可选 Artist Browse v1，发布标准热门歌手与歌手歌曲页面；旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -14,6 +14,20 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - `cpp/AccountManager.*` 在 Host 内进行签名、设备标识持久化、QR 获取/轮询、账号状态和 cookie 写入；`SettingsView.qml` 仍有酷狗专用 UI。
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
+
+## 切片 22：酷狗歌手 PageProvider 与标准歌曲索引
+
+2026-10-13，实验 Session 接入可选 Artist Browse v1：Ready 状态、完整同源/实例/账号 Artist ref 和规范 `artist/<十进制 ID>` 才选择 Tracks，方法无 I/O/信号/状态修改。允许用户从缓存的合法 Artist ref 导航，但该选择不是媒体查找、认证或 Play 授权；歌曲权限仍须当前服务响应与共享索引交集。没有增加 Host 酷狗专用路由。
+
+Category/Artists 无额外搜索/过滤条件时请求热门歌手；Category/Tracks 只接受单一字符串 artistId，严格验证命名空间与规范 ID。通用 selector 由 Host PageRepository 移除，插件不接受包含该 selector 的直接调用。Artist 只发布同实例身份/名称及 Play Unsupported，不暴露头像 URL、token 或原始字典；不支持 Albums 的请求继续明确拒绝，不把歌曲伪装成专辑。
+
+响应复用私有严格协议投影。total 缺失保留未知，满页才提供下一页探测，空页/短页结束；有 total 则同时检查页偏移，最多百万页。游标池最多 1024，绑定模式/歌手 ID/limit/页码及会话，禁止列表、歌曲、榜单、搜索、实例串用，close 后失效。榜单仍使用既有快照分页，不被新远程歌手分页替换。
+
+歌曲复用现有 4096 上限 Track 索引、完整 ref、重复 hash 合并与保守 Play 交集，迟到免费回包不能提升已观察到的限制；资源继续由 PlaybackCoordinator 请求 Source 解析、Core/Sink 播放。请求沿用 UUID、异步失败、取消/关闭/迟到回调隔离，没有默认自动播放、账号加载或认证权限提升。
+
+改动：`KugouSourceSession.h/.cpp`、私有协议注释、Session 测试及动态网络夹具/集成测试；不新增公开 v2 字段/虚方法/IID，不改 Plugin UI API 或磁盘格式。离线验收覆盖标准 Artist/Track 身份与白名单、扩展可选发现/无 I/O、未知/已知总数、游标边界、跨实例、错误过滤/响应、取消/关闭、共享权限拒绝以及动态 Registry → Provider → PlaybackCoordinator 链。Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，相关专项 **23/23（10.98 秒）** 通过；新增四个 Session 函数与动态集成函数另单独实际执行通过，最终全量 **84/84 CTest（88.42 秒）** 通过，含外部 SDK、原 UI、Local/Navidrome、动态管理 UI/卸载及 macOS 打包/重定位。均为受控协议/模拟 Sink，不是实际业务服务或音频验收。
+
+真实 HTTPS/业务 JSON、服务端 token 验证、手机扫码、Keychain、实际音频及旧 Host 登录迁出仍未验收；本切片不改变实验包默认隔离。下一步继续歌手分类/剩余公开页面协议核对与迁移，并补真实服务验收工具；最低 Host 功能支持声明仍是正式发布门槛，不能用同版本夹具证明旧 Host 支持 Tracks。
 
 ## 切片 21：通用 Artist Browse v1 与 Host 执行隔离
 

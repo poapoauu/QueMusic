@@ -88,9 +88,20 @@ std::optional<MediaItemV2> KugouSourceSession::lookupItem(const MediaRefV2 &ref)
     if (m_state != SourceSessionStateV2::Ready) return std::nullopt;
     const auto it = m_tracks.constFind(ref.entityId);
     if (it == m_tracks.cend() || it->ref != ref) return std::nullopt;
-    // Only the current session's validated search DTOs are indexed. No I/O,
+    // Only the current session's validated track DTOs are indexed. No I/O,
     // historical snapshot import, or stream URL is involved in this lookup.
     return *it;
+}
+std::optional<ArtistBrowseTargetV1> KugouSourceSession::artistBrowseTarget(const MediaRefV2 &ref) const
+{
+    // Routing is not a permission grant; cached canonical artist identities
+    // can be browsed without importing historical media or performing I/O.
+    if (m_state != SourceSessionStateV2::Ready || ref.sourcePluginId != m_configuration.sourceId
+        || ref.sourceInstanceId != m_configuration.sourceInstanceId || ref.accountId != m_configuration.accountId
+        || ref.entityType != MediaEntityTypeV2::Artist || !ref.entityId.startsWith("artist/")) return std::nullopt;
+    const auto id = ref.entityId.mid(7);
+    if (id.isEmpty() || KugouArtistProtocol::artistId(QJsonValue(id)) != id) return std::nullopt;
+    return ArtistBrowseTargetV1::Tracks;
 }
 QUuid KugouSourceSession::fetchArtwork(const MediaRefV2 &media) { return enqueue({Kind::Unsupported, {}, media}); }
 QUuid KugouSourceSession::fetchLyrics(const MediaRefV2 &media) { return enqueue({Kind::Unsupported, {}, media}); }
@@ -137,6 +148,7 @@ void KugouSourceSession::dispatch(const QUuid &id)
         }
         PageMode mode;
         QString rankId;
+        QString artistId;
         if (query.page == MusicPageKindV2::Search && query.section == PageSectionKindV2::Tracks) {
             mode = PageMode::Search;
             if (query.searchText.trimmed().isEmpty() || query.searchText.size() > 512 || !query.filters.isEmpty()) {
@@ -145,6 +157,21 @@ void KugouSourceSession::dispatch(const QUuid &id)
         } else if (query.page == MusicPageKindV2::Category && query.section == PageSectionKindV2::Playlists) {
             mode = PageMode::RankCatalog;
             if (!query.searchText.isEmpty() || !query.filters.isEmpty()) {
+                fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
+            }
+        } else if (query.page == MusicPageKindV2::Category && query.section == PageSectionKindV2::Artists) {
+            mode = PageMode::ArtistCatalog;
+            if (!query.searchText.isEmpty() || !query.filters.isEmpty()) {
+                fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
+            }
+        } else if (query.page == MusicPageKindV2::Category && query.section == PageSectionKindV2::Tracks
+                   && query.filters.contains("artistId")) {
+            mode = PageMode::ArtistTracks;
+            const auto value = query.filters.value("artistId");
+            const auto artist = value.toString(); artistId = artist.mid(7);
+            if (!query.searchText.isEmpty() || query.filters.size() != 1
+                || value.metaType().id() != QMetaType::QString || !artist.startsWith("artist/")
+                || artistId.isEmpty() || KugouArtistProtocol::artistId(QJsonValue(artistId)) != artistId) {
                 fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.page.invalid")); return;
             }
         } else if (query.page == MusicPageKindV2::Category && query.section == PageSectionKindV2::Tracks) {
@@ -164,7 +191,7 @@ void KugouSourceSession::dispatch(const QUuid &id)
         if (!query.cursor.isEmpty()) {
             const auto it = m_cursors.constFind(query.cursor);
             if (it == m_cursors.cend() || it->search != query.searchText.trimmed() || it->limit != query.limit
-                || it->mode != mode || it->rankId != rankId
+                || it->mode != mode || it->rankId != rankId || it->artistId != artistId
                 || (mode == PageMode::RankCatalog && it->catalogGeneration != m_catalogGeneration)) {
                 fail(id, failure(SourceErrorKindV2::InvalidRequest, "kugou.cursor.invalid")); return;
             }
@@ -173,8 +200,15 @@ void KugouSourceSession::dispatch(const QUuid &id)
         m_requests[id].page = page;
         m_requests[id].pageMode = mode;
         m_requests[id].rankId = rankId;
+        m_requests[id].artistId = artistId;
         if (mode == PageMode::RankCatalog && !query.cursor.isEmpty()) {
             publishCatalog(id); return; // bounded snapshot pagination, no I/O
+        }
+        if (mode == PageMode::ArtistCatalog || mode == PageMode::ArtistTracks) {
+            const auto clientId = m_client->getArtist(mode == PageMode::ArtistCatalog
+                ? KugouArtistProtocol::Operation::Popular : KugouArtistProtocol::Operation::Tracks,
+                artistId, page, query.limit);
+            m_requests[id].clientId = clientId; m_clientIds.insert(clientId, id); return;
         }
         if (mode != PageMode::Search) {
             const auto clientId = mode == PageMode::RankCatalog
@@ -241,22 +275,56 @@ void KugouSourceSession::succeeded(const QUuid &clientId, const QJsonObject &res
         m_catalog = *catalog; m_catalogGeneration = QUuid::createUuid();
         publishCatalog(id); return;
     }
+    if (request.pageMode == PageMode::ArtistCatalog) {
+        const auto catalog = KugouArtistProtocol::catalog(response, request.query.limit);
+        if (!catalog) { fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return; }
+        PageSectionV2 section;
+        section.sectionId = "artists"; section.kind = PageSectionKindV2::Artists;
+        section.titleKey = "kugou.artists"; section.layoutHint = "grid";
+        for (const auto &entry : catalog->entries) {
+            MediaItemV2 item;
+            item.ref = {m_configuration.sourceId, m_configuration.sourceInstanceId, m_configuration.accountId,
+                MediaEntityTypeV2::Artist, "artist/" + entry.id};
+            item.title = entry.name;
+            item.availableActions.insert(SourceActionV2::Play,
+                {AvailabilityV2::Unsupported, "source.operation.unsupported", {}});
+            section.items.append(item);
+        }
+        section.hasMore = catalog->entries.size() == request.query.limit && request.page < 1000000
+            && (!catalog->total || qint64(request.page) * request.query.limit < *catalog->total);
+        if (section.hasMore) {
+            if (m_cursors.size() >= 1024) m_cursors.clear();
+            section.nextCursor = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            m_cursors.insert(section.nextCursor, {{}, request.query.limit, request.page + 1,
+                request.pageMode, {}, {}, {}});
+        }
+        publishPage(id, std::move(section)); return;
+    }
     const auto data = response.value("data").toObject();
     const auto total = data.value("total"); const double count = total.toDouble(-1);
     auto rows = data.value("info").toArray();
-    if (response.value("status").toDouble(-1) != 1 || !data.value("info").isArray()
-        || !total.isDouble() || !std::isfinite(count) || count < 0 || count > INT_MAX
-        || std::floor(count) != count || rows.size() > request.query.limit) {
-        fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return;
-    }
-    if (request.pageMode == PageMode::RankTracks) {
-        const auto projected = KugouRankProtocol::tracks(response, request.query.limit);
+    std::optional<int> pageTotal;
+    if (request.pageMode == PageMode::ArtistTracks) {
+        const auto projected = KugouArtistProtocol::tracks(response, request.query.limit);
         if (!projected) { fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return; }
-        rows = projected->rows;
+        rows = projected->rows; pageTotal = projected->total;
+    } else {
+        if (response.value("status").toDouble(-1) != 1 || !data.value("info").isArray()
+            || !total.isDouble() || !std::isfinite(count) || count < 0 || count > INT_MAX
+            || std::floor(count) != count || rows.size() > request.query.limit) {
+            fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return;
+        }
+        if (request.pageMode == PageMode::RankTracks) {
+            const auto projected = KugouRankProtocol::tracks(response, request.query.limit);
+            if (!projected) { fail(id, failure(SourceErrorKindV2::Unavailable, "kugou.page.invalidResponse")); return; }
+            rows = projected->rows;
+        }
+        pageTotal = int(count);
     }
     PageSectionV2 section;
     section.sectionId = "tracks"; section.kind = PageSectionKindV2::Tracks;
-    section.titleKey = request.pageMode == PageMode::Search ? "source.search.tracks" : "kugou.rank.tracks";
+    section.titleKey = request.pageMode == PageMode::Search ? "source.search.tracks"
+        : request.pageMode == PageMode::ArtistTracks ? "kugou.artist.tracks" : "kugou.rank.tracks";
     section.layoutHint = "list";
     QSet<QString> hashes;
     for (const auto &row : rows) {
@@ -284,13 +352,13 @@ void KugouSourceSession::succeeded(const QUuid &clientId, const QJsonObject &res
         section.items.append(*item);
     }
     const qint64 offset = qint64(request.page) * request.query.limit;
-    section.hasMore = !rows.isEmpty() && rows.size() == request.query.limit && offset < qint64(count)
+    section.hasMore = !rows.isEmpty() && rows.size() == request.query.limit && (!pageTotal || offset < *pageTotal)
         && request.page < 1000000;
     if (section.hasMore) {
         if (m_cursors.size() >= 1024) m_cursors.clear();
         section.nextCursor = QUuid::createUuid().toString(QUuid::WithoutBraces);
         m_cursors.insert(section.nextCursor, {request.query.searchText.trimmed(), request.query.limit,
-            request.page + 1, request.pageMode, request.rankId, {}});
+            request.page + 1, request.pageMode, request.rankId, {}, request.artistId});
     }
     publishPage(id, std::move(section));
 }

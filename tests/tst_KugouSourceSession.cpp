@@ -247,18 +247,123 @@ private slots:
         session.fetchPage(ranks()); QTRY_COMPARE(network.requests.size(), 3);
         network.replies[2]->deliver(catalog()); QCOMPARE(session.state(), SourceSessionStateV2::Closed);
     }
-    void artistProtocolFoundationDoesNotPublishUnsupportedNavigation()
+    void artistBrowseRejectsForeignIdentityAndUnsupportedAlbumsWithoutIo()
     {
         Network network; KugouSourceSession session(config(), &network, nullptr);
         QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed), ready(&session, &IMusicSourceSessionV2::pageReady);
         session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
-        auto query = ranks(); query.section = PageSectionKindV2::Artists;
+        auto *browse = qobject_cast<IArtistBrowseProviderV1 *>(&session); QVERIFY(browse);
+        MediaRefV2 ref{"kugou", "kugou/one", "one", MediaEntityTypeV2::Artist, "artist/1"};
+        QCOMPARE(browse->artistBrowseTarget(ref), std::optional{ArtistBrowseTargetV1::Tracks});
+        for (int variant = 0; variant < 6; ++variant) {
+            auto wrong = ref;
+            if (variant == 0) wrong.sourcePluginId = "other";
+            if (variant == 1) wrong.sourceInstanceId = "kugou/two";
+            if (variant == 2) wrong.accountId = "two";
+            if (variant == 3) wrong.entityType = MediaEntityTypeV2::Track;
+            if (variant == 4) wrong.entityId = "artist/01";
+            if (variant == 5) wrong.entityId = "1";
+            QVERIFY(!browse->artistBrowseTarget(wrong));
+        }
+        auto query = ranks(); query.section = PageSectionKindV2::Albums; query.filters = {{"artistId", "artist/1"}};
         session.fetchPage(query); QTRY_COMPARE(failed.size(), 1);
         QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][1]).kind, SourceErrorKindV2::Unsupported);
-        query.section = PageSectionKindV2::Albums; query.filters = {{"artistId", "1"}};
-        session.fetchPage(query); QTRY_COMPARE(failed.size(), 2);
-        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[1][1]).kind, SourceErrorKindV2::Unsupported);
         QVERIFY(network.requests.isEmpty()); QVERIFY(ready.isEmpty());
+        session.close(); QVERIFY(!browse->artistBrowseTarget(ref));
+    }
+    void artistCatalogPublishesSafeIdentityAndUnknownTotalProbeCursor()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        auto query = ranks(); query.section = PageSectionKindV2::Artists;
+        session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 1);
+        QCOMPARE(network.requests[0].url().path(), "/api/v3/singer/rank");
+        network.replies[0]->deliver({{"status", 1}, {"data", QJsonObject{{"singers", QJsonArray{
+            QJsonObject{{"singerid", "123"}, {"singername", "Artist"}, {"token", "PRIVATE"}, {"imgurl", "PRIVATE"}}}}}}});
+        QCOMPARE(ready.size(), 1); auto section = qvariant_cast<PageResultV2>(ready[0][1]).sections[0];
+        QCOMPARE(section.kind, PageSectionKindV2::Artists); QCOMPARE(section.items.size(), 1);
+        const MediaRefV2 ref{"kugou", "kugou/one", "one", MediaEntityTypeV2::Artist, "artist/123"};
+        QCOMPARE(section.items[0].ref, ref); QCOMPARE(section.items[0].title, "Artist");
+        QVERIFY(section.items[0].metadata.isEmpty()); QVERIFY(section.items[0].externalIds.isEmpty());
+        QCOMPARE(section.items[0].availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unsupported);
+        QVERIFY(section.hasMore); QVERIFY(!section.nextCursor.isEmpty());
+        query.cursor = section.nextCursor;
+        auto wrong = query; wrong.section = PageSectionKindV2::Tracks; wrong.filters = {{"artistId", "artist/123"}};
+        session.fetchPage(wrong); QTRY_COMPARE(failed.size(), 1); QCOMPARE(network.requests.size(), 1);
+        session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 2);
+        QCOMPARE(QUrlQuery(network.requests[1].url()).queryItemValue("page"), "2");
+        network.replies[1]->deliver({{"status", 1}, {"data", QJsonObject{{"singers", QJsonArray{}}}}});
+        QCOMPARE(ready.size(), 2); section = qvariant_cast<PageResultV2>(ready[1][1]).sections[0];
+        QVERIFY(section.items.isEmpty()); QVERIFY(!section.hasMore);
+        session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 3);
+        session.close(); QVERIFY(network.replies[2]->aborted); QCOMPARE(ready.size(), 2);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        session.fetchPage(query); QTRY_COMPARE(failed.size(), 2); QCOMPARE(network.requests.size(), 3);
+    }
+    void artistTracksBindCursorAndShareConservativeRightsIndex()
+    {
+        Network network, otherNetwork;
+        KugouSourceSession session(config(), &network, nullptr), other(config("two"), &otherNetwork, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady), failed(&session, &IMusicSourceSessionV2::requestFailed);
+        QSignalSpy otherFailed(&other, &IMusicSourceSessionV2::requestFailed);
+        session.open(); other.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        QTRY_COMPARE(other.state(), SourceSessionStateV2::Ready);
+        auto query = ranks(); query.section = PageSectionKindV2::Tracks; query.filters = {{"artistId", "artist/123"}};
+        session.fetchPage(query); session.fetchPage(search()); QTRY_COMPARE(network.requests.size(), 2);
+        QCOMPARE(network.requests[0].url().path(), "/api/v3/singer/song");
+        QCOMPARE(QUrlQuery(network.requests[0].url()).queryItemValue("singerid"), "123");
+        network.replies[1]->deliver(page({track(1)}, 1));
+        network.replies[0]->deliver({{"status", 1}, {"data", QJsonObject{{"songs", QJsonArray{track()}}}}});
+        QCOMPARE(ready.size(), 2); auto section = qvariant_cast<PageResultV2>(ready.last()[1]).sections[0];
+        QCOMPARE(section.kind, PageSectionKindV2::Tracks); QCOMPARE(section.items[0].ref, media());
+        QVERIFY(section.items[0].metadata.isEmpty()); QVERIFY(section.hasMore);
+        QCOMPARE(section.items[0].availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+        QCOMPARE(session.lookupItem(media())->availableActions.value(SourceActionV2::Play).state, AvailabilityV2::Unavailable);
+        query.cursor = section.nextCursor;
+        for (int variant = 0; variant < 4; ++variant) {
+            auto wrong = query;
+            if (variant == 0) wrong.filters = {{"artistId", "artist/456"}};
+            if (variant == 1) wrong.limit = 2;
+            if (variant == 2) wrong.filters = {{"playlistId", "rank/8888"}};
+            if (variant == 3) { wrong = search(); wrong.cursor = query.cursor; }
+            session.fetchPage(wrong); QTRY_COMPARE(failed.size(), variant + 1);
+            QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[1]).messageKey, "kugou.cursor.invalid");
+        }
+        auto foreign = query; foreign.scope.sourceInstanceId = "kugou/two";
+        other.fetchPage(foreign); QTRY_COMPARE(otherFailed.size(), 1); QVERIFY(otherNetwork.requests.isEmpty());
+        session.resolveStream(media()); QTRY_COMPARE(failed.size(), 5); QCOMPARE(network.requests.size(), 2);
+        session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 3);
+        QCOMPARE(QUrlQuery(network.requests[2].url()).queryItemValue("page"), "2");
+        network.replies[2]->deliver({{"status", 1}, {"data", QJsonObject{{"songs", QJsonArray{track()}}, {"total", 2}}}});
+        QVERIFY(!qvariant_cast<PageResultV2>(ready.last()[1]).sections[0].hasMore);
+    }
+    void artistInvalidQueriesResponsesAndCancellationStayIsolated()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy ready(&session, &IMusicSourceSessionV2::pageReady), failed(&session, &IMusicSourceSessionV2::requestFailed);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        auto query = ranks(); query.section = PageSectionKindV2::Tracks; query.filters = {{"artistId", "artist/123"}};
+        for (int variant = 0; variant < 5; ++variant) {
+            auto wrong = query;
+            if (variant == 0) wrong.filters = {{"artistId", "artist/01"}};
+            if (variant == 1) wrong.filters = {{"artistId", 123}};
+            if (variant == 2) wrong.filters.insert("playlistId", "rank/8888");
+            if (variant == 3) wrong.filters.insert("quemusic.artist-browse.v1", "tracks");
+            if (variant == 4) wrong.searchText = "unexpected";
+            session.fetchPage(wrong); QTRY_COMPARE(failed.size(), variant + 1);
+        }
+        QVERIFY(network.requests.isEmpty());
+        auto id = session.fetchPage(query); session.cancel(id); QCoreApplication::processEvents();
+        QVERIFY(network.requests.isEmpty());
+        id = session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 1); session.cancel(id);
+        QVERIFY(network.replies[0]->aborted); QVERIFY(ready.isEmpty()); QCOMPARE(failed.size(), 5);
+        session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 2);
+        network.replies[1]->deliver(catalog()); QTRY_COMPARE(failed.size(), 6); QVERIFY(ready.isEmpty());
+        session.fetchPage(query); QTRY_COMPARE(network.requests.size(), 3);
+        network.replies[2]->deliver({{"status", 1}, {"data", QJsonObject{{"songs", QJsonArray{track()}}, {"total", "1"}}}});
+        QTRY_COMPARE(failed.size(), 7); QVERIFY(!session.lookupItem(media()));
     }
     void artistProjectionUsesStandardTrackIdentityAndUnknownRightsStayDenied()
     {

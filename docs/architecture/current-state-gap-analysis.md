@@ -4,6 +4,8 @@
 > 原始审计日期：2026-09-17；进展复核：2026-10-03
 > 设计基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 
+最新插件进展（2026-10-13，Phase 7 切片 22）：酷狗实验 Session 已通过可选 Artist Browse v1 接标准热门歌手/歌手歌曲页面，保留旧插件 Artist→Albums；完整 `artist/<ID>` 身份、模式/歌手/limit/会话绑定游标、未知总数下一页探测、标准 Track 索引与共享权限交集已实现。不改 Source SDK v2 ABI、Plugin UI API 或默认包隔离，不迁出旧登录。全目标构建成功，相关专项 **23/23（10.98 秒）** 通过，新增 Session/动态 Registry→Provider→Coordinator 用例另单独实际执行通过；最终全量 **84/84 CTest（88.42 秒）** 通过。真实 HTTPS/业务响应、服务认证、手机/Keychain/音频和正式发布最低 Host 功能声明仍有缺口；下一步继续剩余公开页面与服务验收工具，见[迁移记录](phase-7-kugou-source-migration.md)。以下各日期段落是对应历史快照，早期“未发布 Artist 页面”不再代表最新状态。
+
 最新复核（2026-10-10）：Phase 6 动态 Source UI 阶段代码出口完成，全目标增量构建、75/75 CTest、真应用隔离空配置 Cocoa smoke 通过；范围及仍未验收项见[Phase 6 出口报告](phase-6-exit-report.md)。以下早期状态与推荐阶段编号保留为历史快照，后续阶段以最终方案 Phase 7 酷狗、Phase 8 网易、Phase 9 Legacy 删除为准；不能将代码出口等同于真实服务/实际音频/跨平台发布验收。
 
 2026-10-11 已启动最终方案 Phase 7，新增酷狗插件私有可取消请求层；全目标增量构建和 76/76 CTest 通过（66.04 秒）。尚未注册酷狗 Source、接入认证 UI 或删除 Host 旧登录，见[迁移记录](phase-7-kugou-source-migration.md)。

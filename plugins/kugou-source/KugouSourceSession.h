@@ -3,14 +3,15 @@
 #include "v2/IMusicSourceSessionV2.h"
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/item-lookup/v1/IItemLookupProviderV1.h"
+#include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
 #include <QSet>
 
 // Anonymous prototype, only packaged outside the default plugin search root.
 class KugouSourceSession final : public IMusicSourceSessionV2,
                                  public IPageProviderV2, public IPlaybackProviderV2,
-                                 public IItemLookupProviderV1 {
+                                 public IItemLookupProviderV1, public IArtistBrowseProviderV1 {
     Q_OBJECT
-    Q_INTERFACES(IPageProviderV2 IPlaybackProviderV2 IItemLookupProviderV1)
+    Q_INTERFACES(IPageProviderV2 IPlaybackProviderV2 IItemLookupProviderV1 IArtistBrowseProviderV1)
 public:
     explicit KugouSourceSession(SourceConfigurationV2 configuration, QObject *parent = nullptr);
     KugouSourceSession(SourceConfigurationV2 configuration, QNetworkAccessManager *network, QObject *parent);
@@ -24,11 +25,12 @@ public:
     QUuid fetchPage(const PageQueryV2 &query) override;
     QUuid resolveStream(const MediaRefV2 &media) override;
     std::optional<MediaItemV2> lookupItem(const MediaRefV2 &ref) const override;
+    std::optional<ArtistBrowseTargetV1> artistBrowseTarget(const MediaRefV2 &ref) const override;
     QUuid fetchArtwork(const MediaRefV2 &media) override;
     QUuid fetchLyrics(const MediaRefV2 &media) override;
 private:
     enum class Kind { Open, Page, Stream, Unsupported };
-    enum class PageMode { Search, RankCatalog, RankTracks };
+    enum class PageMode { Search, RankCatalog, RankTracks, ArtistCatalog, ArtistTracks };
     struct Request {
         Kind kind;
         PageQueryV2 query;
@@ -38,12 +40,14 @@ private:
         bool needsVerification = false;
         PageMode pageMode = PageMode::Search;
         QString rankId;
+        QString artistId;
     };
     struct Cursor {
         QString search; int limit; int page;
         PageMode mode = PageMode::Search;
         QString rankId;
         QUuid catalogGeneration;
+        QString artistId;
     };
     QUuid enqueue(Request request);
     void dispatch(const QUuid &id);

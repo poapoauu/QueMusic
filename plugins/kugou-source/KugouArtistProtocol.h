@@ -2,8 +2,8 @@
 #include "KugouRankProtocol.h"
 #include <climits>
 
-// Private protocol foundation only. Artist navigation is not published until
-// the Host's standard Artist -> Albums contract can represent track browsing.
+// Private wire protocol. Session publishes standard Artist/Track DTOs and
+// selects Tracks through the optional Artist Browse v1 extension.
 namespace KugouArtistProtocol {
 enum class Operation { Popular, Tracks };
 struct Entry { QString id, name; };
