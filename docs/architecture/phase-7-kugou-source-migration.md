@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 19）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标，新增显式真实 Session smoke；当前网络的公开 HTTPS 核验失败、未取得可信业务响应，实际服务和认证仍未验收。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 20）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单已接标准页面/游标及显式真实 Session smoke；切片 19 的 HTTPS 核验失败，实际服务和认证仍未验收。新增插件私有热门歌手/歌手歌曲协议基础，但未发布 Artist 页面：Host Artist→Albums 与旧 singer→Songs 契约不同。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -14,6 +14,20 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - `cpp/AccountManager.*` 在 Host 内进行签名、设备标识持久化、QR 获取/轮询、账号状态和 cookie 写入；`SettingsView.qml` 仍有酷狗专用 UI。
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
+
+## 切片 20：歌手协议基础与标准导航差距
+
+2026-10-13，复核旧 `getHotSingers/getSingerSongs` 与 `MusicHub::browse`：旧接口返回热门歌手和该歌手歌曲；Host 对 Artist 默认构造 Category/Albums + artistId。不能将歌曲伪装成专辑、增加酷狗专用 Host 分支或提前宣告不可用导航。本切片只迁移插件私有协议，请求/解析尚未接 Session PageProvider，歌手分类接口留给后续。
+
+新增 `KugouArtistProtocol.h`，固定 HTTPS singer/rank 与 singer/song 路径/白名单参数，使用现有可取消 client 的 UUID、响应上限、错误脱敏和销毁保护；禁用自动重定向、cookie 与认证复用。歌手 ID 正规范十进制字符串最大有符号 64 位，数值 ID 不超过双精度安全整数；页码/数量有界，不接受外部 URL 或参数注入。
+
+响应要求明确数值成功状态。singers/songs 与旧 info 别名只允许单一数组或完全相同数组；空主字段和非空旧字段也拒绝，不采用旧“为空就 fallback”。总数可缺失，缺失保持未知；存在时严格验证类型、整数/范围和条目数量，不制造远端分页事实。歌手展示只保留唯一 ID/有界名称，不携带头像 URL/token。歌曲复用既有严格榜单白名单与标准 Track mapper，filename 只按第一个连字符拆分，保留标题后续连字符；显式畸形 songname 不回退。未知/字符串/布尔 pay_type 不推断免费，不保留资源 URL、替代 hash、原始作者字典或嵌套敏感字段。
+
+新增无外网测试覆盖请求路径/参数/策略、UUID/成功关联、取消晚包、异步参数拒绝、TLS 拒绝不降级、网络销毁；ID 精度/溢出/重复、别名冲突、缺失/畸形总数、文本边界、歌曲投影与标准身份/权限映射。未修改 Source SDK v2、扩展 IID、Plugin UI API、Host 导航或磁盘格式。仅插件私有 API 增量；实验模块默认关闭、不加入安装/bundle，没有删除旧登录。
+
+后续顺序：先定义通用 Artist 浏览内容契约及可选能力协商（保留现有 Artist→Albums 默认、旧插件兼容与原 UI），再接歌手标准页面/过滤/游标/索引与取消、多实例、恢复权限链测试；随后补分类/歌词等尚缺的数据能力。真实 HTTPS 响应和服务认证仍是独立验收项，不能用离线夹具替代，也不能据此迁出 Host 登录或宣告 Phase 7 完成。
+
+Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，十六项专项 **16/16（24.78 秒）** 通过；随后追加未接线 Artist 导航拒绝回归并重建两项测试目标，最终全量 **84/84 CTest（72.57 秒）** 通过，包含最新歌手测试、原 UI、Local/Navidrome、外部 SDK、动态模块/管理 UI/卸载与 macOS 打包/重定位。全部新歌手用例使用无外网夹具，没有真实歌手响应、账号或音频验收。
 
 ## 切片 1：插件私有 JSON 请求层
 

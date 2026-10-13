@@ -22,6 +22,8 @@
 
 ## 1. 结论摘要
 
+2026-10-13，Phase 7 切片 20 已迁入插件私有热门歌手/歌手歌曲请求与严格协议投影，复用现有可取消 client、标准 Track mapper 和未知权限拒绝规则。ID 精度、兼容字段冲突、缺失总数、文件名连字符及敏感字段边界有离线回归。发现 Host Artist→Albums 与旧 singer→Songs 导航差距，暂未接 Session 歌手页面；无网络请求的 Unsupported 回归防止提前开放错误导航。全目标构建及最终 **84/84 CTest（72.57 秒）** 通过。后续先演进通用浏览契约并保留旧插件默认行为，再接歌手 PageProvider；不改 v2 ABI/IID、UI API、存储或默认实验包隔离。切片 19 的真实 HTTPS/认证/手机/Keychain/音频验收缺口仍未关闭，见[切片记录](phase-7-kugou-source-migration.md)。
+
 2026-10-12，Phase 7 切片 19 开始真实公开协议核验，本机两个已知 CDN 域名均在 TLS 主机名校验阶段失败，没有可信业务 JSON。新增显式匿名 Qt Session smoke（不读取账号/秘密/不播放），实际运行返回 `catalog/kugou.requestFailed`、无页面/HTTP 状态；该失败不算业务验收通过。普通 CTest 只测试帮助/未显式启用，另增无外网 TLS 拒绝与无降级回归；全目标构建成功，离线专项 **16/16（25.81 秒）**、最终全量 **84/84 CTest（71.82 秒）** 通过。没有放宽校验、改固定端点或默认包接线。真实公开响应、认证、手机/Keychain/音频与旧登录迁出仍未完成，见[工具与网络记录](kugou-public-protocol-smoke.md)及[切片记录](phase-7-kugou-source-migration.md)。
 
 2026-10-12，Phase 7 切片 18 已接标准 Category/Playlists 榜单与 playlistId/Category/Tracks 导航。单个有界列表快照本地分页，刷新代次使旧游标失效；歌曲游标绑定模式/榜单/数量/实例，关闭重开清除。榜单与搜索共用 Track 索引、权限交集及资源完成前再验证，不撤销已观察的限制。受控 Session 和动态 Registry/Coordinator/Sink 链新增验收；全目标构建成功，专项 **14/14（21.04 秒）**、全量 **82/82 CTest（70.70 秒）** 通过。没有新增 Host 专用导航或修改 SDK v2。真实 HTTPS 字段/认证/手机/音频与旧登录迁出仍未完成，实验包继续隔离，详见[切片记录](phase-7-kugou-source-migration.md)。

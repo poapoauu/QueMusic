@@ -247,6 +247,39 @@ private slots:
         session.fetchPage(ranks()); QTRY_COMPARE(network.requests.size(), 3);
         network.replies[2]->deliver(catalog()); QCOMPARE(session.state(), SourceSessionStateV2::Closed);
     }
+    void artistProtocolFoundationDoesNotPublishUnsupportedNavigation()
+    {
+        Network network; KugouSourceSession session(config(), &network, nullptr);
+        QSignalSpy failed(&session, &IMusicSourceSessionV2::requestFailed), ready(&session, &IMusicSourceSessionV2::pageReady);
+        session.open(); QTRY_COMPARE(session.state(), SourceSessionStateV2::Ready);
+        auto query = ranks(); query.section = PageSectionKindV2::Artists;
+        session.fetchPage(query); QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][1]).kind, SourceErrorKindV2::Unsupported);
+        query.section = PageSectionKindV2::Albums; query.filters = {{"artistId", "1"}};
+        session.fetchPage(query); QTRY_COMPARE(failed.size(), 2);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[1][1]).kind, SourceErrorKindV2::Unsupported);
+        QVERIFY(network.requests.isEmpty()); QVERIFY(ready.isEmpty());
+    }
+    void artistProjectionUsesStandardTrackIdentityAndUnknownRightsStayDenied()
+    {
+        for (int variant = 0; variant < 5; ++variant) {
+            QJsonObject row{{"hash", hash}, {"filename", "Artist - Song - Live"}, {"duration", 61.5},
+                           {"token", "PRIVATE"}, {"url", "https://private/?token=PRIVATE"}};
+            if (variant == 1) row.insert("pay_type", 0);
+            if (variant == 2) row.insert("pay_type", 1);
+            if (variant == 3) row.insert("pay_type", "0");
+            if (variant == 4) row.insert("pay_type", false);
+            const auto projected = KugouArtistProtocol::tracks({{"status", 1}, {"data", QJsonObject{
+                {"songs", QJsonArray{row}}}}}, 1);
+            QVERIFY(projected); QVERIFY(!projected->total);
+            const auto item = KugouMappers::track(projected->rows[0].toObject(), {"kugou", "kugou/one", "one", "Kugou"});
+            QVERIFY(item); QCOMPARE(item->ref, media()); QCOMPARE(item->title, "Song - Live");
+            QCOMPARE(item->subtitle, "Artist"); QCOMPARE(item->durationMs, 61500);
+            QCOMPARE(item->availableActions.value(SourceActionV2::Play).state,
+                     variant == 1 ? AvailabilityV2::Available : AvailabilityV2::Unavailable);
+            QVERIFY(item->metadata.isEmpty()); QVERIFY(item->externalIds.isEmpty());
+        }
+    }
     void rankProjectionUsesStandardTrackMapperWithoutGrantingUnknownRights()
     {
         for (int variant = 0; variant < 5; ++variant) {

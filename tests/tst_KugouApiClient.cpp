@@ -64,6 +64,139 @@ protected:
 class KugouApiClientTest final : public QObject {
     Q_OBJECT
 private slots:
+    void artistRequestsAreBoundedAnonymousAndFailClosed()
+    {
+        using namespace KugouArtistProtocol;
+        Network network; KugouApiClient client(&network, nullptr);
+        QSignalSpy ready(&client, &KugouApiClient::succeeded), failed(&client, &KugouApiClient::failed);
+        const auto popular = client.getArtist(Operation::Popular, {}, 2, 100);
+        const auto songs = client.getArtist(Operation::Tracks, "9223372036854775807", 3, 1);
+        QVERIFY(popular != songs); QCOMPARE(network.requests.size(), 2);
+        for (const auto &request : network.requests) {
+            QCOMPARE(request.url().scheme(), "https"); QCOMPARE(request.url().host(), "mobilecdnbj.kugou.com");
+            QVERIFY(request.rawHeader("Cookie").isEmpty()); QVERIFY(request.rawHeader("Authorization").isEmpty());
+            QCOMPARE(request.attribute(QNetworkRequest::RedirectPolicyAttribute).toInt(), int(QNetworkRequest::ManualRedirectPolicy));
+            for (const auto attribute : {QNetworkRequest::CookieLoadControlAttribute,
+                 QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::AuthenticationReuseAttribute})
+                QCOMPARE(request.attribute(attribute).toInt(), int(QNetworkRequest::Manual));
+            QCOMPARE(request.transferTimeout(), 15000);
+            QCOMPARE(request.rawHeader("Accept-Encoding"), "identity");
+        }
+        QCOMPARE(network.requests[0].url().path(), "/api/v3/singer/rank");
+        const QUrlQuery popularQuery(network.requests[0].url()), songsQuery(network.requests[1].url());
+        QCOMPARE(popularQuery.queryItemValue("type"), "1"); QCOMPARE(popularQuery.queryItemValue("page"), "2");
+        QCOMPARE(popularQuery.queryItemValue("pagesize"), "100"); QCOMPARE(popularQuery.queryItemValue("version"), "9108");
+        QCOMPARE(popularQuery.queryItemValue("plat"), "0");
+        QCOMPARE(network.requests[1].url().path(), "/api/v3/singer/song");
+        QCOMPARE(songsQuery.queryItemValue("singerid"), "9223372036854775807");
+        QCOMPARE(songsQuery.queryItemValue("page"), "3"); QCOMPARE(songsQuery.queryItemValue("pagesize"), "1");
+        client.cancel(songs); QVERIFY(network.replies[1]->aborted);
+        network.replies[1]->deliver("{\"status\":1}"); QCOMPARE(ready.size(), 0);
+        network.replies[0]->deliver("PRIVATE", 0, true, QNetworkReply::SslHandshakeFailedError);
+        QCOMPARE(failed.size(), 1); QCOMPARE(failed[0][0].toUuid(), popular);
+        const auto error = qvariant_cast<SourceErrorV2>(failed[0][1]);
+        QCOMPARE(error.kind, SourceErrorKindV2::Network); QVERIFY(error.detail.isEmpty()); QVERIFY(!error.httpStatus);
+        const auto invalid = client.getArtist(Operation::Tracks, "1&token=PRIVATE");
+        QCOMPARE(failed.size(), 1); QTRY_COMPARE(failed.size(), 2);
+        QCOMPARE(failed[1][0].toUuid(), invalid);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed[1][1]).messageKey, "kugou.artistInvalidRequest");
+        QCOMPARE(network.requests.size(), 2);
+        for (const auto &id : {QString(), QString("0"), QString("01"), QString("-1"), QString(" 1"),
+                              QString("1\n"), QString("9223372036854775808")})
+            QVERIFY(!build(Operation::Tracks, id));
+        QVERIFY(!build(Operation::Popular, "1")); QVERIFY(!build(static_cast<Operation>(99)));
+        for (const auto page : {0, 1000001}) QVERIFY(!build(Operation::Popular, {}, page));
+        for (const auto limit : {0, 101}) QVERIFY(!build(Operation::Tracks, "1", 1, limit));
+        QVERIFY(build(Operation::Tracks, "1", 1000000, 100));
+    }
+    void artistClientCorrelatesSuccessAndRejectsDestroyedNetwork()
+    {
+        auto network = std::make_unique<Network>(); KugouApiClient client(network.get(), nullptr);
+        QSignalSpy ready(&client, &KugouApiClient::succeeded), failed(&client, &KugouApiClient::failed);
+        const auto popular = client.getArtist(KugouArtistProtocol::Operation::Popular);
+        const auto songs = client.getArtist(KugouArtistProtocol::Operation::Tracks, "1");
+        network->replies[1]->deliver("{\"status\":1,\"data\":{\"songs\":[]}}");
+        QCOMPARE(ready.size(), 1); QCOMPARE(ready[0][0].toUuid(), songs);
+        network.reset(); QTRY_COMPARE(failed.size(), 1); QCOMPARE(failed[0][0].toUuid(), popular);
+        QVERIFY(qvariant_cast<SourceErrorV2>(failed[0][1]).detail.isEmpty());
+        const auto gone = client.getArtist(KugouArtistProtocol::Operation::Popular);
+        QTRY_COMPARE(failed.size(), 2); QCOMPARE(failed[1][0].toUuid(), gone); QCOMPARE(ready.size(), 1);
+    }
+    void artistCatalogRejectsAmbiguousAliasesAndPreservesAbsentTotals()
+    {
+        using namespace KugouArtistProtocol;
+        const QJsonObject row{{"singerid", "9223372036854775807"}, {"singername", "Artist"},
+                              {"imgurl", "https://private/?token=PRIVATE"}, {"token", "PRIVATE"}};
+        auto response = [](QJsonObject data) { return QJsonObject{{"status", 1}, {"data", data}}; };
+        const QJsonArray rows{row};
+        auto result = catalog(response({{"singers", rows}}), 1);
+        QVERIFY(result); QVERIFY(!result->total); QCOMPARE(result->entries.size(), 1);
+        QCOMPARE(result->entries[0].id, "9223372036854775807"); QCOMPARE(result->entries[0].name, "Artist");
+        QVERIFY(catalog(response({{"info", rows}}), 1));
+        result = catalog(response({{"singers", rows}, {"info", rows}, {"total", 10}}), 1);
+        QVERIFY(result); QCOMPARE(result->total.value(), 10);
+        QVERIFY(!catalog(response({{"singers", QJsonArray{}}, {"info", rows}}), 1));
+        QVERIFY(!catalog(response({{"singers", rows}, {"info", QJsonArray{}}}), 1));
+        QVERIFY(!catalog(response({{"singers", QJsonValue::Null}, {"info", rows}}), 1));
+        QVERIFY(!catalog(response({}), 1)); QVERIFY(!catalog(response({{"singers", rows}}), 0));
+        QVERIFY(!catalog(response({{"singers", QJsonArray{row, row}}}), 2));
+        QVERIFY(!catalog(response({{"singers", QJsonArray{1}}}), 1));
+        for (const auto &count : {QJsonValue::fromVariant(QVariant()), QJsonValue("1"), QJsonValue(true),
+                                 QJsonValue(0), QJsonValue(-1), QJsonValue(1.5), QJsonValue(2147483648.0)})
+            QVERIFY(!catalog(response({{"singers", rows}, {"total", count}}), 1));
+        for (const auto &id : {QJsonValue(true), QJsonValue(1.5), QJsonValue(9007199254740992.0),
+                              QJsonValue("01"), QJsonValue("9223372036854775808")}) {
+            auto bad = row; bad.insert("singerid", id); QVERIFY(!catalog(response({{"singers", QJsonArray{bad}}}), 1));
+        }
+        QCOMPARE(artistId(9007199254740991.0), "9007199254740991");
+        for (const auto &name : {QJsonValue(""), QJsonValue(" \t"), QJsonValue(1),
+                                QJsonValue(QString(1025, 'X')), QJsonValue("bad\nname")}) {
+            auto bad = row; bad.insert("singername", name); QVERIFY(!catalog(response({{"singers", QJsonArray{bad}}}), 1));
+        }
+        auto badStatus = response({{"singers", rows}}); badStatus.insert("status", "1");
+        QVERIFY(!catalog(badStatus, 1));
+        const auto empty = catalog(response({{"singers", QJsonArray{}}, {"total", 0}}), 1);
+        QVERIFY(empty); QVERIFY(empty->entries.isEmpty()); QCOMPARE(empty->total.value(), 0);
+    }
+    void artistSongsWhitelistMetadataWithoutInventingRightsOrPagination()
+    {
+        using namespace KugouArtistProtocol;
+        QJsonObject row{{"hash", QString(32, 'a')}, {"filename", "Artist - Song - Live"}, {"duration", 61.5},
+                        {"album_name", "Album"}, {"url", "https://private/?token=PRIVATE"}, {"token", "PRIVATE"},
+                        {"320hash", QString(32, 'b')}, {"authors", QJsonArray{QJsonObject{{"token", "PRIVATE"}}}}};
+        auto response = [](QJsonObject data) { return QJsonObject{{"status", 1}, {"data", data}}; };
+        auto map = [&](QJsonObject candidate) { return tracks(response({{"songs", QJsonArray{candidate}}}), 1); };
+        const auto result = map(row); QVERIFY(result); QVERIFY(!result->total);
+        const auto projected = result->rows[0].toObject(); QCOMPARE(projected.size(), 5);
+        QCOMPARE(projected.value("songname").toString(), "Song - Live");
+        QCOMPARE(projected.value("singername").toString(), "Artist");
+        QVERIFY(!projected.contains("pay_type")); QVERIFY(!projected.contains("url"));
+        QVERIFY(!projected.contains("token")); QVERIFY(!projected.contains("320hash")); QVERIFY(!projected.contains("authors"));
+        QVERIFY(tracks(response({{"info", QJsonArray{row}}}), 1));
+        QVERIFY(tracks(response({{"songs", QJsonArray{row}}, {"info", QJsonArray{row}}, {"total", 2}}), 1));
+        QVERIFY(!tracks(response({{"songs", QJsonArray{}}, {"info", QJsonArray{row}}}), 1));
+        for (const auto &pay : {QJsonValue(0), QJsonValue(1), QJsonValue("0"), QJsonValue(true), QJsonValue(QJsonObject{})}) {
+            auto candidate = row; candidate.insert("pay_type", pay); const auto mapped = map(candidate); QVERIFY(mapped);
+            QCOMPARE(mapped->rows[0].toObject().value("pay_type"), pay.isDouble() ? pay : QJsonValue(QJsonValue::Undefined));
+        }
+        auto candidate = row; candidate.insert("songname", "Explicit"); candidate.insert("singername", "Named");
+        auto mapped = map(candidate); QVERIFY(mapped); QCOMPARE(mapped->rows[0].toObject().value("songname").toString(), "Explicit");
+        QCOMPARE(mapped->rows[0].toObject().value("singername").toString(), "Named");
+        candidate.insert("songname", ""); QVERIFY(!map(candidate)); // no malformed-title fallback
+        for (const auto &filename : {QString("Artist - "), QString(2049, 'X'), QString("bad\nname")}) {
+            candidate = row; candidate.insert("filename", filename); QVERIFY(!map(candidate));
+        }
+        candidate = row; candidate.insert("filename", "Solo"); mapped = map(candidate); QVERIFY(mapped);
+        QCOMPARE(mapped->rows[0].toObject().value("songname").toString(), "Solo");
+        candidate = row; candidate.insert("hash", "bad"); QVERIFY(!map(candidate));
+        candidate = row; candidate.insert("album_name", QJsonObject{}); QVERIFY(!map(candidate));
+        candidate = row; candidate.insert("singername", 1); QVERIFY(!map(candidate));
+        candidate = row; candidate.insert("duration", QJsonObject{{"token", "PRIVATE"}}); mapped = map(candidate); QVERIFY(mapped);
+        QVERIFY(!mapped->rows[0].toObject().contains("duration"));
+        QVERIFY(!tracks(response({{"songs", QJsonArray{row}}, {"total", "1"}}), 1));
+        QVERIFY(!tracks(response({{"songs", QJsonArray{row, row}}}), 1));
+        QVERIFY(!tracks(response({{"songs", QJsonArray{1}}}), 1));
+    }
     void rankTlsFailureNeverPublishesOrDowngradesToHttp()
     {
         Network network; KugouApiClient client(&network, nullptr);

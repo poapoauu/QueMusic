@@ -99,6 +99,20 @@ QUuid KugouApiClient::getRank(KugouRankProtocol::Operation operation, const QStr
     return id;
 }
 
+QUuid KugouApiClient::getArtist(KugouArtistProtocol::Operation operation, const QString &artistId,
+                              int page, int limit)
+{
+    const QUuid id = QUuid::createUuid();
+    m_pending.insert(id, {});
+    const auto request = KugouArtistProtocol::build(operation, artistId, page, limit);
+    if (!request) {
+        scheduleFailure(id, error(SourceErrorKindV2::InvalidRequest, "kugou.artistInvalidRequest", false));
+        return id;
+    }
+    dispatch(id, *request);
+    return id;
+}
+
 void KugouApiClient::dispatch(const QUuid &id, QNetworkRequest request)
 {
     if (!m_network) {
