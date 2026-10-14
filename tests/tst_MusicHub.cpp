@@ -2,6 +2,7 @@
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/artist-browse/v1/IArtistBrowseProviderV1.h"
+#include "extensions/browse-facets/v1/IBrowseFacetsProviderV1.h"
 
 class HubFixtureSession : public IMusicSourceSessionV2, public IPageProviderV2,
                                 public IPlaybackProviderV2 {
@@ -43,7 +44,8 @@ public:
                 int(MediaEntityTypeV2::Directory);
             const bool insideDirectory = query.filters.contains("directoryId");
             const auto entityType = rootDirectories || insideDirectory
-                ? MediaEntityTypeV2::Directory : MediaEntityTypeV2::Track;
+                ? MediaEntityTypeV2::Directory : query.filters.contains("facetValues")
+                ? MediaEntityTypeV2::Artist : MediaEntityTypeV2::Track;
             item.ref = {"task7", config.sourceInstanceId, config.accountId, entityType,
                         rootDirectories ? "root-" + config.accountId
                                         : insideDirectory ? "child-" + config.accountId
@@ -76,7 +78,7 @@ public:
         return id;
     }
 };
-class ArtistHubFixtureSession final : public HubFixtureSession, public IArtistBrowseProviderV1 {
+class ArtistHubFixtureSession : public HubFixtureSession, public IArtistBrowseProviderV1 {
     Q_OBJECT
     Q_INTERFACES(IArtistBrowseProviderV1)
 public:
@@ -94,6 +96,23 @@ public:
         return result;
     }
 };
+class FacetHubFixtureSession final : public ArtistHubFixtureSession, public IBrowseFacetsProviderV1 {
+    Q_OBJECT
+    Q_INTERFACES(IBrowseFacetsProviderV1)
+public:
+    using ArtistHubFixtureSession::ArtistHubFixtureSession;
+    std::optional<BrowseFacetSchemaV1> browseFacets(PageSectionKindV2 section) const override
+    {
+        auto *self=const_cast<FacetHubFixtureSession *>(this);
+        self->setProperty("facetChecks",property("facetChecks").toInt()+1);
+        const auto revision=property("facetRevision").isValid() ? property("facetRevision").toString() : QStringLiteral("catalog-v1");
+        BrowseFacetSchemaV1 schema{section,revision,{{QStringLiteral("origin"),QStringLiteral("Origin"),
+            {{QStringLiteral("alpha"),QStringLiteral("Alpha")},{QStringLiteral("beta"),QStringLiteral("Beta")}}}}};
+        const bool withdrawn=property("withdrawFacets").toBool();
+        if (property("notifyOnFacets").toBool()) emit self->capabilitiesChanged({});
+        return withdrawn ? std::nullopt : std::optional(schema);
+    }
+};
 class HubFixturePlugin final : public QObject, public IMusicSourcePluginV2 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID QUEMUSIC_MUSIC_SOURCE_PLUGIN_V2_IID)
@@ -104,7 +123,9 @@ public:
     SourceDescriptorV2 descriptor() const override { return {"org.quemusic.source.task7", "task7", "Task7", "2.0.0", 2, {}}; }
     IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &c, QObject *p) override {
         setProperty("sessionCreates", property("sessionCreates").toInt() + 1);
-        auto *session = property("artistBrowse").toBool() && c.accountId == "home"
+        auto *session = property("browseFacets").toBool() && c.accountId=="home"
+            ? static_cast<HubFixtureSession *>(new FacetHubFixtureSession(c,p))
+            : property("artistBrowse").toBool() && c.accountId == "home"
             ? static_cast<HubFixtureSession *>(new ArtistHubFixtureSession(c, p)) : new HubFixtureSession(c, p);
         session->setProperty("connecting", property("connecting"));
         return session;
@@ -122,6 +143,7 @@ public:
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThreadPool>
+#include <QtConcurrentRun>
 
 class HubSecrets final : public ISecretStore {
 public:
@@ -138,11 +160,12 @@ struct HubHarness {
     SourceRegistry registry{&plugins, &accounts};
     SourceScopeStore scope{&settings};
     std::unique_ptr<MusicHub> hub;
-    bool init(bool artistBrowse = false)
+    bool init(bool artistBrowse = false,bool facets = false)
     {
         plugins.addSearchPath(QUEMUSIC_TASK7_PACKAGES);
         if (plugins.discover() != 1 || !plugins.load("org.quemusic.source.task7")) return false;
         plugins.pluginInstance("org.quemusic.source.task7")->setProperty("artistBrowse", artistBrowse);
+        plugins.pluginInstance("org.quemusic.source.task7")->setProperty("browseFacets",facets);
         if (!accounts.saveResolvedV2({"task7", "home", "Home", {}, {}})
             || !accounts.saveResolvedV2({"task7", "office", "Office", {}, {}})) return false;
         settings.setValue("MusicHub/cacheDirectory", dir.filePath("cache"));
@@ -166,6 +189,103 @@ static int rowFor(MusicPageModel *model, PageSectionKindV2 kind)
 class MusicHubTest final : public QObject {
     Q_OBJECT
 private slots:
+    void facetChangingSelectionCancelsOldRequestAndLateRowsCannotOverwrite()
+    {
+        HubHarness h; QVERIFY(h.init(false,true)); h.hub->setSelectedSourceInstanceId("task7/home");
+        QVERIFY(h.hub->refreshCategoryFacets()); auto *session=h.session(); session->setProperty("hold",true);
+        QVERIFY(h.hub->setCategoryFacetValues(h.hub->categoryFacets()["token"].toString(),{{"origin","alpha"}}));
+        QTRY_COMPARE(h.requests().size(),1); const auto oldId=h.requests()[0].toMap()["id"].toUuid();
+        session->setProperty("hold",false);
+        QVERIFY(h.hub->setCategoryFacetValues(h.hub->categoryFacets()["token"].toString(),{{"origin","beta"}}));
+        QTRY_COMPARE(h.hub->category()->state(),PageLoadStateV2::Ready);
+        QCOMPARE(session->property("cancelled").toUuid(),oldId);
+        const auto rows=h.hub->category()->itemAt(0,0);
+        PageSectionV2 old; old.kind=PageSectionKindV2::Artists; old.sectionId="stale";
+        MediaItemV2 entry; entry.ref={"task7","task7/home","home",MediaEntityTypeV2::Artist,"stale"}; entry.title="STALE";
+        old.items={entry}; emit session->pageReady(oldId,{{old},{},false,true}); QCoreApplication::processEvents();
+        QCOMPARE(h.hub->category()->itemAt(0,0),rows);
+        QCOMPARE(h.hub->categoryFacets()["values"].toMap(),QVariantMap({{"origin","beta"}}));
+    }
+    void facetSnapshotNotificationCanDestroyHubWithoutAccessingFreedState()
+    {
+        HubHarness h; QVERIFY(h.init(false,true)); h.hub->setSelectedSourceInstanceId("task7/home");
+        connect(h.hub.get(),&MusicHub::categoryFacetsChanged,this,[&] { h.hub.reset(); });
+        auto *hub=h.hub.get(); QVERIFY(!hub->refreshCategoryFacets()); QVERIFY(!h.hub);
+    }
+    void facetSnapshotGetterIsPureAndSelectionIsExplicitStrictAndTokenBound()
+    {
+        HubHarness h; QVERIFY(h.init(false,true));
+        h.hub->setSelectedSourceInstanceId("task7/home");
+        auto *root=h.plugins.pluginInstance("org.quemusic.source.task7");
+        for (int i=0;i<5;++i) QVERIFY(h.hub->categoryFacets().isEmpty());
+        QCOMPARE(root->property("sessionCreates").toInt(),0);
+        QVERIFY(h.hub->refreshCategoryFacets()); auto *session=h.session();
+        auto snapshot=h.hub->categoryFacets(); QVERIFY(snapshot.value("supported").toBool());
+        QVERIFY(!snapshot.value("active").toBool()); const auto token=snapshot.value("token").toString();
+        const auto checks=session->property("facetChecks").toInt();
+        auto foreign=QtConcurrent::run([&] {
+            return h.hub->refreshCategoryFacets() || h.hub->setCategoryFacetValues(token,{{"origin","alpha"}})
+                || h.hub->clearCategoryFacets(token);
+        });
+        foreign.waitForFinished(); QVERIFY(!foreign.result());
+        for (int i=0;i<5;++i) QCOMPARE(h.hub->categoryFacets(),snapshot);
+        QCOMPARE(session->property("facetChecks").toInt(),checks); QVERIFY(h.requests().isEmpty());
+        QVERIFY(!h.hub->setCategoryFacetValues("stale",{{"origin","alpha"}}));
+        QVERIFY(!h.hub->setCategoryFacetValues(token,{{"origin",1}}));
+        QVERIFY(!h.hub->setCategoryFacetValues(token,{{"origin","unknown"}}));
+        QVERIFY(!h.hub->setCategoryFacetValues(token,{}));
+        QCOMPARE(session->property("facetChecks").toInt(),checks); QVERIFY(h.requests().isEmpty());
+        QVERIFY(h.hub->setCategoryFacetValues(token,{{"origin","alpha"}}));
+        QTRY_COMPARE(h.hub->category()->state(),PageLoadStateV2::Ready); QCOMPARE(h.requests().size(),1);
+        QCOMPARE(h.requests().last().toMap()["filters"].toMap().value("facetValues").toMap(),QVariantMap({{"origin","alpha"}}));
+        QCOMPARE(h.hub->category()->rowCount(),1); QCOMPARE(h.hub->category()->section(0).kind,PageSectionKindV2::Artists);
+        QVERIFY(!h.hub->setCategoryFacetValues(token,{{"origin","beta"}}));
+        snapshot=h.hub->categoryFacets(); QVERIFY(snapshot.value("active").toBool());
+        QVERIFY(h.hub->clearCategoryFacets(snapshot.value("token").toString()));
+        QTRY_VERIFY(h.requests().size()>=6); QVERIFY(!h.hub->categoryFacets().value("active").toBool());
+    }
+    void facetDetailsHideControlsAndBackRestoresSelectionWithoutMixingFilters()
+    {
+        HubHarness h; QVERIFY(h.init(false,true)); h.hub->setSelectedSourceInstanceId("task7/home");
+        QVERIFY(h.hub->refreshCategoryFacets());
+        QVERIFY(h.hub->setCategoryFacetValues(h.hub->categoryFacets()["token"].toString(),{{"origin","alpha"}}));
+        QTRY_COMPARE(h.hub->category()->state(),PageLoadStateV2::Ready);
+        const auto oldToken=h.hub->categoryFacets()["token"].toString();
+        QVERIFY(h.hub->browse(item(MediaEntityTypeV2::Artist)));
+        QVERIFY(h.hub->categoryFacets().isEmpty()); QVERIFY(!h.hub->clearCategoryFacets(oldToken));
+        QTRY_COMPARE(h.hub->category()->state(),PageLoadStateV2::Ready);
+        QVERIFY(!h.requests().last().toMap()["filters"].toMap().contains("facetValues"));
+        QVERIFY(h.hub->navigateBack()); QTRY_COMPARE(h.hub->category()->state(),PageLoadStateV2::Ready);
+        QCOMPARE(h.hub->categoryFacets()["values"].toMap(),QVariantMap({{"origin","alpha"}}));
+        QVERIFY(h.hub->categoryFacets()["token"].toString()!=oldToken);
+        h.hub->setSelectedSourceInstanceId("task7/office"); QTRY_VERIFY(h.hub->categoryFacets().isEmpty());
+        QVERIFY(!h.hub->setCategoryFacetValues(oldToken,{{"origin","beta"}}));
+        h.hub->setSelectedSourceInstanceId(""); QVERIFY(h.hub->categoryFacets().isEmpty());
+    }
+    void facetWithdrawalRetainsSelectionAndRequiresExplicitClear()
+    {
+        HubHarness h; QVERIFY(h.init(false,true)); h.hub->setSelectedSourceInstanceId("task7/home");
+        QVERIFY(h.hub->refreshCategoryFacets());
+        QVERIFY(h.hub->setCategoryFacetValues(h.hub->categoryFacets()["token"].toString(),{{"origin","alpha"}}));
+        QTRY_COMPARE(h.hub->category()->state(),PageLoadStateV2::Ready);
+        auto *session=h.session(); const auto calls=h.requests().size(); session->setProperty("withdrawFacets",true);
+        h.hub->refresh(1); QTRY_COMPARE(h.hub->category()->state(),PageLoadStateV2::Failed);
+        QCOMPARE(h.requests().size(),calls); const auto snapshot=h.hub->categoryFacets();
+        QVERIFY(snapshot["active"].toBool()); QVERIFY(!snapshot["supported"].toBool()); QVERIFY(!snapshot["selectionValid"].toBool());
+        QVERIFY(h.hub->clearCategoryFacets(snapshot["token"].toString())); QTRY_VERIFY(h.requests().size()>calls);
+    }
+    void facetSchemaChangeRejectsOldChoiceAndNotificationCannotOverwriteNewNavigation()
+    {
+        HubHarness h; QVERIFY(h.init(false,true)); h.hub->setSelectedSourceInstanceId("task7/home");
+        QVERIFY(h.hub->refreshCategoryFacets()); auto *session=h.session();
+        const auto old=h.hub->categoryFacets()["token"].toString(); session->setProperty("facetRevision","catalog-v2");
+        QVERIFY(!h.hub->setCategoryFacetValues(old,{{"origin","alpha"}})); QVERIFY(h.requests().isEmpty());
+        QCOMPARE(h.hub->categoryFacets()["revision"].toString(),QString("catalog-v2"));
+        session->setProperty("notifyOnFacets",true);
+        auto connection=connect(session,&IMusicSourceSessionV2::capabilitiesChanged,this,[&] { h.hub->setSelectedSourceInstanceId("task7/office"); });
+        QVERIFY(!h.hub->refreshCategoryFacets()); QCOMPARE(h.hub->selectedSourceInstanceId(),QString("task7/office"));
+        QVERIFY(h.hub->categoryFacets().isEmpty()); disconnect(connection);
+    }
     void artistColdNavigationCreatesSessionOnlyForExplicitBrowse()
     {
         // Cached cards may precede every session; ordinary getters stay inert.

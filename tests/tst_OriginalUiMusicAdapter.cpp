@@ -2,16 +2,22 @@
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/discovery/v1/IDiscoveryProviderV1.h"
+#include "extensions/browse-facets/v1/IBrowseFacetsProviderV1.h"
 
 class OriginalUiAdapterSession final : public IMusicSourceSessionV2,
                                        public IPageProviderV2,
                                        public IFavoriteProviderV2,
                                        public IDownloadProviderV2,
                                        public IPlaybackProviderV2,
-                                       public IDiscoveryProviderV1 {
+                                       public IDiscoveryProviderV1, public IBrowseFacetsProviderV1 {
     Q_OBJECT
-    Q_INTERFACES(IPageProviderV2 IFavoriteProviderV2 IDownloadProviderV2 IPlaybackProviderV2 IDiscoveryProviderV1)
+    Q_INTERFACES(IPageProviderV2 IFavoriteProviderV2 IDownloadProviderV2 IPlaybackProviderV2 IDiscoveryProviderV1 IBrowseFacetsProviderV1)
 public:
+    std::optional<BrowseFacetSchemaV1> browseFacets(PageSectionKindV2 section) const override
+    {
+        if (!property("supportsFacets").toBool() || section!=PageSectionKindV2::Artists) return {};
+        return BrowseFacetSchemaV1{section,"adapter-v1",{{"origin","Origin",{{"one","One"},{"two","Two"}}}}};
+    }
     OriginalUiAdapterSession(SourceConfigurationV2 configuration, QObject *parent)
         : IMusicSourceSessionV2(parent), m_configuration(std::move(configuration)) {}
 
@@ -383,6 +389,33 @@ struct RoutingHarness {
 class OriginalUiMusicAdapterTest final : public QObject {
     Q_OBJECT
 private slots:
+    void categoryFacetAdapterForwardsSnapshotNotificationsSelectionAndClear()
+    {
+        RoutingHarness h; QVERIFY(h.init()); h.adapter->setSelectedSourceInstanceId("adapter/home");
+        h.session()->setProperty("supportsFacets",true);
+        QSignalSpy changed(h.adapter.get(),&OriginalUiMusicAdapter::categoryFacetsChanged);
+        QVERIFY(h.adapter->refreshCategoryFacets()); QVERIFY(changed.count()>0);
+        const auto snapshot=h.adapter->categoryFacets(); QCOMPARE(snapshot,h.hub->categoryFacets());
+        QVERIFY(snapshot.value("supported").toBool());
+        QVERIFY(h.adapter->setCategoryFacetValues(snapshot.value("token").toString(),{{"origin","one"}}));
+        QCOMPARE(h.adapter->categoryFacets()["values"].toMap(),QVariantMap({{"origin","one"}}));
+        QVERIFY(!h.adapter->clearCategoryFacets(snapshot.value("token").toString()));
+        QVERIFY(h.adapter->clearCategoryFacets(h.adapter->categoryFacets()["token"].toString()));
+        QVERIFY(!h.adapter->categoryFacets()["active"].toBool());
+    }
+    void categoryFacetBoundaryIsNullableAndOldSourcesDoNotAdvertiseFiltering()
+    {
+        OriginalUiMusicAdapter absent(nullptr,nullptr);
+        QVERIFY(absent.categoryFacets().isEmpty()); QVERIFY(!absent.refreshCategoryFacets());
+        QVERIFY(!absent.setCategoryFacetValues("stale",{{"origin","alpha"}})); QVERIFY(!absent.clearCategoryFacets("stale"));
+        RoutingHarness h; QVERIFY(h.init()); h.adapter->setSelectedSourceInstanceId("adapter/home");
+        QCOMPARE(h.adapter->categoryFacets(),h.hub->categoryFacets());
+        QVERIFY(!h.adapter->setCategoryFacetValues("stale",{{"origin","alpha"}}));
+        QVERIFY(!h.adapter->refreshCategoryFacets()); QVERIFY(h.adapter->categoryFacets().isEmpty());
+        QSignalSpy changed(h.adapter.get(),&OriginalUiMusicAdapter::categoryFacetsChanged);
+        h.hub.reset(); QTRY_VERIFY(changed.count()>0); QVERIFY(h.adapter->categoryFacets().isEmpty());
+        QVERIFY(!h.adapter->clearCategoryFacets("stale"));
+    }
     void ordinaryPresentationIntersectsAllLayersAndReadsOnlyHostSnapshots() {
         RoutingHarness h; QVERIFY(h.init(true)); h.hub->setSelectedSourceInstanceId("adapter/home");
         auto *home=h.session(), *office=h.session("adapter/office"); QVERIFY(home&&office);

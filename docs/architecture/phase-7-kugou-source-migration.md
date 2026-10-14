@@ -6,7 +6,7 @@
 
 Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-report.md)。酷狗已有隔离的实验 v2 Source 包，但尚未成为应用默认可用音源，也未迁出 QR/账号业务；不能把以下基础切片视为 Phase 7 完成。
 
-最新状态（切片 28）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单/歌手已接标准页面/游标及独立显式真实 Session smoke；真实歌手 smoke 本机失败，无可信页面，实际服务和认证仍未验收。酷狗 Session 已实现 Artist Browse v1，发布标准热门歌手/歌手歌曲页面，私有地区分类基础已存在；通用 Browse Facets v1 契约/纯验证/安装测试、Registry 活跃声明/lease 与 Repository 执行/响应守卫已实现，Hub/Adapter 快照、筛选 UI/生产分类 Session 路由尚未接线。旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
+最新状态（切片 29）：生产实验工厂已有 backend-only 凭证声明、Management Provider/QML 与 Context-bound Backend；稳定 UI Kit 支持离线 QR payload，Session 可校验同实例的命名凭证记录。公开榜单/歌手已接标准页面/游标及独立显式真实 Session smoke；真实歌手 smoke 本机失败，无可信页面，实际服务和认证仍未验收。酷狗 Session 已实现 Artist Browse v1，发布标准热门歌手/歌手歌曲页面，私有地区分类基础已存在；通用 Browse Facets v1、Registry/Repository 守卫与 Hub/Adapter 只读快照/显式选择/清除/导航已实现，生产分类 Session 与原 QML 控件尚未接线。旧插件默认 Albums 不变。普通 Host 表单为空，实验包隔离与旧登录保留。以下各切片是完成当时的历史快照，早期“空 Schema/未接管理 UI”不再描述最新生产工厂。
 
 本轮按已有代码检查：
 
@@ -14,6 +14,18 @@ Phase 6 动态 Source UI 代码出口已完成，见[出口报告](phase-6-exit-
 - `cpp/AccountManager.*` 在 Host 内进行签名、设备标识持久化、QR 获取/轮询、账号状态和 cookie 写入；`SettingsView.qml` 仍有酷狗专用 UI。
 - 原 `getPersonalFm/getPersonalRadar` 实际取 TOP500/飙升榜。迁移时不能把公共榜单冒充私人发现算法，也不能为此虚报 Capability。
 - Local/Navidrome 的 Registry、Session、Capability、Coordinator 和 Plugin UI 基线已存在，优先复用，不再建立平台编号播放链。
+
+## 切片 29：Hub/Adapter 只读快照与显式筛选导航
+
+按通用 Browse Facets 设计新增 Host 私有 categoryFacets Map 与 refreshCategoryFacets/setCategoryFacetValues/clearCategoryFacets。getter 只读 Host 所有快照，重复读取不创建会话/虚调用；声明在显式更新、分类根页面激活/刷新及既有生命周期路径更新。只在具体实例根页面可操作，无扩展且无选择、aggregate 和详情均不展示，原 UI 页面结构与公共 v2/扩展/UI API 不变。
+
+选择需当前 token、严格已声明维度/QString 值与当前 schema/revision 再验证，拒绝空选择、过期/跨上下文/错误类型与非所属线程。成功深复制选择、生成新 token/导航代次、清空旧数据/游标并取消旧请求，只请求筛选 Artists；迟到旧结果不能覆盖新值。清除是独立同 token 显式操作，不将空 map 当清除。声明撤回保留活动选择和 invalid 状态，继续过滤失败而不是静默普通页；用户可显式清除。
+
+详情查询不混入根选择，详情隐藏/失效 token，返回后保留根选择并重新复核；切实例/aggregate 清除旧实例状态。回调中的更晚 scope/导航优先，支持 snapshot 通知内 Hub 销毁，取消/通知后的代码检查 lifetime/导航代次。同步来源列表先发布 synchronizing/options 再通知，避免新增快照通知重入旧列表。OriginalUiMusicAdapter 仅转发安全数据、命令和通知，null/Hub 销毁时为空/false，不新增平台分支或插件对主程序私有 QML 的依赖。
+
+新增六个 Hub 及两个 Adapter 函数，覆盖 getter/默认不创建、严格/旧 token/线程、显式选择/清除、详情返回/跨实例/aggregate、撤回不 fallback、revision 拒绝及通知切 scope、取消与晚包、Hub 通知中销毁；Adapter 验证正向快照/命令/通知转发、旧来源不宣告能力及销毁空值。八个新增函数均单独实际执行通过，Qt 6.11.1/macOS x86_64 Debug 全目标构建成功，最终专项 **23/23（8.79 秒）**、全量 **84/84 CTest（67.29 秒）** 通过，含最后产物的原 UI、Local/Navidrome、SDK 外部安装、动态管理 UI/卸载及 macOS 打包/重定位。没有真实分类响应/账号/音频/新控件视觉验收。
+
+此切片不是 QML 控件或真实分类服务上线：生产酷狗尚不声明 facets，协议映射/游标下一步再接，之后接原 UI 通用控件与视觉/真实 smoke。真实 HTTPS/业务响应、认证/手机/Keychain/音频和最低 Host 发布要求仍未完成，不默认启用实验包、不删除旧登录。Host C++/QML 私有 API 需同步构建，SDK v2/扩展 IID/UI API/磁盘 schema 不变。
 
 ## 切片 28：活跃 schema/lease 与 Repository 安全执行
 

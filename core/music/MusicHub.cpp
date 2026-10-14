@@ -7,6 +7,8 @@
 #include <QDir>
 #include <QSettings>
 #include <QTimer>
+#include <QScopeGuard>
+#include <QThread>
 #include <array>
 #include <cmath>
 
@@ -104,6 +106,10 @@ struct MusicHub::Impl {
     QVariantList options;
     QList<Context> stack;
     quint64 navigationRevision = 0;
+    std::optional<BrowseFacetSchemaV1> facetSchema;
+    QVariantMap facetValues, facetPresentation;
+    QString facetRevision, facetSource, facetToken;
+    bool readingFacets = false;
     QString searchText;
     int searchTab = 0;
     quint64 contextRevision = 0;
@@ -143,8 +149,11 @@ struct MusicHub::Impl {
         QObject::connect(assets.get(), &MediaAssetRepository::failed, q,
             [this](QUuid id, SourceErrorV2 error) { assetFailure(id, error); });
         if (scope) QObject::connect(scope, &SourceScopeStore::selectedSourceInstanceIdChanged, q, [this] {
+            const QPointer<MusicHub> guard(q);
             ++navigationRevision;
             stack.clear();
+            invalidateFacets(true);
+            if (!guard) return;
             emit q->categoryContextChanged();
             options = makeOptions();
             emit q->sourceOptionsChanged();
@@ -165,6 +174,7 @@ struct MusicHub::Impl {
             QObject::connect(sources, &SourceRegistry::instanceCapabilitiesChanged, q,
                 [this](const QString &source) {
                     const QPointer<MusicHub> guard(q);
+                    if (source == selected()) { invalidateFacets(false); if (!guard) return; }
                     const auto initialScope = selected();
                     const auto initialContext = contextRevision;
                     for (int i = 0; i < int(pages.size()); ++i) {
@@ -189,6 +199,53 @@ struct MusicHub::Impl {
                 q, [this] { synchronizeSources(); });
         }
         options = makeOptions();
+    }
+    void publishFacets()
+    {
+        QVariantMap next;
+        if (stack.isEmpty() && !selected().isEmpty() && facetSource==selected()
+            && (facetSchema || !facetValues.isEmpty())) {
+            QVariantList facets;
+            if (facetSchema) for (const auto &facet:facetSchema->facets) {
+                QVariantList choices;
+                for (const auto &choice:facet.choices) choices.append(QVariantMap{{"value",choice.value},{"title",choice.title}});
+                facets.append(QVariantMap{{"id",facet.id},{"title",facet.title},{"choices",choices}});
+            }
+            const bool valid=facetValues.isEmpty() || (facetSchema
+                && matchesBrowseFacetSelectionV1(*facetSchema,{facetRevision,facetValues}));
+            next={{"sourceInstanceId",facetSource},{"token",facetToken},{"supported",bool(facetSchema)},
+                  {"revision",facetSchema ? facetSchema->revision : QString{}},{"facets",facets},
+                  {"values",facetValues},{"active",!facetValues.isEmpty()},{"selectionValid",valid},
+                  {"canClear",!facetValues.isEmpty()}};
+        }
+        if (next==facetPresentation) return;
+        facetPresentation=next;
+        emit q->categoryFacetsChanged();
+    }
+    void invalidateFacets(bool clear)
+    {
+        facetSchema.reset();
+        if (clear) { facetValues.clear(); facetRevision.clear(); }
+        facetSource=selected(); facetToken=QUuid::createUuid().toString(QUuid::WithoutBraces);
+        publishFacets();
+    }
+    SourceIdentityV2 facetOwner() const
+    {
+        if (sources) for (const auto &instance:sources->enabledInstances())
+            if (instance.sourceInstanceId==selected()) return {instance.sourceId,instance.sourceInstanceId,instance.accountId,{}};
+        return {};
+    }
+    bool readFacets()
+    {
+        if (readingFacets || !stack.isEmpty() || selected().isEmpty() || !sources) return false;
+        const QPointer<MusicHub> guard(q); const auto nav=navigationRevision; const auto source=selected();
+        readingFacets=true;
+        const auto cleanup=qScopeGuard([guard] { if (guard) guard->d->readingFacets=false; });
+        const auto schema=sources->browseFacets(facetOwner(),PageSectionKindV2::Artists,true);
+        if (!guard || navigationRevision!=nav || selected()!=source || !stack.isEmpty()) return false;
+        facetSchema=schema; facetSource=source; facetToken=QUuid::createUuid().toString(QUuid::WithoutBraces);
+        publishFacets();
+        return bool(guard) && schema.has_value();
     }
     QString selected() const { return scope ? scope->selectedSourceInstanceId() : QString{}; }
     QString unavailable(const QString &id) const
@@ -238,12 +295,17 @@ struct MusicHub::Impl {
         if (next == options) return;
         synchronizing = true;
         options = next; // publish before callback-capable cancellation
+        const QPointer<MusicHub> guard(q);
+        invalidateFacets(false);
+        if (!guard) return;
         resetPages();
+        if (!guard) return;
         synchronizing = false;
         emit q->sourceOptionsChanged();
     }
     quint64 invalidate(int index, bool reset)
     {
+        const QPointer<MusicHub> guard(q);
         auto &page = pages[index];
         const auto revision = ++page.revision;
         const auto old = page.generation;
@@ -256,8 +318,9 @@ struct MusicHub::Impl {
         }
         if (reset) page.model->resetGeneration(old);
         else page.model->cancelGeneration(old);
+        if (!guard) return revision;
         // No pending-map iterator survives provider cancel()/registry callbacks.
-        for (const auto &id : ids) repository->cancel(id);
+        for (const auto &id : ids) { repository->cancel(id); if (!guard) return revision; }
         return revision;
     }
     void resetPages()
@@ -278,6 +341,10 @@ struct MusicHub::Impl {
         if (index == 1 && !stack.isEmpty()) return stack.last().query;
         PageQueryV2 query;
         query.page = MusicPageKindV2(index); query.scope.sourceInstanceId = selected();
+        if (index==1 && !facetValues.isEmpty() && facetSource==selected()) {
+            query.section=PageSectionKindV2::Artists;
+            query.filters={{browseFacetsFilterKeyV1(),"selected"},{"facetRevision",facetRevision},{"facetValues",facetValues}};
+        }
         if (index == 3) {
             query.searchText = searchText;
             query.section = searchSectionForTab(searchTab);
@@ -286,11 +353,18 @@ struct MusicHub::Impl {
     }
     void refresh(int index)
     {
+        const QPointer<MusicHub> lifetime(q);
+        if (index==1 && stack.isEmpty() && !readingFacets) {
+            const QPointer<MusicHub> guard(q); const auto nav=navigationRevision;
+            const auto before=pages[index].revision;
+            readFacets();
+            if (!guard || nav!=navigationRevision || before!=pages[index].revision) return;
+        }
         auto &page = pages[index];
         const auto revision = invalidate(index, index >= 4); // personalized refresh never keeps stale cached rows
-        if (page.revision != revision) return;
+        if (!lifetime || page.revision != revision) return;
         const auto query = baseQuery(index);
-        const auto sections = index >= 4 || (index == 1 && !stack.isEmpty()) ? QList<PageSectionKindV2>{query.section}
+        const auto sections = index >= 4 || (index == 1 && (!stack.isEmpty() || !facetValues.isEmpty())) ? QList<PageSectionKindV2>{query.section}
             : index == int(MusicPageKindV2::Search) ? QList<PageSectionKindV2>{query.section}
                                                      : sectionsForPage(query.page);
         page.expected = sections.size();
@@ -298,7 +372,7 @@ struct MusicHub::Impl {
         // QML can synchronously cancel, refresh or change the shared scope.
         const auto generation = ++page.generation;
         page.model->beginRequest();
-        if (page.revision != revision || page.generation != generation) return;
+        if (!lifetime || page.revision != revision || page.generation != generation) return;
         const auto reason = unavailable(query.scope.sourceInstanceId);
         if (!reason.isEmpty()) {
             page.expected = 1;
@@ -496,6 +570,47 @@ QVariantMap MusicHub::categoryContext() const
         {"sourceInstanceId", d->stack.last().query.scope.sourceInstanceId}};
 }
 bool MusicHub::canNavigateBack() const { return !d->stack.isEmpty(); }
+QVariantMap MusicHub::categoryFacets() const { return d->facetPresentation; }
+bool MusicHub::refreshCategoryFacets() { return QThread::currentThread()==thread() && d->readFacets(); }
+bool MusicHub::setCategoryFacetValues(const QString &token,const QVariantMap &values)
+{
+    if (QThread::currentThread()!=thread() || d->readingFacets || token.isEmpty() || token!=d->facetToken || !d->stack.isEmpty()
+        || d->selected()!=d->facetSource || !d->facetSchema || !d->sources
+        || !matchesBrowseFacetSelectionV1(*d->facetSchema,{d->facetSchema->revision,values})) return false;
+    const QPointer<MusicHub> guard(this); const auto nav=d->navigationRevision;
+    const auto source=d->selected(); const auto revision=d->facetSchema->revision;
+    d->readingFacets=true;
+    const auto cleanup=qScopeGuard([guard] { if (guard) guard->d->readingFacets=false; });
+    const auto schema=d->sources->browseFacets(d->facetOwner(),PageSectionKindV2::Artists);
+    if (!guard || d->navigationRevision!=nav || d->selected()!=source || d->facetToken!=token) return false;
+    if (!schema || schema->revision!=revision || !matchesBrowseFacetSelectionV1(*schema,{revision,values})) {
+        d->facetSchema=schema; d->facetToken=QUuid::createUuid().toString(QUuid::WithoutBraces);
+        d->publishFacets(); return false;
+    }
+    QVariantMap owned;
+    for (auto it=values.cbegin();it!=values.cend();++it) {
+        const auto value=it.value().toString(); owned.insert(QString(it.key().constData(),it.key().size()),QString(value.constData(),value.size()));
+    }
+    d->facetSchema=schema; d->facetValues=owned; d->facetRevision=revision;
+    d->facetToken=QUuid::createUuid().toString(QUuid::WithoutBraces); const auto committed=++d->navigationRevision;
+    d->invalidate(1,true);
+    if (!guard || d->navigationRevision!=committed) return false;
+    d->publishFacets();
+    if (!guard || d->navigationRevision!=committed) return false;
+    d->pages[1].activated=true; d->refresh(1); return true;
+}
+bool MusicHub::clearCategoryFacets(const QString &token)
+{
+    if (QThread::currentThread()!=thread() || d->readingFacets || token.isEmpty() || token!=d->facetToken || !d->stack.isEmpty()
+        || d->facetValues.isEmpty() || d->selected()!=d->facetSource) return false;
+    const QPointer<MusicHub> guard(this); const auto committed=++d->navigationRevision;
+    d->facetValues.clear(); d->facetRevision.clear(); d->facetToken=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    d->invalidate(1,true);
+    if (!guard || d->navigationRevision!=committed) return false;
+    d->publishFacets();
+    if (!guard || d->navigationRevision!=committed) return false;
+    d->pages[1].activated=true; d->refresh(1); return true;
+}
 void MusicHub::activatePage(int page)
 {
     if (!validPage(page) || d->pages[page].activated) return;
@@ -568,27 +683,43 @@ bool MusicHub::browse(const QVariantMap &item)
     const auto generation = serializer.beginRequest();
     serializer.applyResult(generation, PageCache::sanitized({{section}, {}, false, true}));
     d->stack.append({query, serializer.itemAt(0, 0)});
-    ++d->navigationRevision;
+    const auto committed=++d->navigationRevision;
+    const QPointer<MusicHub> guard(this);
+    d->invalidateFacets(false);
+    if (!guard || d->navigationRevision!=committed) return false;
     if (d->stack.size() > 32) d->stack.removeFirst();
     d->invalidate(1, true);
+    if (!guard || d->navigationRevision!=committed) return false;
     emit categoryContextChanged();
+    if (!guard || d->navigationRevision!=committed) return false;
     d->pages[1].activated = true; d->refresh(1);
     return true;
 }
 bool MusicHub::navigateBack()
 {
     if (d->stack.isEmpty()) return false;
-    ++d->navigationRevision;
-    d->stack.removeLast(); d->invalidate(1, true);
-    emit categoryContextChanged(); d->refresh(1); return true;
+    const auto committed=++d->navigationRevision;
+    const QPointer<MusicHub> guard(this);
+    d->stack.removeLast(); d->invalidateFacets(false);
+    if (!guard || d->navigationRevision!=committed) return false;
+    d->invalidate(1, true);
+    if (!guard || d->navigationRevision!=committed) return false;
+    emit categoryContextChanged();
+    if (!guard || d->navigationRevision!=committed) return false;
+    d->refresh(1); return true;
 }
 void MusicHub::resetCategoryNavigation()
 {
     if (d->stack.isEmpty()) return;
-    ++d->navigationRevision;
+    const auto committed=++d->navigationRevision;
     d->stack.clear();
+    const QPointer<MusicHub> guard(this);
+    d->invalidateFacets(false);
+    if (!guard || d->navigationRevision!=committed) return;
     d->invalidate(1, true);
+    if (!guard || d->navigationRevision!=committed) return;
     emit categoryContextChanged();
+    if (!guard || d->navigationRevision!=committed) return;
     d->refresh(1);
 }
 QUuid MusicHub::loadArtwork(const QVariantMap &media) { return d->asset(media, false); }

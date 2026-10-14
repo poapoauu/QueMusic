@@ -33,6 +33,7 @@ class OriginalUiMusicAdapter final : public QObject {
     Q_PROPERTY(bool categoryCanNavigateBack READ categoryCanNavigateBack NOTIFY categoryNavigationChanged)
     Q_PROPERTY(QString categoryTitle READ categoryTitle NOTIFY categoryNavigationChanged)
     Q_PROPERTY(QString categoryCover READ categoryCover NOTIFY categoryNavigationChanged)
+    Q_PROPERTY(QVariantMap categoryFacets READ categoryFacets NOTIFY categoryFacetsChanged)
     Q_PROPERTY(OnlineListModel *favoriteSongs READ favoriteSongs CONSTANT)
     Q_PROPERTY(OnlineListModel *favoriteLists READ favoriteLists CONSTANT)
     Q_PROPERTY(OnlineListModel *favoriteArtists READ favoriteArtists CONSTANT)
@@ -91,6 +92,10 @@ public:
     bool categoryCanNavigateBack() const;
     QString categoryTitle() const;
     QString categoryCover() const;
+    QVariantMap categoryFacets() const;
+    Q_INVOKABLE bool refreshCategoryFacets();
+    Q_INVOKABLE bool setCategoryFacetValues(const QString &expectedToken,const QVariantMap &values);
+    Q_INVOKABLE bool clearCategoryFacets(const QString &expectedToken);
     OnlineListModel *favoriteSongs() const;
     OnlineListModel *favoriteLists() const;
     OnlineListModel *favoriteArtists() const;
@@ -137,6 +142,7 @@ signals:
     void discoveryStatusChanged();
     void categoryStatusChanged();
     void categoryNavigationChanged();
+    void categoryFacetsChanged();
     void sourceOptionsChanged();
     void selectedSourceInstanceIdChanged();
     void directoryChanged();

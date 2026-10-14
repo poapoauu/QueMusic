@@ -23,6 +23,7 @@ class MusicHub final : public QObject {
     Q_PROPERTY(MediaActionRouter *actions READ actions CONSTANT)
     Q_PROPERTY(QVariantMap categoryContext READ categoryContext NOTIFY categoryContextChanged)
     Q_PROPERTY(bool canNavigateBack READ canNavigateBack NOTIFY categoryContextChanged)
+    Q_PROPERTY(QVariantMap categoryFacets READ categoryFacets NOTIFY categoryFacetsChanged)
 public:
     // Reads optional MusicHub/cacheDirectory (absolute local path) once; absent
     // uses existing repository defaults. Does not write settings or store secrets.
@@ -51,6 +52,10 @@ public:
     void setSelectedSourceInstanceId(const QString &id);
     QVariantMap categoryContext() const;
     bool canNavigateBack() const;
+    QVariantMap categoryFacets() const;
+    Q_INVOKABLE bool refreshCategoryFacets();
+    Q_INVOKABLE bool setCategoryFacetValues(const QString &expectedToken, const QVariantMap &values);
+    Q_INVOKABLE bool clearCategoryFacets(const QString &expectedToken);
     // int(MusicPageKindV2): 0 recommendation, 1 category, 2 favorites, 3 search.
     // activate is idempotent; refresh alone does not activate automatic refresh.
     // Models remain owned by the hub; consumers must not call their write APIs.
@@ -78,6 +83,7 @@ signals:
     void sourceOptionsChanged();
     void selectedSourceInstanceIdChanged();
     void categoryContextChanged();
+    void categoryFacetsChanged();
     void artworkReady(QUuid requestId, QVariantMap media, QUrl localUrl);
     void lyricsReady(QUuid requestId, QVariantMap media, QString lyrics);
     void assetFailed(QUuid requestId, QVariantMap error);

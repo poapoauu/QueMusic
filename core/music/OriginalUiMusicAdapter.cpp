@@ -212,6 +212,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
             this, &OriginalUiMusicAdapter::categoryStatusChanged);
     connect(m_hub, &MusicHub::categoryContextChanged,
             this, &OriginalUiMusicAdapter::categoryNavigationChanged);
+    connect(m_hub,&MusicHub::categoryFacetsChanged,this,&OriginalUiMusicAdapter::categoryFacetsChanged);
     observe(m_hub->favorites());
     connect(m_hub->favorites(), &MusicPageModel::stateChanged,
             this, &OriginalUiMusicAdapter::favoriteStatusChanged);
@@ -241,6 +242,7 @@ OriginalUiMusicAdapter::OriginalUiMusicAdapter(MusicHub *hub, PlaybackCoordinato
         emit directoryChanged();
         emit sourceOptionsChanged();
         emit selectedSourceInstanceIdChanged();
+        emit categoryFacetsChanged(); // Last: observer may destroy this Adapter.
     });
     rebuild();
     syncCurrentFavorite();
@@ -531,6 +533,12 @@ bool OriginalUiMusicAdapter::searchLoading() const
 {
     return m_hub && m_hub->searchResults()->state() == PageLoadStateV2::Loading;
 }
+QVariantMap OriginalUiMusicAdapter::categoryFacets() const { return m_hub ? m_hub->categoryFacets() : QVariantMap{}; }
+bool OriginalUiMusicAdapter::refreshCategoryFacets() { return m_hub && m_hub->refreshCategoryFacets(); }
+bool OriginalUiMusicAdapter::setCategoryFacetValues(const QString &token,const QVariantMap &values)
+{ return m_hub && m_hub->setCategoryFacetValues(token,values); }
+bool OriginalUiMusicAdapter::clearCategoryFacets(const QString &token)
+{ return m_hub && m_hub->clearCategoryFacets(token); }
 bool OriginalUiMusicAdapter::categoryCanNavigateBack() const
 {
     return m_hub && m_hub->canNavigateBack();

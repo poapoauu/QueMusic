@@ -4,6 +4,8 @@
 > 原始审计日期：2026-09-17；进展复核：2026-10-03
 > 设计基线：[`QueMusic-Plugin-Architecture-Final-Plan.md`](./QueMusic-Plugin-Architecture-Final-Plan.md)
 
+最新 Host 展示/操作进展（Phase 7 切片 29）：Hub/Adapter 已接只读 categoryFacets、显式声明刷新、token 绑定选择/清除与内存导航。getter 不虚调用/创建；根单实例可操作，详情隐藏且不混过滤，返回保留选择再复核，切实例/aggregate 清除旧状态。过期/错误类型/未知值/revision/线程拒绝，撤回保留 invalid 选择而不 fallback；选择清数据/游标、取消旧请求，晚包拒绝。八个新增 Hub/Adapter 用例单独实际执行通过，全目标构建成功，专项 **23/23（8.79 秒）**、最终全量 **84/84 CTest（67.29 秒）** 通过。生产插件分类声明/游标及原 QML 控件/真实服务未完成，下一步按[契约](source-browse-facets-v1.md)接插件映射再接 UI；不默认启用实验包或删除旧登录，公开 v2/扩展/UI API 与存储不变。
+
 最新 Host 执行进展（Phase 7 切片 28）：Registry 已接 Browse Facets 活跃 schema 的精确身份/启用/Ready/线程/递归/lease 与回调后代次复核，返回深复制 Host 所有字符串。Repository 合法筛选逐次复核后仅移除 selector，严格 Artists 回包、无普通磁盘缓存、发布时再次校验，缓冲续页亦不能绕过。旧 Provider/撤回/未知选择/revision 均拒绝，不 fallback；普通查询与既有取消/退役路径保留。全目标构建成功，七个新增动态测试函数另单独实际执行，专项 **23/23（12.03 秒）**、最终全量 **84/84 CTest（72.41 秒）** 通过。SDK v2/扩展 IID/UI API/存储不变，Host API 同步重编译；Hub/Adapter 快照与选择、生产插件分类和 QML/真实服务未完成，下一步按[契约](source-browse-facets-v1.md)接只读展示与显式导航，不默认启用实验包或删除旧登录。
 
 最新 Host 入口进展（2026-10-13，Phase 7 切片 27）：Repository 已保留 Browse Facets selector/revision/values，合法形状在完整执行守卫实现前返回 Unsupported，非法/不完整/Provider 形状直接重放返回 InvalidRequest；拒绝在普通过滤/缓存/游标/Session 派发前完成，不向旧 Provider 发送未知 filters。动态旧 Provider 的零调用、异步身份/代次、续页/取消与普通无过滤页回归已加入并单独实际执行通过，全目标构建、专项 **23/23（11.07 秒）**、最终全量 **84/84 CTest（70.10 秒）** 通过。此切片不等于 Registry 活跃声明、lease/响应验证、Host 筛选 UI 或插件分类接线完成；同名非标准外部过滤器有语义碰撞风险，见[契约](source-browse-facets-v1.md)。下一步实现完整活跃复核后才开放执行，旧登录/默认实验隔离不变。
