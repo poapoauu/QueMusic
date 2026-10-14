@@ -2,6 +2,7 @@
 
 #include "PluginManager.h"
 #include "v2/IMusicSourceSessionV2.h"
+#include "extensions/browse-facets/v1/IBrowseFacetsProviderV1.h"
 
 #include <QHash>
 #include <QObject>
@@ -53,6 +54,10 @@ public:
     // Explicit execution only, never a QML getter. Creation is opt-in for a
     // user navigation from cached cards; page dispatch uses its existing session.
     std::optional<PageSectionKindV2> artistBrowseSection(const MediaRefV2 &artist, bool createSession = false);
+    // Explicit execution/declaration only. Returns deeply Host-owned data;
+    // never call from a getter. No fallback when absent/invalid/retired.
+    std::optional<BrowseFacetSchemaV1> browseFacets(const SourceIdentityV2 &identity,
+        PageSectionKindV2 section, bool createSession = false);
     bool enableInstance(const QString &sourceInstanceId);
     bool disableInstance(const QString &sourceInstanceId);
     bool closeInstance(const QString &sourceInstanceId);
@@ -117,6 +122,7 @@ private:
     QHash<QString, quint64> m_instanceLifecycleGenerations;
     QSet<QString> m_closingInstances;
     QSet<QString> m_artistBrowseReservations;
+    QSet<QString> m_browseFacetReservations;
     quint64 m_lifecycleGeneration = 0;
     quint64 m_nextCreationToken = 0;
     bool m_closingAll = false;

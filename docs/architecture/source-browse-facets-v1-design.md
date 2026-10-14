@@ -2,7 +2,7 @@
 
 日期：2026-10-13。基线：[最终架构方案](QueMusic-Plugin-Architecture-Final-Plan.md)、[当前差距](current-state-gap-analysis.md)及[Phase 7 切片 24](phase-7-kugou-source-migration.md)。
 
-状态：切片 25 的实施设计，保留设计顺序。切片 26 已新增可选头文件/IID、纯验证器及安装测试，实际接口/规则见[Browse Facets v1 契约](source-browse-facets-v1.md)；Host 筛选模型/守卫和生产分类路由仍未实现，不是正式发布功能。现有 Source SDK v2、Artist Browse v1 与 Plugin UI API 保持不变。
+状态：切片 25 的实施设计，保留设计顺序。切片 26 已新增可选头文件/IID、纯验证器及安装测试，切片 28 已接 Registry 活跃声明/lease 和 Repository 执行/响应/分页复核，实际接口/规则见[Browse Facets v1 契约](source-browse-facets-v1.md)；Host 筛选模型/UI 与生产分类路由仍未实现，不是正式发布功能。现有 Source SDK v2、Artist Browse v1 与 Plugin UI API 保持不变。
 
 ## 问题与范围
 

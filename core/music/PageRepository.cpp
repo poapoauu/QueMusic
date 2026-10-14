@@ -116,21 +116,20 @@ void PageRepository::begin(const QUuid &id)
     }
     if (q.filters.contains(browseFacetsFilterKeyV1()) || q.filters.contains(QStringLiteral("facetRevision"))
         || q.filters.contains(QStringLiteral("facetValues"))) {
-        // Reserve the complete protocol before cache/cursor/session dispatch.
-        // No Host execution support yet: never let an old provider ignore a
-        // scalar/malformed selector, or repair it by dropping a field.
-        fail(id,error(browseFacetSelectionV1(q) ? SourceErrorKindV2::Unsupported : SourceErrorKindV2::InvalidRequest));
-        return;
+        if (!browseFacetSelectionV1(q)) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
+        g->cacheable=false; // Never preview/persist filtered pages on disk.
     }
     const bool discovery=q.filters.contains(discoveryFilterKeyV1());
     if (discovery && !discoveryKindV1(q)) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
     const bool artistTracks=q.filters.contains(artistBrowseFilterKeyV1());
     if (artistTracks && !isArtistTracksQueryV1(q)) { fail(id,error(SourceErrorKindV2::InvalidRequest)); return; }
-    g->sourceOrdered=q.filters.contains(QStringLiteral("playlistId")) || artistTracks || (discovery && !q.scope.isAggregate());
+    const bool facets=browseFacetSelectionV1(q).has_value();
+    g->sourceOrdered=q.filters.contains(QStringLiteral("playlistId")) || artistTracks || facets || (discovery && !q.scope.isAggregate());
     if (q.filters.contains(QStringLiteral("playlistId")) && q.scope.isAggregate()) {
         fail(id,error(SourceErrorKindV2::InvalidRequest)); return;
     }
     for (auto it=q.filters.begin();it!=q.filters.end();++it) {
+        if (facets) continue; // Strict nested shape already checked above.
         switch (it->metaType().id()) {
         case QMetaType::QString: case QMetaType::Bool: case QMetaType::Int:
         case QMetaType::LongLong: case QMetaType::Double: break;
@@ -171,6 +170,9 @@ void PageRepository::fanOut(const QUuid &id)
     // Populate every source before invoking a potentially inline provider.
     for (const auto &source:g->key.sourceInstanceIds) {
         auto req=std::make_shared<Request>(); req->result.sourceInstanceId=source;
+        for (const auto &d:m_sources->enabledInstances()) if (d.sourceInstanceId==source) {
+            req->sourceId=d.sourceId; req->accountId=d.accountId;
+        }
         if (g->continuation) {
             for (const auto &prior:g->continuation->buffered) if (prior.sourceInstanceId==source) {
                 req->result=prior;
@@ -241,6 +243,13 @@ void PageRepository::dispatch(const QUuid &id,const QString &source)
             receive(id,source,{},error(SourceErrorKindV2::Unsupported)); return;
         }
     }
+    if (const auto selection=browseFacetSelectionV1(g->key.query)) {
+        const auto schema=m_sources->browseFacets({req->sourceId,source,req->accountId,{}},g->key.query.section);
+        if (!guard || req->done || !m_groups.contains(id)) return;
+        if (!req->session || !schema || !matchesBrowseFacetSelectionV1(*schema,*selection)) {
+            receive(id,source,{},error(SourceErrorKindV2::Unsupported)); return;
+        }
+    }
     req->connections.append(connect(req->session,&IMusicSourceSessionV2::requestStarted,this,[req](QUuid pid) {
         if (req->invoking && req->providerId.isNull()) req->providerId=pid;
     }));
@@ -255,6 +264,7 @@ void PageRepository::dispatch(const QUuid &id,const QString &source)
     req->dispatched=true; req->invoking=true;
     if (discovery) query.filters.clear();
     query.filters.remove(artistBrowseFilterKeyV1());
+    query.filters.remove(browseFacetsFilterKeyV1());
     const auto returned=discovery ? discoveryProvider->fetchDiscovery(*discovery,query) : provider->fetchPage(query);
     req->invoking=false;
     if (!guard) return;
@@ -271,6 +281,9 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
     if (!failure && (!page.complete || page.cached)) failure=error(SourceErrorKindV2::InvalidRequest);
     const bool discovery=discoveryKindV1(g->key.query).has_value();
     const bool artistTracks=isArtistTracksQueryV1(g->key.query);
+    const bool facets=browseFacetSelectionV1(g->key.query).has_value();
+    if (!failure && facets && (page.sections.size()!=1 || page.sections.first().kind!=PageSectionKindV2::Artists))
+        failure=error(SourceErrorKindV2::InvalidRequest);
     if (!failure && (discovery || artistTracks) && (page.sections.size()!=1 || page.sections.first().kind!=PageSectionKindV2::Tracks))
         failure=error(SourceErrorKindV2::InvalidRequest);
     QSet<PageSectionKindV2> kinds;
@@ -281,6 +294,8 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
             failure=error(SourceErrorKindV2::InvalidRequest);
         kinds.insert(s.kind);
         for (const auto &i:s.items) if (i.ref.sourceInstanceId!=source
+            || (facets && (i.ref.entityType!=MediaEntityTypeV2::Artist || i.ref.sourcePluginId!=req->sourceId
+                || i.ref.accountId!=req->accountId || i.ref.entityId.trimmed().isEmpty()))
             || ((discovery || artistTracks) && (i.ref.entityType!=MediaEntityTypeV2::Track
                 || i.ref.sourcePluginId!=req->sourceId || i.ref.accountId!=req->accountId
                 || i.ref.entityId.trimmed().isEmpty()))) failure=error(SourceErrorKindV2::InvalidRequest);
@@ -300,6 +315,7 @@ void PageRepository::receive(const QUuid &id,const QString &source,PageResultV2 
 }
 void PageRepository::finish(const QUuid &id)
 {
+    const QPointer<PageRepository> guard(this);
     auto g=m_groups.value(id); if (!g || !g->fannedOut || g->finishing) return;
     QList<SourcePageResultV2> inputs;
     int success=0;
@@ -312,6 +328,19 @@ void PageRepository::finish(const QUuid &id)
         if (discoveryKindV1(g->key.query)) for (const auto &input:inputs)
             if (input.error->kind!=SourceErrorKindV2::Unsupported) { failure=*input.error; break; }
         fail(id,failure); return;
+    }
+    if (const auto selection=browseFacetSelectionV1(g->key.query)) {
+        // Also fence buffered continuations and a response whose declaration
+        // changed while I/O was pending. No cached row is permanent authority.
+        for (const auto &source:g->key.sourceInstanceIds) {
+            const auto req=g->requests.value(source);
+            const auto schema=m_sources ? m_sources->browseFacets({req->sourceId,source,req->accountId,{}},g->key.query.section)
+                                        : std::nullopt;
+            if (!guard || m_groups.value(id)!=g) return;
+            if (!schema || !matchesBrowseFacetSelectionV1(*schema,*selection)) {
+                fail(id,error(SourceErrorKindV2::Unsupported)); return;
+            }
+        }
     }
     QHash<PageSectionKindV2,QString> sectionScopes;
     for (const auto &input:inputs) for (const auto &section:input.page.sections) {

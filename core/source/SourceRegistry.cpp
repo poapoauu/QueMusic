@@ -492,6 +492,55 @@ std::optional<PageSectionKindV2> SourceRegistry::artistBrowseSection(const Media
     }
 }
 
+std::optional<BrowseFacetSchemaV1> SourceRegistry::browseFacets(const SourceIdentityV2 &identity,
+    PageSectionKindV2 section, bool createSession)
+{
+    const auto id=identity.sourceInstanceId;
+    if (QThread::currentThread()!=thread() || section!=PageSectionKindV2::Artists
+        || id.trimmed().isEmpty() || m_browseFacetReservations.contains(id)) return {};
+    const MediaRefV2 ref{identity.sourcePluginId,id,identity.accountId,MediaEntityTypeV2::Artist,{}};
+    const auto owner=presentationInstance(ref);
+    if (!owner || !owner->enabled) return {};
+    const QPointer<SourceRegistry> guard(this);
+    m_browseFacetReservations.insert(id);
+    const auto cleanup=qScopeGuard([guard,id] { if (guard) guard->m_browseFacetReservations.remove(id); });
+    if (createSession) { sessionFor(id); if (!guard) return {}; }
+    QPointer<IMusicSourceSessionV2> session;
+    PluginLease callLease;
+    quint64 revision=0;
+    {
+        const auto entry=m_sessions.constFind(id);
+        if (entry==m_sessions.cend() || !entry->session || !entry->lease.isValid()) return {};
+        session=entry->session; callLease=entry->lease; revision=entry->presentationRevision;
+    }
+    const auto active=presentationInstance(ref);
+    if (!session || session->thread()!=thread() || !active || !active->enabled
+        || active->state!=SourceSessionStateV2::Ready) return {};
+    const auto lifecycle=m_lifecycleGeneration, instanceGeneration=m_instanceLifecycleGenerations.value(id);
+    auto *provider=qobject_cast<IBrowseFacetsProviderV1 *>(session.data());
+    if (!provider) return {};
+    const auto schema=provider->browseFacets(section);
+    if (!guard || !session) return {};
+    const auto current=m_sessions.constFind(id);
+    const auto fresh=presentationInstance(ref);
+    if (current==m_sessions.cend() || current->session!=session || !current->lease.isValid()
+        || session->thread()!=thread() || current->presentationRevision!=revision
+        || lifecycle!=m_lifecycleGeneration || instanceGeneration!=m_instanceLifecycleGenerations.value(id)
+        || !fresh || !fresh->enabled || fresh->state!=SourceSessionStateV2::Ready
+        || !schema || !isValidBrowseFacetSchemaV1(*schema)) return {};
+    // QStringLiteral storage can belong to a DSO. Copy all strings before the
+    // callable lease leaves this stack, including choices not currently selected.
+    const auto owned=[](const QString &s) { return QString(s.constData(),s.size()); };
+    BrowseFacetSchemaV1 result; result.section=schema->section; result.revision=owned(schema->revision);
+    for (const auto &facet:schema->facets) {
+        BrowseFacetV1 copy{owned(facet.id),owned(facet.title),{}};
+        for (const auto &choice:facet.choices)
+            copy.choices.append(BrowseFacetChoiceV1{owned(choice.value),owned(choice.title)});
+        result.facets.append(std::move(copy));
+    }
+    return result;
+}
+
 ActionAvailabilityV2 SourceRegistry::presentationAction(const MediaRefV2 &media, SourceActionV2 action,
                                                        const ActionAvailabilityV2 &mediaAction) const
 {

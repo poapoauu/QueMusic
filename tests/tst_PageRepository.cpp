@@ -2,6 +2,7 @@
 #include "v2/IMusicSourcePluginV2.h"
 #include "v2/ISourceProvidersV2.h"
 #include "extensions/discovery/v1/IDiscoveryProviderV1.h"
+#include "extensions/browse-facets/v1/IBrowseFacetsProviderV1.h"
 
 class PageFixtureSession : public IMusicSourceSessionV2, public IPageProviderV2,
                            public IPlaybackProviderV2 {
@@ -64,6 +65,52 @@ public:
         return id;
     }
 };
+class FacetFixtureSession : public PageFixtureSession, public IBrowseFacetsProviderV1 {
+    Q_OBJECT
+    Q_INTERFACES(IBrowseFacetsProviderV1)
+public:
+    using PageFixtureSession::PageFixtureSession;
+    SourceSessionStateV2 state() const override
+    { return property("connecting").toBool() ? SourceSessionStateV2::Connecting : PageFixtureSession::state(); }
+    std::optional<BrowseFacetSchemaV1> browseFacets(PageSectionKindV2 section) const override
+    {
+        auto *self=const_cast<FacetFixtureSession *>(this);
+        self->setProperty("facetChecks",property("facetChecks").toInt()+1);
+        const auto revision=property("revision").isValid() ? property("revision").toString() : QStringLiteral("catalog-v1");
+        self->setProperty("literalRevisionAddress",qulonglong(reinterpret_cast<quintptr>(revision.constData())));
+        BrowseFacetSchemaV1 schema{section,revision,{{QStringLiteral("origin"),QStringLiteral("Origin"),
+            {{QStringLiteral("alpha"),QStringLiteral("Alpha")},{QStringLiteral("beta"),QStringLiteral("Beta")}}}}};
+        self->setProperty("literalTitleAddress",qulonglong(reinterpret_cast<quintptr>(schema.facets[0].title.constData())));
+        self->setProperty("literalChoiceAddress",qulonglong(reinterpret_cast<quintptr>(schema.facets[0].choices[0].value.constData())));
+        if (property("badSchema").toBool()) schema.facets[0].id=QStringLiteral("artistId");
+        if (property("withdrawChoice").toBool()) schema.facets[0].choices.removeFirst();
+        const bool withdrawn=property("withdraw").toBool();
+        // Deliberate contract violations for Host reentry/retirement tests.
+        if (property("notifyOnFacets").toBool()) emit self->capabilitiesChanged({});
+        return withdrawn ? std::nullopt : std::optional(schema);
+    }
+    QUuid fetchPage(const PageQueryV2 &query) override
+    {
+        setProperty("facetFilters",query.filters);
+        const QPointer<FacetFixtureSession> guard(this);
+        const auto selected=browseFacetProviderSelectionV1(query);
+        const auto schema=browseFacets(query.section);
+        if (!guard) return {};
+        if (!selected || !schema || !matchesBrowseFacetSelectionV1(*schema,*selected)) {
+            const auto id=QUuid::createUuid(); emit requestStarted(id);
+            emit requestFailed(id,{SourceErrorKindV2::InvalidRequest}); return id;
+        }
+        const auto id=QUuid::createUuid(); setProperty("lastRequest",id);
+        setProperty("lastCursor",query.cursor); setProperty("calls",property("calls").toInt()+1);
+        emit requestStarted(id);
+        if (property("inline").toBool()) {
+            auto result=PageFixtureSession::sample(query);
+            for (auto &item:result.sections[0].items) item.ref.entityType=MediaEntityTypeV2::Artist;
+            emit pageReady(id,result);
+        }
+        return id;
+    }
+};
 class DiscoveryFixtureSession : public PageFixtureSession, public IDiscoveryProviderV1 {
     Q_OBJECT
     Q_INTERFACES(IDiscoveryProviderV1)
@@ -105,6 +152,8 @@ public:
     SourceDescriptorV2 descriptor() const override { return {"org.quemusic.source.task5", "task5", "Task5", "2.0.0", 2, {}}; }
     IMusicSourceSessionV2 *createSession(const SourceConfigurationV2 &c, QObject *p) override
     {
+        setProperty("sessionCreates",property("sessionCreates").toInt()+1);
+        if (c.accountId=="facets") return new FacetFixtureSession(c,p);
         if (c.accountId=="personal") return new DiscoveryFixtureSession(c,p);
         return new PageFixtureSession(c,p);
     }
@@ -170,9 +219,169 @@ static PageSectionV2 favoriteSection(QString source, PageSectionKindV2 kind, QSt
     section.nextCursor=more ? source+"-private-"+prefix : QString{};
     return section;
 }
+static PageQueryV2 facetsQuery()
+{
+    PageQueryV2 query; query.page=MusicPageKindV2::Category; query.section=PageSectionKindV2::Artists;
+    query.scope={"task5/facets"}; query.limit=1;
+    query.filters={{browseFacetsFilterKeyV1(),"selected"},{"facetRevision","catalog-v1"},
+                  {"facetValues",QVariantMap{{"origin","alpha"}}}};
+    return query;
+}
+static PageResultV2 facetPage(QStringList ids={"one"},bool more=false)
+{
+    auto page=sample("facets",ids,more); page.sections[0].kind=PageSectionKindV2::Artists;
+    for (auto &item:page.sections[0].items) item.ref.entityType=MediaEntityTypeV2::Artist;
+    return page;
+}
 class PageRepositoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void facetRegistryDeclaresOnlyExactReadyOwnersAndDeepCopiesModuleStrings()
+    {
+        PageHarness h; QVERIFY(h.init()); QVERIFY(h.accounts.saveResolvedV2({"task5","facets","Facets",{},{}}));
+        const SourceIdentityV2 owner{"task5","task5/facets","facets",{}};
+        auto *root=h.plugins.pluginInstance("org.quemusic.source.task5");
+        QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Artists));
+        QCOMPARE(root->property("sessionCreates").toInt(),0);
+        const auto schema=h.registry.browseFacets(owner,PageSectionKindV2::Artists,true); QVERIFY(schema);
+        auto *session=h.session("facets"); QCOMPARE(root->property("sessionCreates").toInt(),1);
+        QVERIFY(qulonglong(reinterpret_cast<quintptr>(schema->revision.constData()))!=session->property("literalRevisionAddress").toULongLong());
+        QVERIFY(qulonglong(reinterpret_cast<quintptr>(schema->facets[0].title.constData()))!=session->property("literalTitleAddress").toULongLong());
+        QVERIFY(qulonglong(reinterpret_cast<quintptr>(schema->facets[0].choices[0].value.constData()))!=session->property("literalChoiceAddress").toULongLong());
+        auto foreignThread=QtConcurrent::run([&] { return h.registry.browseFacets(owner,PageSectionKindV2::Artists).has_value(); });
+        foreignThread.waitForFinished(); QVERIFY(!foreignThread.result());
+        for (int variant=0;variant<4;++variant) {
+            auto wrong=owner;
+            if (variant==0) wrong.sourcePluginId="other";
+            if (variant==1) wrong.sourceInstanceId="task5/home";
+            if (variant==2) wrong.accountId="home";
+            if (variant==3) wrong.sourceInstanceId.clear();
+            QVERIFY(!h.registry.browseFacets(wrong,PageSectionKindV2::Artists));
+        }
+        QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Albums));
+        QCOMPARE(session->property("facetChecks").toInt(),1);
+        session->setProperty("badSchema",true); QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Artists));
+        session->setProperty("badSchema",false); session->setProperty("withdraw",true);
+        QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Artists));
+        h.registry.closeAll(); QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QCOMPARE(h.plugins.unload("org.quemusic.source.task5"),PluginOperationResult::Success);
+        QCOMPARE(schema->revision,QString("catalog-v1")); QCOMPARE(schema->facets[0].title,QString("Origin"));
+        QCOMPARE(schema->facets[0].choices[1].value,QString("beta"));
+    }
+    void facetColdDispatchStripsOnlySelectorAndRejectsCurrentSchemaChanges()
+    {
+        PageHarness h; QVERIFY(h.init()); QVERIFY(h.accounts.saveResolvedV2({"task5","facets","Facets",{},{}}));
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady),failed(&h.repo,&PageRepository::pageFailed);
+        auto query=facetsQuery(); h.repo.requestPage(query,1);
+        auto *session=h.session("facets"); QTRY_COMPARE(session->property("calls").toInt(),1);
+        const auto wire=session->property("facetFilters").toMap(); QCOMPARE(wire.size(),2);
+        QCOMPARE(wire.value("facetRevision").toString(),QString("catalog-v1"));
+        QVERIFY(!wire.contains(browseFacetsFilterKeyV1()));
+        emit session->pageReady(session->property("lastRequest").toUuid(),facetPage());
+        QTRY_COMPARE(ready.count(),1); QVERIFY(!qvariant_cast<PageResultV2>(ready[0][2]).cached);
+        for (const auto *key:{"withdraw","badSchema","withdrawChoice"}) {
+            session->setProperty(key,true); const auto before=failed.count(); h.repo.requestPage(query,2);
+            QTRY_COMPARE(failed.count(),before+1); QCOMPARE(session->property("calls").toInt(),1);
+            session->setProperty(key,false);
+        }
+        session->setProperty("revision","catalog-v2"); h.repo.requestPage(query,3); QTRY_COMPARE(failed.count(),4);
+        QCOMPARE(session->property("calls").toInt(),1);
+        session->setProperty("revision","catalog-v1"); query.filters["facetValues"]=QVariantMap{{"origin","unknown"}};
+        h.repo.requestPage(query,4); QTRY_COMPARE(failed.count(),5); QCOMPARE(session->property("calls").toInt(),1);
+        session->setProperty("inline",true); h.repo.requestPage(facetsQuery(),5); QTRY_COMPARE(ready.count(),2);
+    }
+    void facetResponsesRequireOneCompleteArtistsSectionAndExactIdentity()
+    {
+        PageHarness h; QVERIFY(h.init()); QVERIFY(h.accounts.saveResolvedV2({"task5","facets","Facets",{},{}}));
+        auto *session=h.session("facets"); QSignalSpy failed(&h.repo,&PageRepository::pageFailed),ready(&h.repo,&PageRepository::pageReady);
+        for (int variant=0;variant<11;++variant) {
+            h.repo.requestPage(facetsQuery(),1); QTRY_COMPARE(session->property("calls").toInt(),variant+1);
+            auto page=facetPage();
+            if (variant==0) page.sections[0].kind=PageSectionKindV2::Tracks;
+            if (variant==1) page.sections.append(page.sections[0]);
+            if (variant==2) page.sections[0].items[0].ref.entityType=MediaEntityTypeV2::Track;
+            if (variant==3) page.sections[0].items[0].ref.sourcePluginId="other";
+            if (variant==4) page.sections[0].items[0].ref.accountId="home";
+            if (variant==5) page.sections[0].items[0].ref.sourceInstanceId="task5/home";
+            if (variant==6) page.sections[0].items[0].ref.entityId=" ";
+            if (variant==7) page.cached=true;
+            if (variant==8) page.complete=false;
+            if (variant==9) page.sections[0].hasMore=true;
+            if (variant==10) page.sections.clear();
+            emit session->pageReady(session->property("lastRequest").toUuid(),page);
+            QTRY_COMPARE(failed.count(),variant+1); QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::InvalidRequest);
+        }
+        QVERIFY(ready.isEmpty()); h.repo.requestPage(facetsQuery(),2); QTRY_COMPARE(session->property("calls").toInt(),12);
+        emit session->pageReady(session->property("lastRequest").toUuid(),facetPage({})); QTRY_COMPARE(ready.count(),1);
+    }
+    void facetRevisionIsRecheckedForBufferedContinuationAndPendingResponse()
+    {
+        PageHarness h; QVERIFY(h.init()); QVERIFY(h.accounts.saveResolvedV2({"task5","facets","Facets",{},{}}));
+        auto *session=h.session("facets"); QSignalSpy failed(&h.repo,&PageRepository::pageFailed),ready(&h.repo,&PageRepository::pageReady);
+        auto query=facetsQuery(); h.repo.requestPage(query,1); QTRY_COMPARE(session->property("calls").toInt(),1);
+        emit session->pageReady(session->property("lastRequest").toUuid(),facetPage({"one","two"},true));
+        QTRY_COMPARE(ready.count(),1); auto section=qvariant_cast<PageResultV2>(ready[0][2]).sections[0]; QVERIFY(section.hasMore);
+        query.cursor=section.nextCursor; session->setProperty("withdrawChoice",true);
+        h.repo.requestPage(query,2); QTRY_COMPARE(failed.count(),1); QCOMPARE(ready.count(),1);
+        QCOMPARE(session->property("calls").toInt(),1);
+        session->setProperty("withdrawChoice",false); h.repo.requestPage(facetsQuery(),3); QTRY_COMPARE(session->property("calls").toInt(),2);
+        session->setProperty("revision","catalog-v2");
+        emit session->pageReady(session->property("lastRequest").toUuid(),facetPage()); QTRY_COMPARE(failed.count(),2);
+        QCOMPARE(ready.count(),1);
+    }
+    void facetCallbackReentryRetirementAndUnloadCannotPublishOldSchema()
+    {
+        PageHarness h; QVERIFY(h.init()); QVERIFY(h.accounts.saveResolvedV2({"task5","facets","Facets",{},{}}));
+        auto *session=h.session("facets"); const SourceIdentityV2 owner{"task5","task5/facets","facets",{}};
+        session->setProperty("notifyOnFacets",true); bool recursiveDenied=false;
+        auto connection=connect(session,&IMusicSourceSessionV2::capabilitiesChanged,this,[&] {
+            recursiveDenied=!h.registry.browseFacets(owner,PageSectionKindV2::Artists).has_value();
+        });
+        QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Artists)); QVERIFY(recursiveDenied);
+        disconnect(connection); PluginOperationResult during=PluginOperationResult::Failed;
+        connection=connect(session,&IMusicSourceSessionV2::capabilitiesChanged,this,[&] {
+            h.registry.closeInstance(owner.sourceInstanceId);
+            QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+            during=h.plugins.unload("org.quemusic.source.task5");
+        });
+        QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Artists)); QCOMPARE(during,PluginOperationResult::Busy);
+        disconnect(connection); QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QCOMPARE(h.plugins.unload("org.quemusic.source.task5"),PluginOperationResult::Success);
+    }
+    void facetConnectingDisabledAndCancelledRequestsDoNotBypassLifecycle()
+    {
+        PageHarness h; QVERIFY(h.init()); QVERIFY(h.accounts.saveResolvedV2({"task5","facets","Facets",{},{}}));
+        auto *session=h.session("facets"); const SourceIdentityV2 owner{"task5","task5/facets","facets",{}};
+        QSignalSpy ready(&h.repo,&PageRepository::pageReady),failed(&h.repo,&PageRepository::pageFailed);
+        session->setProperty("connecting",true); emit session->stateChanged(SourceSessionStateV2::Connecting);
+        QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Artists));
+        h.repo.requestPage(facetsQuery(),1); QCoreApplication::processEvents();
+        QCOMPARE(session->property("calls").toInt(),0); QVERIFY(ready.isEmpty()); QVERIFY(failed.isEmpty());
+        session->setProperty("connecting",false); session->setProperty("inline",true);
+        emit session->stateChanged(SourceSessionStateV2::Ready); QTRY_COMPARE(ready.count(),1);
+        session->setProperty("inline",false); const auto id=h.repo.requestPage(facetsQuery(),2);
+        QTRY_COMPARE(session->property("calls").toInt(),2); const auto providerId=session->property("lastRequest").toUuid();
+        h.repo.cancel(id); QCOMPARE(session->property("cancelled").toUuid(),providerId);
+        emit session->pageReady(providerId,facetPage()); QCoreApplication::processEvents();
+        QCOMPARE(ready.count(),1); QVERIFY(failed.isEmpty());
+        QVERIFY(h.registry.disableInstance(owner.sourceInstanceId));
+        QVERIFY(!h.registry.browseFacets(owner,PageSectionKindV2::Artists));
+    }
+    void facetRegistryDestructionDuringDeclarationKeepsModuleUntilReturn()
+    {
+        PageHarness h; QVERIFY(h.init()); QVERIFY(h.accounts.saveResolvedV2({"task5","facets","Facets",{},{}}));
+        auto registry=std::make_unique<SourceRegistry>(&h.plugins,&h.accounts);
+        const SourceIdentityV2 owner{"task5","task5/facets","facets",{}};
+        auto *session=registry->sessionFor(owner.sourceInstanceId); QVERIFY(session);
+        session->setProperty("notifyOnFacets",true); PluginOperationResult during=PluginOperationResult::Failed;
+        connect(session,&IMusicSourceSessionV2::capabilitiesChanged,this,[&] {
+            registry.reset(); during=h.plugins.unload("org.quemusic.source.task5");
+        });
+        const auto result=registry->browseFacets(owner,PageSectionKindV2::Artists);
+        QVERIFY(!result); QVERIFY(!registry); QCOMPARE(during,PluginOperationResult::Busy);
+        QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+        QCOMPARE(h.plugins.unload("org.quemusic.source.task5"),PluginOperationResult::Success);
+    }
     void browseFacetsAreReservedBeforeCacheCursorOrOldProviderDispatch()
     {
         PageHarness h; QVERIFY(h.init()); auto *home=h.session("home"), *office=h.session("office");
@@ -186,10 +395,11 @@ private slots:
         QTRY_COMPARE(failed.count(),1); QCOMPARE(failed[0][0].toUuid(),id);
         QCOMPARE(failed[0][1].toULongLong(),quint64(77));
         QCOMPARE(qvariant_cast<SourceErrorV2>(failed[0][2]).kind,SourceErrorKindV2::Unsupported);
-        // Continuation/refresh cannot bypass the unimplemented execution gate.
+        // An arbitrary cursor is invalid before extension dispatch, even when
+        // the selected old provider would also lack the optional contract.
         auto continued=good; continued.cursor="untrusted-cursor";
         h.repo.requestPage(continued,78); QTRY_COMPARE(failed.count(),2);
-        QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::Unsupported);
+        QCOMPARE(qvariant_cast<SourceErrorV2>(failed.last()[2]).kind,SourceErrorKindV2::InvalidRequest);
         for (int variant=0;variant<9;++variant) {
             auto malformed=good;
             if (variant==0) malformed.filters={{browseFacetsFilterKeyV1(),"selected"}};
